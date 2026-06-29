@@ -1,0 +1,17 @@
+{
+  "name": "teamtales",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "schema:check": "node --experimental-strip-types scripts/check-schema.ts",
+    "test": "tsx --test tests/**/*.test.ts",
+    "check": "npm run typecheck && npm run schema:check"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "tsx": "^4.22.4",
+    "typescript": "^5.5.0"
+  }
+}
