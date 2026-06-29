@@ -1,0 +1,276 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { describe, it } from "node:test";
+
+import type { ReportContext } from "../../src/analysis/types.js";
+import { runCli } from "../../src/cli/index.js";
+import { decryptCredentialSecret } from "../../src/security/index.js";
+
+const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+type CapturedIo = {
+  stdout: string[];
+  stderr: string[];
+  io: {
+    stdout(message: string): void;
+    stderr(message: string): void;
+  };
+};
+
+describe("teamtales CLI", () => {
+  it("initializes a local database", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
+    const db = join(directory, "teamtales.sqlite");
+
+    try {
+      const result = await runCli(["init-db", "--db", db], capture().io);
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(existsSync(db), true);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("creates organization metadata without requiring an organizations table", async () => {
+    const io = capture();
+    const result = await runCli(["org", "create", "--id", "org_acme", "--name", "Acme"], io.io);
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(io.stdout[0] ?? "{}"), { id: "org_acme", name: "Acme" });
+  });
+
+  it("adds a PAT integration with an encrypted credential and no plaintext storage", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
+    const db = join(directory, "teamtales.sqlite");
+
+    try {
+      const io = capture();
+      const result = await runCli(
+        [
+          "integration",
+          "add-pat",
+          "--db",
+          db,
+          "--organization-id",
+          "org_acme",
+          "--provider",
+          "github",
+          "--name",
+          "Acme GitHub",
+          "--token-env",
+          "TEST_PAT",
+        ],
+        io.io,
+        { TEAMTALES_CREDENTIAL_KEY: key, TEST_PAT: "github_pat_secret_1234567890" },
+      );
+
+      assert.equal(result.exitCode, 0);
+      const output = JSON.parse(io.stdout[0] ?? "{}") as { id: string; secretHint: string };
+      assert.equal(output.secretHint, "gith...7890");
+
+      const sqlite = new DatabaseSync(db);
+      try {
+        const row = sqlite
+          .prepare("SELECT encrypted_secret, secret_hint FROM integration_credentials WHERE integration_id = ?")
+          .get(output.id) as { encrypted_secret: string; secret_hint: string };
+
+        assert.notEqual(row.encrypted_secret.includes("github_pat_secret_1234567890"), true);
+        assert.equal(decryptCredentialSecret({ encryptedSecret: row.encrypted_secret, secretHint: row.secret_hint }, key), "github_pat_secret_1234567890");
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("adds a sync scope for an existing integration", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
+    const db = join(directory, "teamtales.sqlite");
+
+    try {
+      const integration = capture();
+      await runCli(
+        [
+          "integration",
+          "add-pat",
+          "--db",
+          db,
+          "--organization-id",
+          "org_acme",
+          "--provider",
+          "linear",
+          "--token",
+          "lin_api_secret_1234567890",
+        ],
+        integration.io,
+        { TEAMTALES_CREDENTIAL_KEY: key },
+      );
+      const integrationId = JSON.parse(integration.stdout[0] ?? "{}").id as string;
+
+      const io = capture();
+      const result = await runCli(
+        [
+          "scope",
+          "add",
+          "--db",
+          db,
+          "--organization-id",
+          "org_acme",
+          "--integration-id",
+          integrationId,
+          "--provider",
+          "linear",
+          "--type",
+          "linear.team",
+          "--name",
+          "Engineering",
+          "--config-json",
+          "{\"teamKey\":\"ENG\"}",
+        ],
+        io.io,
+      );
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(JSON.parse(io.stdout[0] ?? "{}").externalName, "Engineering");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("generates deterministic weekly markdown from fixture JSON", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
+    const db = join(directory, "teamtales.sqlite");
+    const fixture = join(directory, "context.json");
+    const output = join(directory, "weekly.md");
+    const context: ReportContext = {
+      organization: { id: "org_acme", name: "Acme" },
+      scope: { type: "github_repository", id: "repo_widgets", name: "acme/widgets" },
+      period: { start: "2026-06-22", end: "2026-06-29" },
+      freshness: { warnings: [] },
+      metrics: [{ name: "activity.events", value: 1 }],
+      highlights: [],
+      people: [],
+      workItems: [],
+      risks: [],
+    };
+
+    try {
+      writeFileSync(fixture, JSON.stringify(context), "utf8");
+
+      const result = await runCli(["report", "weekly", "--db", db, "--fixture", fixture, "--output", output], capture().io);
+
+      assert.equal(result.exitCode, 0);
+      assert.match(readFileSync(output, "utf8"), /^# Weekly report: acme\/widgets/);
+      assert.equal(readFileSync(output, "utf8"), readFileSync(output, "utf8"));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("generates a weekly report from an existing database report context", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
+    const db = join(directory, "teamtales.sqlite");
+    const context: ReportContext = {
+      organization: { id: "org_acme", name: "Acme" },
+      scope: { type: "organization", id: "org_acme", name: "Acme" },
+      period: { start: "2026-06-22", end: "2026-06-29" },
+      freshness: { warnings: [] },
+      metrics: [{ name: "activity.events", value: 3 }],
+      highlights: [],
+      people: [],
+      workItems: [],
+      risks: [],
+    };
+
+    try {
+      await runCli(["init-db", "--db", db], capture().io);
+      const sqlite = new DatabaseSync(db);
+      try {
+        sqlite
+          .prepare(
+            `INSERT INTO analysis_runs (
+              id, organization_id, scope_type, scope_id, period_start, period_end, status, started_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run("analysis_run_1", "org_acme", "organization", "org_acme", "2026-06-22", "2026-06-29", "completed", "2026-06-29T09:00:00.000Z");
+        sqlite
+          .prepare(
+            `INSERT INTO analysis_report_contexts (
+              id, organization_id, analysis_run_id, scope_type, scope_id, period_start, period_end, context_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            "report_context_1",
+            "org_acme",
+            "analysis_run_1",
+            "organization",
+            "org_acme",
+            "2026-06-22",
+            "2026-06-29",
+            JSON.stringify(context),
+          );
+      } finally {
+        sqlite.close();
+      }
+
+      const io = capture();
+      const result = await runCli(
+        [
+          "report",
+          "weekly",
+          "--db",
+          db,
+          "--organization-id",
+          "org_acme",
+          "--period-start",
+          "2026-06-22",
+          "--period-end",
+          "2026-06-29",
+        ],
+        io.io,
+      );
+
+      assert.equal(result.exitCode, 0);
+      assert.match(JSON.parse(io.stdout[0] ?? "{}").markdown, /- activity.events: 3/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a placeholder result for provider sync commands", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
+    const db = join(directory, "teamtales.sqlite");
+    const io = capture();
+
+    try {
+      const result = await runCli(["sync", "github", "--db", db], io.io);
+
+      assert.equal(result.exitCode, 2);
+      assert.equal(JSON.parse(io.stdout[0] ?? "{}").status, "not_implemented");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+function capture(): CapturedIo {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  return {
+    stdout,
+    stderr,
+    io: {
+      stdout(message: string): void {
+        stdout.push(message);
+      },
+      stderr(message: string): void {
+        stderr.push(message);
+      },
+    },
+  };
+}

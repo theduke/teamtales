@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "teamtales": "./src/cli/index.ts"
+  },
   "scripts": {
+    "cli": "tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
     "schema:check": "node --experimental-strip-types scripts/check-schema.ts",
     "test": "tsx --test tests/**/*.test.ts",
