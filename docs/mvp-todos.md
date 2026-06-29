@@ -19,7 +19,7 @@
 - [x] Add real GitHub repository sync using PAT credentials.
 - [x] Add real Linear workspace/team sync using PAT credentials.
 - [x] Persist analysis runs, metrics, highlights, report contexts, reports, and report inputs.
-- [ ] Add end-to-end fixture tests for sync-to-report flow.
+- [x] Add end-to-end fixture tests for sync-to-report flow.
 
 ## Deferred
 

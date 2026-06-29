@@ -1,0 +1,214 @@
+{
+  "organization": {
+    "id": "org_fixture",
+    "name": "FixtureCo"
+  },
+  "period": {
+    "start": "2026-06-22T00:00:00.000Z",
+    "end": "2026-06-29T00:00:00.000Z"
+  },
+  "scope": {
+    "type": "organization",
+    "id": "org_fixture",
+    "name": "FixtureCo"
+  },
+  "freshness": {
+    "github": "2026-06-28T18:00:00.000Z",
+    "linear": "2026-06-28T18:05:00.000Z",
+    "warnings": []
+  },
+  "people": [
+    {
+      "id": "github:user:alice",
+      "displayName": "Alice GitHub"
+    },
+    {
+      "id": "github:user:bob",
+      "displayName": "Bob Builder"
+    },
+    {
+      "id": "github:user:carol",
+      "displayName": "Carol Reviewer"
+    },
+    {
+      "id": "github:user:dana",
+      "displayName": "Dana Commenter"
+    },
+    {
+      "id": "linear:user:user_alice",
+      "displayName": "Alice Linear"
+    },
+    {
+      "id": "linear:user:user_bob",
+      "displayName": "Bob Linear"
+    },
+    {
+      "id": "linear:user:user_dana",
+      "displayName": "Dana Linear"
+    }
+  ],
+  "sourceObjects": [
+    {
+      "id": "source_github_pr_42",
+      "integrationId": "integration_github",
+      "syncScopeId": "scope_github_widgets",
+      "provider": "github",
+      "objectType": "github.pull_request",
+      "externalId": "42",
+      "externalUrl": "https://github.com/fixtureco/widgets/pull/42",
+      "externalCreatedAt": "2026-06-10T09:00:00.000Z",
+      "externalUpdatedAt": "2026-06-28T12:00:00.000Z",
+      "normalization": {
+        "repositoryId": "github:repo:fixtureco/widgets"
+      },
+      "raw": {
+        "id": 42,
+        "number": 42,
+        "title": "Ship customer export",
+        "html_url": "https://github.com/fixtureco/widgets/pull/42",
+        "state": "closed",
+        "merged": true,
+        "created_at": "2026-06-10T09:00:00.000Z",
+        "updated_at": "2026-06-28T12:00:00.000Z",
+        "merged_at": "2026-06-28T11:30:00.000Z",
+        "user": {
+          "login": "alice"
+        },
+        "merged_by": {
+          "login": "bob"
+        },
+        "labels": [
+          {
+            "name": "customer-impact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "source_github_review_99",
+      "integrationId": "integration_github",
+      "syncScopeId": "scope_github_widgets",
+      "provider": "github",
+      "objectType": "github.pull_request_review",
+      "externalId": "99",
+      "externalUrl": "https://github.com/fixtureco/widgets/pull/42#pullrequestreview-99",
+      "externalCreatedAt": "2026-06-28T10:00:00.000Z",
+      "externalUpdatedAt": "2026-06-28T10:00:00.000Z",
+      "normalization": {
+        "workItemId": "github:github_pull_request:42",
+        "repositoryId": "github:repo:fixtureco/widgets"
+      },
+      "raw": {
+        "id": 99,
+        "state": "approved",
+        "submitted_at": "2026-06-28T10:00:00.000Z",
+        "html_url": "https://github.com/fixtureco/widgets/pull/42#pullrequestreview-99",
+        "user": {
+          "login": "carol"
+        }
+      }
+    },
+    {
+      "id": "source_github_comment_100",
+      "integrationId": "integration_github",
+      "syncScopeId": "scope_github_widgets",
+      "provider": "github",
+      "objectType": "github.issue_comment",
+      "externalId": "100",
+      "externalUrl": "https://github.com/fixtureco/widgets/pull/42#issuecomment-100",
+      "externalCreatedAt": "2026-06-28T10:20:00.000Z",
+      "externalUpdatedAt": "2026-06-28T10:20:00.000Z",
+      "normalization": {
+        "workItemId": "github:github_pull_request:42",
+        "repositoryId": "github:repo:fixtureco/widgets"
+      },
+      "raw": {
+        "id": 100,
+        "body": "Release notes look good.",
+        "created_at": "2026-06-28T10:20:00.000Z",
+        "html_url": "https://github.com/fixtureco/widgets/pull/42#issuecomment-100",
+        "issue_url": "https://api.github.com/repos/fixtureco/widgets/issues/42",
+        "user": {
+          "login": "dana"
+        }
+      }
+    },
+    {
+      "id": "source_linear_issue_eng_123",
+      "integrationId": "integration_linear",
+      "syncScopeId": "scope_linear_workspace",
+      "provider": "linear",
+      "objectType": "linear.issue",
+      "externalId": "lin_123",
+      "externalUrl": "https://linear.app/fixture/issue/ENG-123",
+      "externalCreatedAt": "2026-06-20T09:00:00.000Z",
+      "externalUpdatedAt": "2026-06-27T17:30:00.000Z",
+      "raw": {
+        "id": "lin_123",
+        "identifier": "ENG-123",
+        "title": "Finish onboarding checklist",
+        "url": "https://linear.app/fixture/issue/ENG-123",
+        "createdAt": "2026-06-20T09:00:00.000Z",
+        "updatedAt": "2026-06-27T17:30:00.000Z",
+        "completedAt": "2026-06-27T17:00:00.000Z",
+        "state": {
+          "id": "state_done",
+          "name": "Done",
+          "type": "completed"
+        },
+        "team": {
+          "id": "team_eng"
+        },
+        "project": {
+          "id": "project_onboarding"
+        },
+        "creator": {
+          "id": "user_alice"
+        },
+        "history": [
+          {
+            "id": "hist_done_123",
+            "field": "state",
+            "fromState": "In Progress",
+            "toState": "Done",
+            "createdAt": "2026-06-27T17:00:00.000Z",
+            "actor": {
+              "id": "user_bob"
+            }
+          }
+        ],
+        "labels": [
+          "customer-impact"
+        ]
+      }
+    },
+    {
+      "id": "source_linear_comment_55",
+      "integrationId": "integration_linear",
+      "syncScopeId": "scope_linear_workspace",
+      "provider": "linear",
+      "objectType": "linear.comment",
+      "externalId": "comment_55",
+      "externalUrl": "https://linear.app/fixture/issue/ENG-123#comment_55",
+      "externalCreatedAt": "2026-06-27T18:00:00.000Z",
+      "externalUpdatedAt": "2026-06-27T18:00:00.000Z",
+      "normalization": {
+        "workItemId": "linear:linear_issue:lin_123",
+        "linearTeamId": "team_eng",
+        "linearProjectId": "project_onboarding"
+      },
+      "raw": {
+        "id": "comment_55",
+        "body": "Support has the checklist.",
+        "createdAt": "2026-06-27T18:00:00.000Z",
+        "url": "https://linear.app/fixture/issue/ENG-123#comment_55",
+        "user": {
+          "id": "user_dana"
+        },
+        "issue": {
+          "id": "lin_123"
+        }
+      }
+    }
+  ]
+}
