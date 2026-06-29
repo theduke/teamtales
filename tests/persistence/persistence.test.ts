@@ -5,10 +5,15 @@ import type { Highlight, ReportContext } from "../../src/analysis/types.js";
 import { openLocalDatabase } from "../../src/db/index.js";
 import {
   getAnalysisRun,
+  getAnalysisRunForOrganization,
+  getReportForOrganization,
   getReport,
   listAnalysisHighlights,
+  listAnalysisHighlightsForOrganization,
   listAnalysisMetrics,
+  listAnalysisMetricsForOrganization,
   listReportInputs,
+  listReportInputsForOrganization,
   saveCompleteAnalysisResult,
   saveCompleteReportResult,
 } from "../../src/persistence/index.js";
@@ -58,6 +63,7 @@ describe("persistence repositories", () => {
     const local = openLocalDatabase({ runMigrations: true });
 
     try {
+      insertOrganization(local.sqlite);
       insertWorkItem(local.sqlite);
 
       const saved = saveCompleteAnalysisResult(local.sqlite, {
@@ -108,6 +114,7 @@ describe("persistence repositories", () => {
     const local = openLocalDatabase({ runMigrations: true });
 
     try {
+      insertOrganization(local.sqlite);
       insertWorkItem(local.sqlite);
       const analysis = saveCompleteAnalysisResult(local.sqlite, {
         run: {
@@ -174,6 +181,7 @@ describe("persistence repositories", () => {
     const local = openLocalDatabase({ runMigrations: true });
 
     try {
+      insertOrganization(local.sqlite);
       assert.throws(
         () =>
           saveCompleteAnalysisResult(local.sqlite, {
@@ -200,14 +208,111 @@ describe("persistence repositories", () => {
       local.close();
     }
   });
+
+  it("keeps analysis and report reads scoped by organization", () => {
+    const local = openLocalDatabase({ runMigrations: true });
+
+    try {
+      insertOrganization(local.sqlite, "org_1", "Acme", "acme");
+      insertOrganization(local.sqlite, "org_2", "Beta", "beta");
+      insertWorkItem(local.sqlite, "org_1", "work_1");
+      insertWorkItem(local.sqlite, "org_2", "work_2");
+
+      const org1Context = context;
+      const org2Context: ReportContext = {
+        ...context,
+        organization: { id: "org_2", name: "Beta" },
+        workItems: [{ ...context.workItems[0]!, id: "work_2", title: "Beta export" }],
+      };
+
+      const org1 = saveCompleteAnalysisResult(local.sqlite, {
+        run: {
+          id: "analysis_run_1",
+          organizationId: "org_1",
+          scopeType: "github_repository",
+          scopeId: "repo_1",
+          periodStart: "2026-06-22",
+          periodEnd: "2026-06-29",
+          status: "completed",
+          startedAt: "2026-06-29T09:00:00.000Z",
+        },
+        metrics: [{ id: "metric_1", name: "activity.events", value: 2 }],
+        highlights: [{ id: "highlight_1", ...highlight }],
+        reportContext: { id: "report_context_1", context: org1Context },
+      });
+      saveCompleteAnalysisResult(local.sqlite, {
+        run: {
+          id: "analysis_run_2",
+          organizationId: "org_2",
+          scopeType: "github_repository",
+          scopeId: "repo_2",
+          periodStart: "2026-06-22",
+          periodEnd: "2026-06-29",
+          status: "completed",
+          startedAt: "2026-06-29T09:00:00.000Z",
+        },
+        metrics: [{ id: "metric_2", name: "activity.events", value: 5 }],
+        highlights: [{ id: "highlight_2", ...highlight, workItemId: "work_2" }],
+        reportContext: { id: "report_context_2", context: org2Context },
+      });
+
+      const report = saveCompleteReportResult(local.sqlite, {
+        report: {
+          id: "report_1",
+          organizationId: "org_1",
+          analysisReportContextId: org1.reportContext.id,
+          reportType: "weekly",
+          scopeType: "github_repository",
+          scopeId: "repo_1",
+          periodStart: "2026-06-22",
+          periodEnd: "2026-06-29",
+          status: "completed",
+          title: "Weekly report: acme/widgets",
+          bodyMarkdown: "# Weekly report: acme/widgets\n",
+          structured: {},
+        },
+        inputs: [{ id: "report_input_1", inputType: "analysis_metric", inputId: "metric_1" }],
+      });
+
+      assert.equal(getAnalysisRunForOrganization(local.sqlite, "org_1", "analysis_run_1")?.id, "analysis_run_1");
+      assert.equal(getAnalysisRunForOrganization(local.sqlite, "org_2", "analysis_run_1"), undefined);
+      assert.deepEqual(
+        listAnalysisMetricsForOrganization(local.sqlite, "org_1", "analysis_run_1").map((metric) => metric.id),
+        ["metric_1"],
+      );
+      assert.deepEqual(listAnalysisHighlightsForOrganization(local.sqlite, "org_2", "analysis_run_1"), []);
+      assert.equal(getReportForOrganization(local.sqlite, "org_1", report.report.id)?.id, "report_1");
+      assert.equal(getReportForOrganization(local.sqlite, "org_2", report.report.id), undefined);
+      assert.deepEqual(
+        listReportInputsForOrganization(local.sqlite, "org_1", report.report.id).map((input) => input.id),
+        ["report_input_1"],
+      );
+      assert.deepEqual(listReportInputsForOrganization(local.sqlite, "org_2", report.report.id), []);
+    } finally {
+      local.close();
+    }
+  });
 });
 
-function insertWorkItem(database: { prepare(sql: string): { run(...values: unknown[]): unknown } }): void {
+function insertOrganization(
+  database: { prepare(sql: string): { run(...values: unknown[]): unknown } },
+  id = "org_1",
+  name = "Acme",
+  slug = "acme",
+): void {
+  database.prepare("INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)").run(id, name, slug);
+}
+
+function insertWorkItem(
+  database: { prepare(sql: string): { run(...values: unknown[]): unknown } },
+  organizationId = "org_1",
+  id = "work_1",
+): void {
   database
     .prepare(
       `INSERT INTO work_items (
         id, organization_id, provider, source_type, external_id, title, status, work_type
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run("work_1", "org_1", "github", "github.pull_request", "42", "Billing export", "merged", "github_pull_request");
+    .run(id, organizationId, "github", "github.pull_request", id, "Billing export", "merged", "github_pull_request");
 }

@@ -53,6 +53,11 @@ export interface SavedReportResult {
 }
 
 export function insertReport(database: DatabaseSync, report: ReportRecord): ReportRecord {
+  requireReferencedAnalysisContext(database, report.organizationId, report.analysisReportContextId);
+  if (report.createdByUserId) {
+    requireUserMembership(database, report.organizationId, report.createdByUserId);
+  }
+
   database
     .prepare(
       `INSERT INTO reports (
@@ -82,6 +87,9 @@ export function insertReport(database: DatabaseSync, report: ReportRecord): Repo
 }
 
 export function insertReportInput(database: DatabaseSync, input: ReportInputRecord): ReportInputRecord {
+  const report = requireReport(database, input.reportId);
+  requireReportInputReference(database, report.organizationId, input);
+
   database
     .prepare(
       `INSERT INTO report_inputs (id, report_id, input_type, input_id, metadata_json)
@@ -114,6 +122,15 @@ export function getReport(database: DatabaseSync, id: string): ReportRecord | un
   return row ? mapReport(row as Record<string, unknown>) : undefined;
 }
 
+export function getReportForOrganization(
+  database: DatabaseSync,
+  organizationId: string,
+  id: string,
+): ReportRecord | undefined {
+  const row = database.prepare("SELECT * FROM reports WHERE organization_id = ? AND id = ?").get(organizationId, id);
+  return row ? mapReport(row as Record<string, unknown>) : undefined;
+}
+
 export function requireReport(database: DatabaseSync, id: string): ReportRecord {
   const report = getReport(database, id);
 
@@ -131,6 +148,23 @@ export function listReportInputs(database: DatabaseSync, reportId: string): Repo
     .map((row) => mapReportInput(row as Record<string, unknown>));
 }
 
+export function listReportInputsForOrganization(
+  database: DatabaseSync,
+  organizationId: string,
+  reportId: string,
+): ReportInputRecord[] {
+  return database
+    .prepare(
+      `SELECT report_inputs.*
+       FROM report_inputs
+       JOIN reports ON reports.id = report_inputs.report_id
+       WHERE reports.organization_id = ? AND report_inputs.report_id = ?
+       ORDER BY report_inputs.id`,
+    )
+    .all(organizationId, reportId)
+    .map((row) => mapReportInput(row as Record<string, unknown>));
+}
+
 export function requireReportInput(database: DatabaseSync, id: string): ReportInputRecord {
   const row = database.prepare("SELECT * FROM report_inputs WHERE id = ?").get(id);
 
@@ -139,6 +173,54 @@ export function requireReportInput(database: DatabaseSync, id: string): ReportIn
   }
 
   return mapReportInput(row as Record<string, unknown>);
+}
+
+function requireReferencedAnalysisContext(database: DatabaseSync, organizationId: string, contextId: string): void {
+  const row = database
+    .prepare("SELECT id FROM analysis_report_contexts WHERE organization_id = ? AND id = ?")
+    .get(organizationId, contextId);
+  if (!row) {
+    throw new Error(`Analysis report context not found in organization ${organizationId}: ${contextId}`);
+  }
+}
+
+function requireUserMembership(database: DatabaseSync, organizationId: string, userId: string): void {
+  const row = database
+    .prepare(
+      `SELECT id FROM organization_memberships
+       WHERE organization_id = ? AND user_id = ? AND status = 'active'`,
+    )
+    .get(organizationId, userId);
+  if (!row) {
+    throw new Error(`Active organization membership not found: ${organizationId}/${userId}`);
+  }
+}
+
+function requireReportInputReference(
+  database: DatabaseSync,
+  organizationId: string,
+  input: Pick<ReportInputRecord, "inputType" | "inputId">,
+): void {
+  const tableByInputType: Partial<Record<ReportInputType, string>> = {
+    analysis_report_context: "analysis_report_contexts",
+    analysis_metric: "analysis_metrics",
+    analysis_highlight: "analysis_highlights",
+    activity_event: "activity_events",
+    work_item: "work_items",
+    source_object: "source_objects",
+    previous_report: "reports",
+  };
+  const table = tableByInputType[input.inputType];
+  if (!table) {
+    return;
+  }
+
+  const row = database
+    .prepare(`SELECT id FROM ${table} WHERE organization_id = ? AND id = ?`)
+    .get(organizationId, input.inputId);
+  if (!row) {
+    throw new Error(`${input.inputType} input not found in organization ${organizationId}: ${input.inputId}`);
+  }
 }
 
 function mapReport(row: Record<string, unknown>): ReportRecord {

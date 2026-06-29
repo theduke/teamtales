@@ -35,12 +35,36 @@ describe("teamtales CLI", () => {
     }
   });
 
-  it("creates organization metadata without requiring an organizations table", async () => {
+  it("persists organization metadata and an owner membership", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
+    const db = join(directory, "teamtales.sqlite");
     const io = capture();
-    const result = await runCli(["org", "create", "--id", "org_acme", "--name", "Acme"], io.io);
 
-    assert.equal(result.exitCode, 0);
-    assert.deepEqual(JSON.parse(io.stdout[0] ?? "{}"), { id: "org_acme", name: "Acme" });
+    try {
+      const result = await runCli(
+        ["org", "create", "--db", db, "--id", "org_acme", "--name", "Acme", "--owner-email", "owner@example.com"],
+        io.io,
+      );
+
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(JSON.parse(io.stdout[0] ?? "{}"), {
+        id: "org_acme",
+        name: "Acme",
+        slug: "acme",
+        ownerUserId: "user_c8cd3c6427301eaf",
+        ownerMembershipId: "membership_584ab5720909fe17",
+      });
+
+      const sqlite = new DatabaseSync(db);
+      try {
+        assert.equal((sqlite.prepare("SELECT count(*) AS count FROM organizations").get() as { count: number }).count, 1);
+        assert.equal((sqlite.prepare("SELECT role FROM organization_memberships WHERE organization_id = ?").get("org_acme") as { role: string }).role, "owner");
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("adds a PAT integration with an encrypted credential and no plaintext storage", async () => {
@@ -48,6 +72,7 @@ describe("teamtales CLI", () => {
     const db = join(directory, "teamtales.sqlite");
 
     try {
+      await createTestOrganization(db);
       const io = capture();
       const result = await runCli(
         [
@@ -57,6 +82,8 @@ describe("teamtales CLI", () => {
           db,
           "--organization-id",
           "org_acme",
+          "--user-id",
+          "user_owner",
           "--provider",
           "github",
           "--name",
@@ -93,6 +120,7 @@ describe("teamtales CLI", () => {
     const db = join(directory, "teamtales.sqlite");
 
     try {
+      await createTestOrganization(db);
       const integration = capture();
       await runCli(
         [
@@ -102,6 +130,8 @@ describe("teamtales CLI", () => {
           db,
           "--organization-id",
           "org_acme",
+          "--user-id",
+          "user_owner",
           "--provider",
           "linear",
           "--token",
@@ -121,6 +151,8 @@ describe("teamtales CLI", () => {
           db,
           "--organization-id",
           "org_acme",
+          "--user-id",
+          "user_owner",
           "--integration-id",
           integrationId,
           "--provider",
@@ -191,6 +223,7 @@ describe("teamtales CLI", () => {
       await runCli(["init-db", "--db", db], capture().io);
       const sqlite = new DatabaseSync(db);
       try {
+        seedOrganization(sqlite, "org_acme", "Acme", "acme");
         sqlite
           .prepare(
             `INSERT INTO analysis_runs (
@@ -256,7 +289,95 @@ describe("teamtales CLI", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it("rejects a sync scope attached to another organization's integration", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
+    const db = join(directory, "teamtales.sqlite");
+
+    try {
+      await createTestOrganization(db, { id: "org_a", name: "A", ownerId: "user_a", ownerEmail: "a@example.com" });
+      await createTestOrganization(db, { id: "org_b", name: "B", ownerId: "user_b", ownerEmail: "b@example.com" });
+      const integration = capture();
+      await runCli(
+        [
+          "integration",
+          "add-pat",
+          "--db",
+          db,
+          "--organization-id",
+          "org_a",
+          "--user-id",
+          "user_a",
+          "--provider",
+          "github",
+          "--token",
+          "github_pat_secret_1234567890",
+        ],
+        integration.io,
+        { TEAMTALES_CREDENTIAL_KEY: key },
+      );
+      const integrationId = JSON.parse(integration.stdout[0] ?? "{}").id as string;
+
+      const io = capture();
+      const result = await runCli(
+        [
+          "scope",
+          "add",
+          "--db",
+          db,
+          "--organization-id",
+          "org_b",
+          "--user-id",
+          "user_b",
+          "--integration-id",
+          integrationId,
+          "--provider",
+          "github",
+          "--type",
+          "github.repository",
+          "--name",
+          "acme/widgets",
+        ],
+        io.io,
+      );
+
+      assert.equal(result.exitCode, 1);
+      assert.match(io.stderr[0] ?? "", /Integration not found in organization org_b/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
+
+async function createTestOrganization(
+  db: string,
+  options: { id?: string; name?: string; ownerId?: string; ownerEmail?: string } = {},
+): Promise<string> {
+  const id = options.id ?? "org_acme";
+  const ownerId = options.ownerId ?? "user_owner";
+  await runCli(
+    [
+      "org",
+      "create",
+      "--db",
+      db,
+      "--id",
+      id,
+      "--name",
+      options.name ?? "Acme",
+      "--owner-id",
+      ownerId,
+      "--owner-email",
+      options.ownerEmail ?? "owner@example.com",
+    ],
+    capture().io,
+  );
+  return ownerId;
+}
+
+function seedOrganization(sqlite: DatabaseSync, id: string, name: string, slug: string): void {
+  sqlite.prepare("INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)").run(id, name, slug);
+}
 
 function capture(): CapturedIo {
   const stdout: string[] = [];

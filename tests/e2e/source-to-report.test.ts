@@ -214,6 +214,9 @@ function loadFixture(): Fixture {
 
 function seedIntegrationRows(database: DatabaseSync, fixture: Fixture): void {
   database
+    .prepare("INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)")
+    .run(fixture.organization.id, fixture.organization.name, "fixtureco");
+  database
     .prepare(
       `INSERT INTO integrations (id, organization_id, provider, auth_type, status, display_name)
        VALUES (?, ?, ?, ?, ?, ?)`,

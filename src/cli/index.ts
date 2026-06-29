@@ -17,7 +17,14 @@ import {
 } from "../index.js";
 import { openLocalDatabase } from "../db/index.js";
 import { createIntegrationCredentialRecord } from "../security/index.js";
-import { saveCompleteAnalysisResult, saveCompleteReportResult } from "../persistence/index.js";
+import {
+  createOrganizationWithOwner,
+  requireIntegrationInOrganization,
+  requireOrganization,
+  requireOrganizationRole,
+  saveCompleteAnalysisResult,
+  saveCompleteReportResult,
+} from "../persistence/index.js";
 import { parseJsonObject } from "../persistence/sqlite.js";
 
 type Provider = "github" | "linear";
@@ -92,11 +99,33 @@ function migrateDatabase(parsed: ParsedArgs): Record<string, unknown> {
   }
 }
 
-function createOrganization(parsed: ParsedArgs): Record<string, string> {
+function createOrganization(parsed: ParsedArgs): Record<string, unknown> {
   const name = requiredOption(parsed, "name");
   const id = optionalString(parsed, "id") ?? stableId("org", name);
+  const slug = optionalString(parsed, "slug") ?? slugify(name);
+  const ownerEmail = optionalString(parsed, "owner-email");
+  const ownerName = optionalString(parsed, "owner-name") ?? ownerEmail ?? "Local Owner";
+  const ownerId = optionalString(parsed, "owner-id") ?? stableId("user", ownerEmail ?? ownerName);
+  const membershipId = optionalString(parsed, "membership-id") ?? stableId("membership", id, ownerId);
+  const local = openCliDatabase(parsed, true);
 
-  return { id, name };
+  try {
+    const created = createOrganizationWithOwner(local.sqlite, {
+      organization: { id, name, slug },
+      owner: { id: ownerId, displayName: ownerName, primaryEmail: ownerEmail ?? null },
+      membershipId,
+    });
+
+    return {
+      id: created.organization.id,
+      name: created.organization.name,
+      slug: created.organization.slug,
+      ownerUserId: created.owner.id,
+      ownerMembershipId: created.membership.id,
+    };
+  } finally {
+    local.close();
+  }
 }
 
 function addPersonalAccessTokenIntegration(parsed: ParsedArgs, env: NodeJS.ProcessEnv): Record<string, unknown> {
@@ -114,6 +143,9 @@ function addPersonalAccessTokenIntegration(parsed: ParsedArgs, env: NodeJS.Proce
 
   const local = openCliDatabase(parsed, true);
   try {
+    requireOrganization(local.sqlite, organizationId);
+    requireOrganizationRole(local.sqlite, organizationId, requiredOption(parsed, "user-id"), ["owner", "admin"]);
+
     const now = new Date().toISOString();
     local.sqlite
       .prepare(
@@ -171,6 +203,10 @@ function addSyncScope(parsed: ParsedArgs): Record<string, unknown> {
   const local = openCliDatabase(parsed, true);
 
   try {
+    requireOrganization(local.sqlite, organizationId);
+    requireOrganizationRole(local.sqlite, organizationId, requiredOption(parsed, "user-id"), ["owner", "admin"]);
+    requireIntegrationInOrganization(local.sqlite, organizationId, integrationId);
+
     local.sqlite
       .prepare(
         `INSERT INTO sync_scopes (
@@ -362,6 +398,7 @@ function reportContextFromDatabase(
   database: DatabaseSync,
   parsed: ParsedArgs,
 ): { context: ReportContext; analysisReportContextId?: string } {
+  const organizationId = requiredOption(parsed, "organization-id");
   const existing = latestReportContext(database, parsed);
 
   if (existing) {
@@ -372,7 +409,7 @@ function reportContextFromDatabase(
     organization: requiredOrganization(parsed),
     scope: requiredScope(parsed),
     period: requiredPeriod(parsed),
-    freshness: databaseFreshness(database),
+    freshness: databaseFreshness(database, organizationId),
     events: readActivityEvents(database, parsed),
     workItems: readWorkItems(database, parsed),
     people: readPeople(database, parsed),
@@ -385,17 +422,13 @@ function latestReportContext(
   database: DatabaseSync,
   parsed: ParsedArgs,
 ): { context: ReportContext; analysisReportContextId: string } | undefined {
-  const organizationId = optionalString(parsed, "organization-id");
+  const organizationId = requiredOption(parsed, "organization-id");
   const scopeId = optionalString(parsed, "scope-id");
   const periodStart = optionalString(parsed, "period-start");
   const periodEnd = optionalString(parsed, "period-end");
-  const clauses: string[] = [];
-  const values: string[] = [];
+  const clauses: string[] = ["organization_id = ?"];
+  const values: string[] = [organizationId];
 
-  if (organizationId) {
-    clauses.push("organization_id = ?");
-    values.push(organizationId);
-  }
   if (scopeId) {
     clauses.push("scope_id = ?");
     values.push(scopeId);
@@ -495,10 +528,16 @@ function readPeople(database: DatabaseSync, parsed: ParsedArgs): Person[] {
     });
 }
 
-function databaseFreshness(database: DatabaseSync): AnalysisInput["freshness"] {
+function databaseFreshness(database: DatabaseSync, organizationId: string): AnalysisInput["freshness"] {
   const rows = database
-    .prepare("SELECT provider, MAX(last_success_at) AS last_success_at FROM sync_scopes GROUP BY provider ORDER BY provider")
-    .all() as Array<Record<string, unknown>>;
+    .prepare(
+      `SELECT provider, MAX(last_success_at) AS last_success_at
+       FROM sync_scopes
+       WHERE organization_id = ?
+       GROUP BY provider
+       ORDER BY provider`,
+    )
+    .all(organizationId) as Array<Record<string, unknown>>;
   const freshness: { github?: string; linear?: string; warnings: string[] } = { warnings: [] };
 
   for (const row of rows) {
@@ -517,6 +556,15 @@ function requiredOrganization(parsed: ParsedArgs): AnalysisInput["organization"]
     id: requiredOption(parsed, "organization-id"),
     name: optionalString(parsed, "organization-name") ?? requiredOption(parsed, "organization-id"),
   };
+}
+
+function slugify(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "organization";
 }
 
 function requiredScope(parsed: ParsedArgs): AnalysisInput["scope"] {
@@ -671,9 +719,9 @@ function usage(): string {
   return `Usage:
   teamtales init-db --db ./teamtales.sqlite
   teamtales migrate --db ./teamtales.sqlite
-  teamtales org create --name "Acme" [--id org_acme]
-  teamtales integration add-pat --db ./teamtales.sqlite --organization-id org_acme --provider github --name GitHub --token-env GITHUB_TOKEN
-  teamtales scope add --db ./teamtales.sqlite --organization-id org_acme --integration-id integration_id --provider github --type github.repository --name owner/repo
+  teamtales org create --db ./teamtales.sqlite --name "Acme" --owner-email owner@example.com [--id org_acme]
+  teamtales integration add-pat --db ./teamtales.sqlite --organization-id org_acme --user-id user_id --provider github --name GitHub --token-env GITHUB_TOKEN
+  teamtales scope add --db ./teamtales.sqlite --organization-id org_acme --user-id user_id --integration-id integration_id --provider github --type github.repository --name owner/repo
   teamtales report weekly --db ./teamtales.sqlite --organization-id org_acme --period-start 2026-06-22 --period-end 2026-06-29 [--fixture context.json] [--persist] [--output report.md]
 
 Credential encryption uses --encryption-key or TEAMTALES_CREDENTIAL_KEY. Provider sync commands are placeholders.`;

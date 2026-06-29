@@ -1,14 +1,42 @@
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE organizations (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE users (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  primary_email TEXT UNIQUE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE organization_memberships (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (organization_id, user_id)
+);
+
 CREATE TABLE integrations (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
   auth_type TEXT NOT NULL CHECK (auth_type IN ('personal_access_token', 'github_app', 'linear_oauth', 'linear_app')),
   status TEXT NOT NULL,
   display_name TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id, organization_id)
 );
 
 CREATE TABLE integration_credentials (
@@ -23,7 +51,7 @@ CREATE TABLE integration_credentials (
 
 CREATE TABLE sync_scopes (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
   scope_type TEXT NOT NULL,
@@ -34,12 +62,14 @@ CREATE TABLE sync_scopes (
   last_success_at TEXT,
   last_attempt_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id, organization_id),
+  FOREIGN KEY (integration_id, organization_id) REFERENCES integrations(id, organization_id) ON DELETE CASCADE
 );
 
 CREATE TABLE sync_cursors (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
   sync_scope_id TEXT NOT NULL REFERENCES sync_scopes(id) ON DELETE CASCADE,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
@@ -51,12 +81,14 @@ CREATE TABLE sync_cursors (
   last_attempt_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE (sync_scope_id, object_type, cursor_kind)
+  UNIQUE (sync_scope_id, object_type, cursor_kind),
+  FOREIGN KEY (integration_id, organization_id) REFERENCES integrations(id, organization_id) ON DELETE CASCADE,
+  FOREIGN KEY (sync_scope_id, organization_id) REFERENCES sync_scopes(id, organization_id) ON DELETE CASCADE
 );
 
 CREATE TABLE sync_runs (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
   sync_scope_id TEXT REFERENCES sync_scopes(id) ON DELETE SET NULL,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
@@ -71,7 +103,10 @@ CREATE TABLE sync_runs (
   objects_failed INTEGER NOT NULL DEFAULT 0 CHECK (objects_failed >= 0),
   activity_events_emitted INTEGER NOT NULL DEFAULT 0 CHECK (activity_events_emitted >= 0),
   error TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id, organization_id),
+  FOREIGN KEY (integration_id, organization_id) REFERENCES integrations(id, organization_id) ON DELETE CASCADE,
+  FOREIGN KEY (sync_scope_id, organization_id) REFERENCES sync_scopes(id, organization_id)
 );
 
 CREATE TABLE sync_run_items (
@@ -87,7 +122,7 @@ CREATE TABLE sync_run_items (
 
 CREATE TABLE source_objects (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
   sync_scope_id TEXT REFERENCES sync_scopes(id) ON DELETE SET NULL,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
@@ -105,7 +140,10 @@ CREATE TABLE source_objects (
   source_state TEXT NOT NULL CHECK (source_state IN ('active', 'deleted', 'inaccessible', 'error')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE (provider, object_type, external_id)
+  UNIQUE (id, organization_id),
+  UNIQUE (organization_id, provider, object_type, external_id),
+  FOREIGN KEY (integration_id, organization_id) REFERENCES integrations(id, organization_id) ON DELETE CASCADE,
+  FOREIGN KEY (sync_scope_id, organization_id) REFERENCES sync_scopes(id, organization_id)
 );
 
 CREATE TABLE source_object_versions (
@@ -119,7 +157,7 @@ CREATE TABLE source_object_versions (
 
 CREATE TABLE source_webhook_events (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
   event_type TEXT NOT NULL,
@@ -131,21 +169,23 @@ CREATE TABLE source_webhook_events (
   processed_at TEXT,
   status TEXT NOT NULL,
   error TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (integration_id, organization_id) REFERENCES integrations(id, organization_id) ON DELETE CASCADE
 );
 
 CREATE TABLE people (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   display_name TEXT NOT NULL,
   primary_email TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id, organization_id)
 );
 
 CREATE TABLE external_identities (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   person_id TEXT REFERENCES people(id) ON DELETE SET NULL,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
   external_id TEXT NOT NULL,
@@ -154,12 +194,13 @@ CREATE TABLE external_identities (
   display_name TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE (provider, external_id)
+  UNIQUE (organization_id, provider, external_id),
+  FOREIGN KEY (person_id, organization_id) REFERENCES people(id, organization_id)
 );
 
 CREATE TABLE work_items (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   source_object_id TEXT REFERENCES source_objects(id) ON DELETE SET NULL,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
   source_type TEXT NOT NULL,
@@ -175,12 +216,14 @@ CREATE TABLE work_items (
   completed_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE (provider, source_type, external_id)
+  UNIQUE (id, organization_id),
+  UNIQUE (organization_id, provider, source_type, external_id),
+  FOREIGN KEY (source_object_id, organization_id) REFERENCES source_objects(id, organization_id)
 );
 
 CREATE TABLE activity_events (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   source_object_id TEXT REFERENCES source_objects(id) ON DELETE SET NULL,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
   event_type TEXT NOT NULL,
@@ -194,12 +237,15 @@ CREATE TABLE activity_events (
   body TEXT,
   url TEXT,
   metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json)),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (source_object_id, organization_id) REFERENCES source_objects(id, organization_id),
+  FOREIGN KEY (actor_person_id, organization_id) REFERENCES people(id, organization_id),
+  FOREIGN KEY (work_item_id, organization_id) REFERENCES work_items(id, organization_id)
 );
 
 CREATE TABLE analysis_runs (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   scope_type TEXT NOT NULL,
   scope_id TEXT NOT NULL,
   period_start TEXT NOT NULL,
@@ -208,12 +254,13 @@ CREATE TABLE analysis_runs (
   started_at TEXT NOT NULL,
   finished_at TEXT,
   error TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id, organization_id)
 );
 
 CREATE TABLE analysis_metrics (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   analysis_run_id TEXT NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
   scope_type TEXT NOT NULL,
   scope_id TEXT NOT NULL,
@@ -222,12 +269,13 @@ CREATE TABLE analysis_metrics (
   metric_name TEXT NOT NULL,
   metric_value REAL NOT NULL,
   dimensions_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(dimensions_json)),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (analysis_run_id, organization_id) REFERENCES analysis_runs(id, organization_id) ON DELETE CASCADE
 );
 
 CREATE TABLE analysis_highlights (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   analysis_run_id TEXT NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
   work_item_id TEXT REFERENCES work_items(id) ON DELETE SET NULL,
   highlight_type TEXT NOT NULL CHECK (highlight_type IN ('completed_work', 'merged_pr', 'active_discussion', 'cross_team_collaboration', 'project_progress', 'potential_blocker', 'long_running_item_completed')),
@@ -235,24 +283,28 @@ CREATE TABLE analysis_highlights (
   title TEXT NOT NULL,
   reason TEXT NOT NULL,
   source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json)),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (analysis_run_id, organization_id) REFERENCES analysis_runs(id, organization_id) ON DELETE CASCADE,
+  FOREIGN KEY (work_item_id, organization_id) REFERENCES work_items(id, organization_id)
 );
 
 CREATE TABLE analysis_report_contexts (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   analysis_run_id TEXT NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
   scope_type TEXT NOT NULL,
   scope_id TEXT NOT NULL,
   period_start TEXT NOT NULL,
   period_end TEXT NOT NULL,
   context_json TEXT NOT NULL CHECK (json_valid(context_json)),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id, organization_id),
+  FOREIGN KEY (analysis_run_id, organization_id) REFERENCES analysis_runs(id, organization_id) ON DELETE CASCADE
 );
 
 CREATE TABLE ai_runs (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   run_type TEXT NOT NULL CHECK (run_type IN ('weekly_report', 'monthly_report', 'quarterly_report', 'comic_script', 'movie_script', 'fact_check', 'edit')),
   status TEXT NOT NULL,
   model TEXT,
@@ -262,7 +314,8 @@ CREATE TABLE ai_runs (
   started_at TEXT NOT NULL,
   finished_at TEXT,
   error TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id, organization_id)
 );
 
 CREATE TABLE ai_run_steps (
@@ -280,7 +333,7 @@ CREATE TABLE ai_run_steps (
 
 CREATE TABLE reports (
   id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   analysis_report_context_id TEXT NOT NULL REFERENCES analysis_report_contexts(id) ON DELETE RESTRICT,
   report_type TEXT NOT NULL CHECK (report_type IN ('weekly', 'monthly', 'quarterly', 'custom')),
   scope_type TEXT NOT NULL,
@@ -292,9 +345,11 @@ CREATE TABLE reports (
   summary TEXT,
   body_markdown TEXT NOT NULL,
   structured_json TEXT NOT NULL CHECK (json_valid(structured_json)),
-  created_by_user_id TEXT,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (id, organization_id),
+  FOREIGN KEY (analysis_report_context_id, organization_id) REFERENCES analysis_report_contexts(id, organization_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE report_inputs (

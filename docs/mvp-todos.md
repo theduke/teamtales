@@ -20,6 +20,10 @@
 - [x] Add real Linear workspace/team sync using PAT credentials.
 - [x] Persist analysis runs, metrics, highlights, report contexts, reports, and report inputs.
 - [x] Add end-to-end fixture tests for sync-to-report flow.
+- [x] Persist organizations, users, and organization memberships.
+- [x] Enforce organization ownership with SQLite foreign keys and scoped uniqueness.
+- [x] Validate tenant membership and same-organization integration ownership in CLI writes.
+- [x] Add organization-scoped persistence reads and cross-tenant isolation tests.
 
 ## Deferred
 

@@ -12,6 +12,9 @@ if (migrationFiles.length === 0) {
 }
 
 const expectedTables = [
+  "organizations",
+  "users",
+  "organization_memberships",
   "integrations",
   "integration_credentials",
   "sync_scopes",

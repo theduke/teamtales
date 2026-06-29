@@ -205,6 +205,15 @@ export function getAnalysisRun(database: DatabaseSync, id: string): AnalysisRunR
   return row ? mapAnalysisRun(row as Record<string, unknown>) : undefined;
 }
 
+export function getAnalysisRunForOrganization(
+  database: DatabaseSync,
+  organizationId: string,
+  id: string,
+): AnalysisRunRecord | undefined {
+  const row = database.prepare("SELECT * FROM analysis_runs WHERE organization_id = ? AND id = ?").get(organizationId, id);
+  return row ? mapAnalysisRun(row as Record<string, unknown>) : undefined;
+}
+
 export function requireAnalysisRun(database: DatabaseSync, id: string): AnalysisRunRecord {
   const run = getAnalysisRun(database, id);
 
@@ -222,6 +231,17 @@ export function listAnalysisMetrics(database: DatabaseSync, analysisRunId: strin
     .map((row) => mapAnalysisMetric(row as Record<string, unknown>));
 }
 
+export function listAnalysisMetricsForOrganization(
+  database: DatabaseSync,
+  organizationId: string,
+  analysisRunId: string,
+): AnalysisMetricRecord[] {
+  return database
+    .prepare("SELECT * FROM analysis_metrics WHERE organization_id = ? AND analysis_run_id = ? ORDER BY id")
+    .all(organizationId, analysisRunId)
+    .map((row) => mapAnalysisMetric(row as Record<string, unknown>));
+}
+
 export function requireAnalysisMetric(database: DatabaseSync, id: string): AnalysisMetricRecord {
   const row = database.prepare("SELECT * FROM analysis_metrics WHERE id = ?").get(id);
 
@@ -232,10 +252,30 @@ export function requireAnalysisMetric(database: DatabaseSync, id: string): Analy
   return mapAnalysisMetric(row as Record<string, unknown>);
 }
 
+export function getAnalysisMetricForOrganization(
+  database: DatabaseSync,
+  organizationId: string,
+  id: string,
+): AnalysisMetricRecord | undefined {
+  const row = database.prepare("SELECT * FROM analysis_metrics WHERE organization_id = ? AND id = ?").get(organizationId, id);
+  return row ? mapAnalysisMetric(row as Record<string, unknown>) : undefined;
+}
+
 export function listAnalysisHighlights(database: DatabaseSync, analysisRunId: string): AnalysisHighlightRecord[] {
   return database
     .prepare("SELECT * FROM analysis_highlights WHERE analysis_run_id = ? ORDER BY score DESC, id")
     .all(analysisRunId)
+    .map((row) => mapAnalysisHighlight(row as Record<string, unknown>));
+}
+
+export function listAnalysisHighlightsForOrganization(
+  database: DatabaseSync,
+  organizationId: string,
+  analysisRunId: string,
+): AnalysisHighlightRecord[] {
+  return database
+    .prepare("SELECT * FROM analysis_highlights WHERE organization_id = ? AND analysis_run_id = ? ORDER BY score DESC, id")
+    .all(organizationId, analysisRunId)
     .map((row) => mapAnalysisHighlight(row as Record<string, unknown>));
 }
 
@@ -249,11 +289,33 @@ export function requireAnalysisHighlight(database: DatabaseSync, id: string): An
   return mapAnalysisHighlight(row as Record<string, unknown>);
 }
 
+export function getAnalysisHighlightForOrganization(
+  database: DatabaseSync,
+  organizationId: string,
+  id: string,
+): AnalysisHighlightRecord | undefined {
+  const row = database
+    .prepare("SELECT * FROM analysis_highlights WHERE organization_id = ? AND id = ?")
+    .get(organizationId, id);
+  return row ? mapAnalysisHighlight(row as Record<string, unknown>) : undefined;
+}
+
 export function getAnalysisReportContext(
   database: DatabaseSync,
   id: string,
 ): AnalysisReportContextRecord | undefined {
   const row = database.prepare("SELECT * FROM analysis_report_contexts WHERE id = ?").get(id);
+  return row ? mapAnalysisReportContext(row as Record<string, unknown>) : undefined;
+}
+
+export function getAnalysisReportContextForOrganization(
+  database: DatabaseSync,
+  organizationId: string,
+  id: string,
+): AnalysisReportContextRecord | undefined {
+  const row = database
+    .prepare("SELECT * FROM analysis_report_contexts WHERE organization_id = ? AND id = ?")
+    .get(organizationId, id);
   return row ? mapAnalysisReportContext(row as Record<string, unknown>) : undefined;
 }
 
