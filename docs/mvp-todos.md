@@ -11,10 +11,10 @@
 
 ## Next MVP
 
-- [ ] Add local database access and migration execution.
-- [ ] Add encrypted integration credential helpers with token hints and redaction.
-- [ ] Add normalization from GitHub/Linear source objects into `work_items` and `activity_events`.
-- [ ] Add deterministic markdown report generation from `ReportContext`.
+- [x] Add local database access and migration execution.
+- [x] Add encrypted integration credential helpers with token hints and redaction.
+- [x] Add normalization from GitHub/Linear source objects into `work_items` and `activity_events`.
+- [x] Add deterministic markdown report generation from `ReportContext`.
 - [ ] Add manual CLI commands for organization setup, integration/scopes, sync, analysis, and reports.
 - [ ] Add real GitHub repository sync using PAT credentials.
 - [ ] Add real Linear workspace/team sync using PAT credentials.
