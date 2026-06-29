@@ -18,7 +18,7 @@
 - [ ] Add manual CLI commands for organization setup, integration/scopes, sync, analysis, and reports.
 - [ ] Add real GitHub repository sync using PAT credentials.
 - [ ] Add real Linear workspace/team sync using PAT credentials.
-- [ ] Persist analysis runs, metrics, highlights, report contexts, reports, and report inputs.
+- [x] Persist analysis runs, metrics, highlights, report contexts, reports, and report inputs.
 - [ ] Add end-to-end fixture tests for sync-to-report flow.
 
 ## Deferred
