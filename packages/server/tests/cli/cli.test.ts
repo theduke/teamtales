@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +40,8 @@ describe("teamtales CLI", () => {
     const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
     const db = join(directory, "teamtales.sqlite");
     const io = capture();
+    const expectedOwnerUserId = stableTestId("user", "owner@example.com");
+    const expectedOwnerMembershipId = stableTestId("membership", "org_acme", expectedOwnerUserId);
 
     try {
       const result = await runCli(
@@ -51,8 +54,8 @@ describe("teamtales CLI", () => {
         id: "org_acme",
         name: "Acme",
         slug: "acme",
-        ownerUserId: "user_c8cd3c6427301eaf",
-        ownerMembershipId: "membership_584ab5720909fe17",
+        ownerUserId: expectedOwnerUserId,
+        ownerMembershipId: expectedOwnerMembershipId,
       });
 
       const sqlite = new DatabaseSync(db);
@@ -377,6 +380,11 @@ async function createTestOrganization(
 
 function seedOrganization(sqlite: DatabaseSync, id: string, name: string, slug: string): void {
   sqlite.prepare("INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)").run(id, name, slug);
+}
+
+function stableTestId(prefix: string, ...parts: string[]): string {
+  const digest = createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 16);
+  return `${prefix}_${digest}`;
 }
 
 function capture(): CapturedIo {

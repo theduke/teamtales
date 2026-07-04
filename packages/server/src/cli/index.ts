@@ -7,27 +7,23 @@ import { pathToFileURL } from "node:url";
 
 import {
   buildReportContext,
-  generateWeeklyMarkdownReport,
   type ActivityEvent,
   type AnalysisInput,
   type Person,
+  type Provider,
   type ReportContext,
   type ReportScopeType,
   type WorkItem,
 } from "../index.js";
 import { openLocalDatabase } from "../db/index.js";
-import { createIntegrationCredentialRecord } from "../security/index.js";
 import {
-  createOrganizationWithOwner,
-  requireIntegrationInOrganization,
-  requireOrganization,
-  requireOrganizationRole,
-  saveCompleteAnalysisResult,
-  saveCompleteReportResult,
-} from "../persistence/index.js";
+  addPersonalAccessTokenIntegrationService,
+  addSyncScopeService,
+  createOrganizationService,
+  generateWeeklyReportService,
+  resolveReportContext,
+} from "../services/index.js";
 import { parseJsonObject } from "../persistence/sqlite.js";
-
-type Provider = "github" | "linear";
 
 export interface CliIo {
   stdout?: (message: string) => void;
@@ -101,27 +97,25 @@ function migrateDatabase(parsed: ParsedArgs): Record<string, unknown> {
 
 function createOrganization(parsed: ParsedArgs): Record<string, unknown> {
   const name = requiredOption(parsed, "name");
-  const id = optionalString(parsed, "id") ?? stableId("org", name);
-  const slug = optionalString(parsed, "slug") ?? slugify(name);
-  const ownerEmail = optionalString(parsed, "owner-email");
-  const ownerName = optionalString(parsed, "owner-name") ?? ownerEmail ?? "Local Owner";
-  const ownerId = optionalString(parsed, "owner-id") ?? stableId("user", ownerEmail ?? ownerName);
-  const membershipId = optionalString(parsed, "membership-id") ?? stableId("membership", id, ownerId);
   const local = openCliDatabase(parsed, true);
 
   try {
-    const created = createOrganizationWithOwner(local.sqlite, {
-      organization: { id, name, slug },
-      owner: { id: ownerId, displayName: ownerName, primaryEmail: ownerEmail ?? null },
-      membershipId,
+    const created = createOrganizationService(local.sqlite, {
+      id: optionalString(parsed, "id"),
+      name,
+      slug: optionalString(parsed, "slug"),
+      ownerEmail: optionalString(parsed, "owner-email"),
+      ownerName: optionalString(parsed, "owner-name"),
+      ownerId: optionalString(parsed, "owner-id"),
+      membershipId: optionalString(parsed, "membership-id"),
     });
 
     return {
       id: created.organization.id,
       name: created.organization.name,
       slug: created.organization.slug,
-      ownerUserId: created.owner.id,
-      ownerMembershipId: created.membership.id,
+      ownerUserId: created.ownerUserId,
+      ownerMembershipId: created.ownerMembershipId,
     };
   } finally {
     local.close();
@@ -143,48 +137,25 @@ function addPersonalAccessTokenIntegration(parsed: ParsedArgs, env: NodeJS.Proce
 
   const local = openCliDatabase(parsed, true);
   try {
-    requireOrganization(local.sqlite, organizationId);
-    requireOrganizationRole(local.sqlite, organizationId, requiredOption(parsed, "user-id"), ["owner", "admin"]);
-
-    const now = new Date().toISOString();
-    local.sqlite
-      .prepare(
-        `INSERT INTO integrations (id, organization_id, provider, auth_type, status, display_name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(integrationId, organizationId, provider, "personal_access_token", "active", displayName, now, now);
-
-    const credential = createIntegrationCredentialRecord({
-      id: credentialId,
-      integrationId,
-      plaintextSecret: token,
+    const integration = addPersonalAccessTokenIntegrationService(local.sqlite, {
+      id: integrationId,
+      credentialId,
+      organizationId,
+      userId: requiredOption(parsed, "user-id"),
+      provider,
+      displayName,
+      token,
       encryptionKey,
     });
 
-    local.sqlite
-      .prepare(
-        `INSERT INTO integration_credentials (
-          id, integration_id, encrypted_secret, secret_hint, expires_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        credential.id,
-        credential.integrationId,
-        credential.encryptedSecret,
-        credential.secretHint,
-        credential.expiresAt?.toISOString() ?? null,
-        now,
-        now,
-      );
-
     return {
-      id: integrationId,
-      organizationId,
-      provider,
-      authType: "personal_access_token",
-      displayName,
-      credentialId,
-      secretHint: credential.secretHint,
+      id: integration.id,
+      organizationId: integration.organizationId,
+      provider: integration.provider,
+      authType: integration.authType,
+      displayName: integration.displayName,
+      credentialId: integration.credentialId,
+      secretHint: integration.secretHint,
     };
   } finally {
     local.close();
@@ -199,44 +170,31 @@ function addSyncScope(parsed: ParsedArgs): Record<string, unknown> {
   const externalName = requiredOption(parsed, "name");
   const scopeId = optionalString(parsed, "id") ?? stableId("scope", organizationId, integrationId, scopeType, externalName);
   const config = optionalString(parsed, "config-json") ? parseJsonObject(requiredOption(parsed, "config-json")) : {};
-  const now = new Date().toISOString();
   const local = openCliDatabase(parsed, true);
 
   try {
-    requireOrganization(local.sqlite, organizationId);
-    requireOrganizationRole(local.sqlite, organizationId, requiredOption(parsed, "user-id"), ["owner", "admin"]);
-    requireIntegrationInOrganization(local.sqlite, organizationId, integrationId);
-
-    local.sqlite
-      .prepare(
-        `INSERT INTO sync_scopes (
-          id, organization_id, integration_id, provider, scope_type, external_id, external_name,
-          config_json, enabled, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        scopeId,
-        organizationId,
-        integrationId,
-        provider,
-        scopeType,
-        optionalString(parsed, "external-id") ?? null,
-        externalName,
-        JSON.stringify(config),
-        getBoolean(parsed, "disabled") ? 0 : 1,
-        now,
-        now,
-      );
-
-    return {
+    const scope = addSyncScopeService(local.sqlite, {
       id: scopeId,
       organizationId,
+      userId: requiredOption(parsed, "user-id"),
       integrationId,
       provider,
-      scopeType,
+      scopeType: scopeType as Parameters<typeof addSyncScopeService>[1]["scopeType"],
+      externalId: optionalString(parsed, "external-id"),
       externalName,
+      config: config as Parameters<typeof addSyncScopeService>[1]["config"],
       enabled: !getBoolean(parsed, "disabled"),
-      config,
+    });
+
+    return {
+      id: scope.id,
+      organizationId: scope.organizationId,
+      integrationId: scope.integrationId,
+      provider: scope.provider,
+      scopeType: scope.scopeType,
+      externalName: scope.externalName,
+      enabled: scope.enabled,
+      config: scope.config,
     };
   } finally {
     local.close();
@@ -264,92 +222,24 @@ function generateWeeklyReport(parsed: ParsedArgs): Record<string, unknown> {
 
   try {
     const contextSource = fixture ? reportContextFromFixture(fixture, parsed) : reportContextFromDatabase(local.sqlite, parsed);
-    const markdown = generateWeeklyMarkdownReport(contextSource.context, { title: optionalString(parsed, "title") });
+    const generated = generateWeeklyReportService(local.sqlite, {
+      analysisReportContextId: contextSource.analysisReportContextId,
+      context: contextSource.context,
+      title: optionalString(parsed, "title"),
+      persist,
+      analysisRunIdSeed: "cli",
+    });
 
     if (output) {
       mkdirSync(dirname(output), { recursive: true });
-      writeFileSync(output, markdown, "utf8");
-    }
-
-    let reportId: string | undefined;
-    let analysisReportContextId = contextSource.analysisReportContextId;
-
-    if (persist) {
-      if (!analysisReportContextId) {
-        const now = new Date().toISOString();
-        const analysisRunId = stableId(
-          "analysis_run",
-          contextSource.context.organization.id,
-          contextSource.context.scope.type,
-          contextSource.context.scope.id,
-          contextSource.context.period.start,
-          contextSource.context.period.end,
-          "cli",
-        );
-        analysisReportContextId = stableId("report_context", analysisRunId);
-        saveCompleteAnalysisResult(local.sqlite, {
-          run: {
-            id: analysisRunId,
-            organizationId: contextSource.context.organization.id,
-            scopeType: contextSource.context.scope.type,
-            scopeId: contextSource.context.scope.id,
-            periodStart: contextSource.context.period.start,
-            periodEnd: contextSource.context.period.end,
-            status: "completed",
-            startedAt: now,
-            finishedAt: now,
-          },
-          metrics: contextSource.context.metrics.map((metric, index) => ({
-            ...metric,
-            id: stableId("metric", analysisRunId, String(index), metric.name, JSON.stringify(metric.dimensions ?? {})),
-          })),
-          highlights: [],
-          reportContext: {
-            id: analysisReportContextId,
-            context: contextSource.context,
-          },
-        });
-      }
-
-      reportId = stableId(
-        "report",
-        analysisReportContextId,
-        "weekly",
-        contextSource.context.period.start,
-        contextSource.context.period.end,
-      );
-      saveCompleteReportResult(local.sqlite, {
-        report: {
-          id: reportId,
-          organizationId: contextSource.context.organization.id,
-          analysisReportContextId,
-          reportType: "weekly",
-          scopeType: contextSource.context.scope.type,
-          scopeId: contextSource.context.scope.id,
-          periodStart: contextSource.context.period.start,
-          periodEnd: contextSource.context.period.end,
-          status: "completed",
-          title: optionalString(parsed, "title") ?? `Weekly report: ${contextSource.context.scope.name}`,
-          summary: null,
-          bodyMarkdown: markdown,
-          structured: { analysisReportContextId },
-        },
-        inputs: [
-          {
-            id: stableId("report_input", reportId, analysisReportContextId),
-            inputType: "analysis_report_context",
-            inputId: analysisReportContextId,
-            metadata: { role: "primary" },
-          },
-        ],
-      });
+      writeFileSync(output, generated.markdown, "utf8");
     }
 
     return {
-      reportId,
-      analysisReportContextId,
+      reportId: persist ? generated.report.id : undefined,
+      analysisReportContextId: persist ? generated.analysisReportContextId : contextSource.analysisReportContextId,
       output,
-      markdown: output ? undefined : markdown,
+      markdown: output ? undefined : generated.markdown,
     };
   } finally {
     local.close();
@@ -398,24 +288,19 @@ function reportContextFromDatabase(
   database: DatabaseSync,
   parsed: ParsedArgs,
 ): { context: ReportContext; analysisReportContextId?: string } {
-  const organizationId = requiredOption(parsed, "organization-id");
-  const existing = latestReportContext(database, parsed);
+  const organization = requiredOrganization(parsed);
+  const scope = requiredScope(parsed);
+  const period = requiredPeriod(parsed);
 
-  if (existing) {
-    return existing;
-  }
-
-  const input: AnalysisInput = {
-    organization: requiredOrganization(parsed),
-    scope: requiredScope(parsed),
-    period: requiredPeriod(parsed),
-    freshness: databaseFreshness(database, organizationId),
-    events: readActivityEvents(database, parsed),
-    workItems: readWorkItems(database, parsed),
-    people: readPeople(database, parsed),
-  };
-
-  return { context: buildReportContext(input) };
+  return resolveReportContext(database, {
+    organizationId: organization.id,
+    organizationName: organization.name,
+    scopeType: scope.type,
+    scopeId: scope.id,
+    scopeName: scope.name,
+    periodStart: period.start,
+    periodEnd: period.end,
+  });
 }
 
 function latestReportContext(

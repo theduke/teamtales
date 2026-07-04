@@ -48,7 +48,7 @@ describe("source-to-report fixture flow", () => {
     const local = openLocalDatabase({ runMigrations: true });
 
     try {
-      seedIntegrationRows(local.sqlite, fixture);
+      seedTenantAndIntegrationRows(local.sqlite, fixture);
       insertPeople(local.sqlite, fixture.organization.id, fixture.people);
 
       const normalized = normalizeFixtureSourceObjects(fixture.sourceObjects);
@@ -212,10 +212,21 @@ function loadFixture(): Fixture {
   return JSON.parse(readFileSync(fixturePath, "utf8")) as Fixture;
 }
 
-function seedIntegrationRows(database: DatabaseSync, fixture: Fixture): void {
+function seedTenantAndIntegrationRows(database: DatabaseSync, fixture: Fixture): void {
+  const ownerUserId = "user_fixture_owner";
+
   database
     .prepare("INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)")
     .run(fixture.organization.id, fixture.organization.name, "fixtureco");
+  database
+    .prepare("INSERT INTO users (id, display_name, primary_email) VALUES (?, ?, ?)")
+    .run(ownerUserId, "Fixture Owner", "owner@fixtureco.example");
+  database
+    .prepare(
+      `INSERT INTO organization_memberships (id, organization_id, user_id, role, status)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run("membership_fixture_owner", fixture.organization.id, ownerUserId, "owner", "active");
   database
     .prepare(
       `INSERT INTO integrations (id, organization_id, provider, auth_type, status, display_name)

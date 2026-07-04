@@ -1,0 +1,26 @@
+{
+  "name": "@teamtales/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "teamtales": "./src/cli/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "dev": "npm run dev:api",
+    "dev:api": "tsx src/api/dev-server.ts",
+    "api:dev": "npm run dev:api",
+    "cli": "tsx src/cli/index.ts",
+    "typecheck": "tsc --noEmit",
+    "schema:check": "node --experimental-strip-types scripts/check-schema.ts",
+    "test": "tsx --test tests/**/*.test.ts",
+    "check": "npm run typecheck && npm run schema:check"
+  },
+  "dependencies": {
+    "@teamtales/common": "file:../common"
+  }
+}

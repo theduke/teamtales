@@ -1,8 +1,10 @@
+import type { Provider } from "@teamtales/common/domain";
+
 import type { JsonValue } from "./json.js";
 import type { IncomingSourceObject, SourceObjectUpsertPlan } from "./source-object.js";
 import type { SyncCursor, SyncRun, SyncScope } from "./sync.js";
 
-export type Provider = "github" | "linear";
+export type { Provider } from "@teamtales/common/domain";
 
 export interface IntegrationCredential {
   integrationId: string;
