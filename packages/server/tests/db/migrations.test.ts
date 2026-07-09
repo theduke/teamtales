@@ -88,6 +88,8 @@ describe("local SQLite migrations", () => {
       insertSourceObject(local.sqlite, "source_2", "org_2", "integration_2", "scope_2", "42");
 
       assert.throws(() => insertSourceObject(local.sqlite, "source_3", "org_1", "integration_1", "scope_1", "42"), /UNIQUE/);
+      insertScope(local.sqlite, "scope_3", "org_1", "integration_1");
+      insertSourceObject(local.sqlite, "source_4", "org_1", "integration_1", "scope_3", "42");
       assert.throws(() => insertScope(local.sqlite, "scope_bad", "org_2", "integration_1"), /FOREIGN KEY/);
       assert.throws(
         () =>
@@ -101,6 +103,20 @@ describe("local SQLite migrations", () => {
             .run("event_bad", "org_2", "source_1", "github", "updated", null, "2026-06-29T09:00:00.000Z", "Bad"),
         /FOREIGN KEY/,
       );
+    } finally {
+      local.close();
+    }
+  });
+
+  it("enforces allowed sync scope types", () => {
+    const local = openLocalDatabase({ runMigrations: true });
+
+    try {
+      insertOrganization(local.sqlite, "org_1", "Acme", "acme");
+      insertIntegration(local.sqlite, "integration_1", "org_1");
+
+      insertScope(local.sqlite, "scope_1", "org_1", "integration_1");
+      assert.throws(() => insertScope(local.sqlite, "scope_bad", "org_1", "integration_1", "not-a-scope"), /CHECK/);
     } finally {
       local.close();
     }
@@ -134,13 +150,14 @@ function insertScope(
   id: string,
   organizationId: string,
   integrationId: string,
+  scopeType = "github.repository",
 ): void {
   database
     .prepare(
       `INSERT INTO sync_scopes (id, organization_id, integration_id, provider, scope_type, external_name)
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, organizationId, integrationId, "github", "repository", id);
+    .run(id, organizationId, integrationId, "github", scopeType, id);
 }
 
 function insertSourceObject(

@@ -15,7 +15,7 @@ import {
   listOrganizationsHandler,
   listReportsHandler,
   listSyncScopesHandler,
-  syncPlaceholderHandler,
+  triggerSyncHandler,
 } from "./handlers.js";
 import { HttpError } from "./http.js";
 
@@ -46,7 +46,7 @@ const routes: Route[] = [
   route("GET", "/api/reports/:reportId", getReportHandler),
   route("POST", "/api/reports/weekly", createWeeklyReportHandler),
   route("GET", "/api/dashboard", dashboardHandler),
-  route("POST", "/api/sync/:provider", syncPlaceholderHandler),
+  route("POST", "/api/sync/:provider", triggerSyncHandler),
 ];
 
 export async function dispatchRoute(context: ApiContext, url: URL): Promise<{ status: number; data: import("@teamtales/common/api").JsonValue }> {

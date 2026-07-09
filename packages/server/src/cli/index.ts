@@ -22,6 +22,7 @@ import {
   createOrganizationService,
   generateWeeklyReportService,
   resolveReportContext,
+  runProviderSyncService,
 } from "../services/index.js";
 import { parseJsonObject } from "../persistence/sqlite.js";
 
@@ -68,8 +69,8 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
         return { exitCode: 0 };
       case "sync github":
       case "sync linear":
-        out(JSON.stringify(syncPlaceholder(commandProvider(subcommand), parsed), null, 2));
-        return { exitCode: 2 };
+        out(JSON.stringify(await runProviderSync(commandProvider(subcommand), parsed, env), null, 2));
+        return { exitCode: 0 };
       case "report weekly":
         out(JSON.stringify(generateWeeklyReport(parsed), null, 2));
         return { exitCode: 0 };
@@ -201,14 +202,23 @@ function addSyncScope(parsed: ParsedArgs): Record<string, unknown> {
   }
 }
 
-function syncPlaceholder(provider: Provider, parsed: ParsedArgs): Record<string, unknown> {
+async function runProviderSync(provider: Provider, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
   const local = openCliDatabase(parsed, true);
   try {
-    return {
+    const encryptionKey = optionalString(parsed, "encryption-key") ?? env.TEAMTALES_CREDENTIAL_KEY;
+    if (!encryptionKey) {
+      throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
+    }
+
+    const result = await runProviderSyncService(local.sqlite, {
       provider,
-      status: "not_implemented",
-      message: "Provider API sync is intentionally a placeholder in the MVP CLI.",
-    };
+      organizationId: optionalString(parsed, "organization-id"),
+      integrationId: optionalString(parsed, "integration-id"),
+      syncScopeId: optionalString(parsed, "scope-id") ?? optionalString(parsed, "sync-scope-id"),
+      encryptionKey,
+    });
+
+    return result;
   } finally {
     local.close();
   }
@@ -607,9 +617,10 @@ function usage(): string {
   teamtales org create --db ./teamtales.sqlite --name "Acme" --owner-email owner@example.com [--id org_acme]
   teamtales integration add-pat --db ./teamtales.sqlite --organization-id org_acme --user-id user_id --provider github --name GitHub --token-env GITHUB_TOKEN
   teamtales scope add --db ./teamtales.sqlite --organization-id org_acme --user-id user_id --integration-id integration_id --provider github --type github.repository --name owner/repo
+  teamtales sync github --db ./teamtales.sqlite --organization-id org_acme [--scope-id scope_id]
   teamtales report weekly --db ./teamtales.sqlite --organization-id org_acme --period-start 2026-06-22 --period-end 2026-06-29 [--fixture context.json] [--persist] [--output report.md]
 
-Credential encryption uses --encryption-key or TEAMTALES_CREDENTIAL_KEY. Provider sync commands are placeholders.`;
+Credential encryption uses --encryption-key or TEAMTALES_CREDENTIAL_KEY.`;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

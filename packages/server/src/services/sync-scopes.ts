@@ -22,10 +22,19 @@ export interface AddSyncScopeServiceInput {
   enabled?: boolean;
 }
 
+const supportedSyncScopeTypes = [
+  "github.repository",
+  "github.organization",
+  "linear.workspace",
+  "linear.team",
+  "linear.project",
+] as const satisfies readonly SyncScopeDto["scopeType"][];
+
 export function addSyncScopeService(database: DatabaseSync, input: AddSyncScopeServiceInput): SyncScopeDto {
   requireOrganization(database, input.organizationId);
   requireOrganizationRole(database, input.organizationId, input.userId, ["owner", "admin"]);
   requireIntegrationInOrganization(database, input.organizationId, input.integrationId);
+  validateScopeTypeForProvider(input.provider, input.scopeType);
 
   const now = new Date().toISOString();
   const scopeId =
@@ -66,4 +75,13 @@ export function addSyncScopeService(database: DatabaseSync, input: AddSyncScopeS
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function validateScopeTypeForProvider(provider: Provider, scopeType: SyncScopeDto["scopeType"]): void {
+  if (!supportedSyncScopeTypes.includes(scopeType)) {
+    throw new Error(`Unsupported sync scope type: ${scopeType}.`);
+  }
+  if (!scopeType.startsWith(`${provider}.`)) {
+    throw new Error(`Sync scope type ${scopeType} is not supported for provider ${provider}.`);
+  }
 }

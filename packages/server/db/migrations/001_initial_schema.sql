@@ -54,7 +54,19 @@ CREATE TABLE sync_scopes (
   organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
   provider TEXT NOT NULL CHECK (provider IN ('github', 'linear')),
-  scope_type TEXT NOT NULL,
+  scope_type TEXT NOT NULL CHECK (
+    scope_type IN (
+      'github.repository',
+      'github.organization',
+      'linear.workspace',
+      'linear.team',
+      'linear.project',
+      'repository',
+      'workspace',
+      'team',
+      'project'
+    )
+  ),
   external_id TEXT,
   external_name TEXT NOT NULL,
   config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
@@ -141,7 +153,7 @@ CREATE TABLE source_objects (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (id, organization_id),
-  UNIQUE (organization_id, provider, object_type, external_id),
+  UNIQUE (organization_id, integration_id, sync_scope_id, provider, object_type, external_id),
   FOREIGN KEY (integration_id, organization_id) REFERENCES integrations(id, organization_id) ON DELETE CASCADE,
   FOREIGN KEY (sync_scope_id, organization_id) REFERENCES sync_scopes(id, organization_id)
 );

@@ -278,17 +278,89 @@ describe("teamtales CLI", () => {
     }
   });
 
-  it("returns a placeholder result for provider sync commands", async () => {
+  it("runs provider sync commands", async () => {
     const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
     const db = join(directory, "teamtales.sqlite");
-    const io = capture();
+    const originalFetch = globalThis.fetch;
 
     try {
-      const result = await runCli(["sync", "github", "--db", db], io.io);
+      await createTestOrganization(db);
+      const integration = capture();
+      await runCli(
+        [
+          "integration",
+          "add-pat",
+          "--db",
+          db,
+          "--organization-id",
+          "org_acme",
+          "--user-id",
+          "user_owner",
+          "--provider",
+          "github",
+          "--name",
+          "Acme GitHub",
+          "--token",
+          "github_pat_secret_1234567890",
+        ],
+        integration.io,
+        { TEAMTALES_CREDENTIAL_KEY: key },
+      );
+      const integrationId = JSON.parse(integration.stdout[0] ?? "{}").id as string;
+      await runCli(
+        [
+          "scope",
+          "add",
+          "--db",
+          db,
+          "--organization-id",
+          "org_acme",
+          "--user-id",
+          "user_owner",
+          "--integration-id",
+          integrationId,
+          "--provider",
+          "github",
+          "--type",
+          "github.repository",
+          "--name",
+          "acme/widgets",
+        ],
+        capture().io,
+      );
 
-      assert.equal(result.exitCode, 2);
-      assert.equal(JSON.parse(io.stdout[0] ?? "{}").status, "not_implemented");
+      globalThis.fetch = async (input, init) => {
+        const headers = init?.headers;
+        const authorization =
+          headers instanceof Headers
+            ? headers.get("authorization")
+            : headers && !Array.isArray(headers)
+              ? ((headers as Record<string, string>).authorization ?? (headers as Record<string, string>).Authorization)
+              : undefined;
+        assert.equal(authorization, "Bearer github_pat_secret_1234567890");
+        const parsed = new URL(String(input));
+        if (parsed.pathname === "/repos/acme/widgets") {
+          return jsonResponse({ id: 101, name: "widgets", full_name: "acme/widgets" });
+        }
+        if (parsed.pathname === "/repos/acme/widgets/pulls") {
+          return jsonResponse([]);
+        }
+        return jsonResponse({ message: `Unexpected path ${parsed.pathname}` }, 404);
+      };
+
+      const io = capture();
+      const result = await runCli(
+        ["sync", "github", "--db", db, "--organization-id", "org_acme"],
+        io.io,
+        { TEAMTALES_CREDENTIAL_KEY: key },
+      );
+
+      assert.equal(result.exitCode, 0);
+      const output = JSON.parse(io.stdout[0] ?? "{}") as { status: string; counters: { objectsFetched: number } };
+      assert.equal(output.status, "completed");
+      assert.equal(output.counters.objectsFetched, 1);
     } finally {
+      globalThis.fetch = originalFetch;
       rmSync(directory, { recursive: true, force: true });
     }
   });
@@ -402,4 +474,11 @@ function capture(): CapturedIo {
       },
     },
   };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }

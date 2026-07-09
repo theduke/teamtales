@@ -206,12 +206,52 @@ describe("TeamTales API", () => {
     });
   });
 
-  it("returns 501 for provider sync", async () => {
-    const response = await apiFetch<Record<string, never>>(app.url, "/api/sync/github", { method: "POST" });
+  it("runs provider sync and persists fetched source objects", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.startsWith(app.url)) {
+        return originalFetch(input, init);
+      }
+      const headers = init?.headers;
+      const authorization =
+        headers instanceof Headers
+          ? headers.get("authorization")
+          : headers && !Array.isArray(headers)
+            ? ((headers as Record<string, string>).authorization ?? (headers as Record<string, string>).Authorization)
+            : undefined;
+      assert.equal(authorization, "Bearer github_pat_secret_1234567890");
+      const parsed = new URL(url);
+      if (parsed.pathname === "/repos/acme/widgets") {
+        return jsonResponse({ id: 101, name: "widgets", full_name: "acme/widgets", html_url: "https://github.com/acme/widgets" });
+      }
+      if (parsed.pathname === "/repos/acme/widgets/pulls") {
+        return jsonResponse([]);
+      }
+      return jsonResponse({ message: `Unexpected path ${parsed.pathname}` }, 404);
+    };
 
-    assert.equal(response.status, 501);
-    assert.equal(response.body.ok, false);
-    assert.equal(response.body.ok ? "" : response.body.error.code, "sync_not_implemented");
+    try {
+      const response = await apiFetch<{ status: string; counters: { objectsFetched: number }; syncRunId: string }>(
+        app.url,
+        "/api/sync/github",
+        { method: "POST", body: { organizationId: "org_api" } },
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(response.body.ok && response.body.data.status, "completed");
+      assert.equal(response.body.ok && response.body.data.counters.objectsFetched, 1);
+      assert.equal(
+        (
+          app.database.sqlite
+            .prepare("SELECT count(*) AS count FROM source_objects WHERE organization_id = ? AND object_type = ?")
+            .get("org_api", "github.repository") as { count: number }
+        ).count,
+        1,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
@@ -297,6 +337,13 @@ async function apiFetch<T>(
     status: response.status,
     body: (await response.json()) as ApiResponseDto<T>,
   };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 function seedAnalysisContext(database: import("node:sqlite").DatabaseSync): void {

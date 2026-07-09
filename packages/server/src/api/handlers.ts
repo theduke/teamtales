@@ -24,6 +24,7 @@ import {
   addSyncScopeService,
   createOrganizationService,
   generateWeeklyReportFromRequestService,
+  runProviderSyncService,
 } from "../services/index.js";
 
 export interface HandlerInput {
@@ -181,11 +182,23 @@ export function dashboardHandler(input: HandlerInput): { status: number; data: J
   return { status: 200, data: dashboard as unknown as JsonObject };
 }
 
-export function syncPlaceholderHandler(input: HandlerInput): { status: number; data: JsonValue } {
+export async function triggerSyncHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
   const provider = parseProvider(input.params.provider ?? "");
-  throw new HttpError(501, "sync_not_implemented", "Provider API sync is not implemented in this server API.", {
+  const body = input.context.request.method === "POST" ? assertRecord(await readJsonBody(input.context.request)) : {};
+  const encryptionKey = input.context.config.credentialEncryptionKey;
+  if (!encryptionKey) {
+    throw new HttpError(500, "credential_key_missing", "Credential encryption key is not configured.");
+  }
+
+  const result = await runProviderSyncService(input.context.database, {
     provider,
+    organizationId: optionalString(body, "organizationId"),
+    integrationId: optionalString(body, "integrationId"),
+    syncScopeId: optionalString(body, "syncScopeId"),
+    encryptionKey,
   });
+
+  return { status: result.status === "failed" ? 500 : 200, data: result as unknown as JsonObject };
 }
 
 function parseProvider(value: string): Provider {
