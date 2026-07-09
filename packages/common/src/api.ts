@@ -43,6 +43,29 @@ export type OrganizationDto = {
 
 export type OrganizationSummaryDto = OrganizationDto;
 
+export type AuthUserDto = {
+  id: string;
+  email: string;
+  displayName: string;
+};
+
+export type AuthMeDto =
+  | { authenticated: false; bootstrapAllowed: boolean }
+  | { authenticated: true; bootstrapAllowed: false; user: AuthUserDto };
+
+export type LoginRequestDto = { email: string; password: string };
+export type LoginResponseDto = Extract<AuthMeDto, { authenticated: true }>;
+export type ApiTokenDto = {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  expiresAt?: string;
+  lastUsedAt?: string;
+};
+export type CreateApiTokenRequestDto = { name: string; expiresAt?: string };
+export type CreateApiTokenResponseDto = { token: string; apiToken: ApiTokenDto };
+
 export type IntegrationDto = {
   id: string;
   organizationId: string;
@@ -176,6 +199,7 @@ export type CreateOrganizationRequestDto = {
     id?: string;
     displayName?: string;
     primaryEmail?: string;
+    password?: string;
   };
   ownerId?: string;
   ownerName?: string;
@@ -192,7 +216,6 @@ export type AddPatIntegrationRequestDto = {
   id?: string;
   credentialId?: string;
   organizationId: string;
-  userId: string;
   provider: Provider;
   displayName?: string;
   name?: string;
@@ -206,7 +229,6 @@ export type AddPatIntegrationResponseDto = IntegrationWithSecretHintDto & {
 export type AddSyncScopeRequestDto = {
   id?: string;
   organizationId: string;
-  userId: string;
   integrationId: string;
   provider: Provider;
   scopeType: SyncScopeDto["scopeType"];
@@ -275,6 +297,18 @@ export type TriggerSyncResponse = TriggerSyncResponseDto;
 
 export interface TeamtalesApiClient {
   getHealth(): Promise<{ status: "ok" }>;
+  getCurrentUser(): Promise<AuthMeDto>;
+  login(request: LoginRequestDto): Promise<AuthMeDto>;
+  logout(): Promise<{ loggedOut: true }>;
+  listApiTokens(): Promise<PageDto<ApiTokenDto>>;
+  createApiToken(request: CreateApiTokenRequestDto): Promise<CreateApiTokenResponseDto>;
+  revokeApiToken(tokenId: string): Promise<{ revoked: true }>;
+  getCurrentUser(): Promise<AuthMeDto>;
+  login(request: LoginRequestDto): Promise<LoginResponseDto>;
+  logout(): Promise<void>;
+  listApiTokens(): Promise<PageDto<ApiTokenDto>>;
+  createApiToken(request: CreateApiTokenRequestDto): Promise<CreateApiTokenResponseDto>;
+  revokeApiToken(tokenId: string): Promise<void>;
   getDashboard(organizationId: string): Promise<DashboardDto>;
   listOrganizations(): Promise<PageDto<OrganizationSummaryDto>>;
   createOrganization(request: CreateOrganizationRequestDto): Promise<CreateOrganizationResponseDto>;

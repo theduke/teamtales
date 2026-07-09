@@ -16,6 +16,7 @@ import {
   type WorkItem,
 } from "../index.js";
 import { openLocalDatabase } from "../db/index.js";
+import { setPassword } from "../auth/index.js";
 import {
   addPersonalAccessTokenIntegrationService,
   addSyncScopeService,
@@ -60,6 +61,9 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
         return { exitCode: 0 };
       case "org create":
         out(JSON.stringify(createOrganization(parsed), null, 2));
+        return { exitCode: 0 };
+      case "auth set-password":
+        out(JSON.stringify(setUserPassword(parsed, env), null, 2));
         return { exitCode: 0 };
       case "integration add-pat":
         out(JSON.stringify(addPersonalAccessTokenIntegration(parsed, env), null, 2));
@@ -118,6 +122,18 @@ function createOrganization(parsed: ParsedArgs): Record<string, unknown> {
       ownerUserId: created.ownerUserId,
       ownerMembershipId: created.ownerMembershipId,
     };
+  } finally {
+    local.close();
+  }
+}
+
+function setUserPassword(parsed: ParsedArgs, env: NodeJS.ProcessEnv): Record<string, unknown> {
+  const userId = requiredOption(parsed, "user-id");
+  const password = readSecret(parsed, "password", "password-file", "password-env", env);
+  const local = openCliDatabase(parsed, true);
+  try {
+    setPassword(local.sqlite, userId, password);
+    return { userId, passwordUpdated: true };
   } finally {
     local.close();
   }
@@ -615,6 +631,7 @@ function usage(): string {
   teamtales init-db --db ./teamtales.sqlite
   teamtales migrate --db ./teamtales.sqlite
   teamtales org create --db ./teamtales.sqlite --name "Acme" --owner-email owner@example.com [--id org_acme]
+  teamtales auth set-password --db ./teamtales.sqlite --user-id user_id --password-env TEAMTALES_PASSWORD
   teamtales integration add-pat --db ./teamtales.sqlite --organization-id org_acme --user-id user_id --provider github --name GitHub --token-env GITHUB_TOKEN
   teamtales scope add --db ./teamtales.sqlite --organization-id org_acme --user-id user_id --integration-id integration_id --provider github --type github.repository --name owner/repo
   teamtales sync github --db ./teamtales.sqlite --organization-id org_acme [--scope-id scope_id]

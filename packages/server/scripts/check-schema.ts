@@ -14,6 +14,8 @@ if (migrationFiles.length === 0) {
 const expectedTables = [
   "organizations",
   "users",
+  "auth_sessions",
+  "api_tokens",
   "organization_memberships",
   "integrations",
   "integration_credentials",

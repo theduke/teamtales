@@ -15,7 +15,7 @@ describe("local SQLite migrations", () => {
       const local = openLocalDatabase({ filename, runMigrations: true });
 
       assert.equal(existsSync(filename), true);
-      assert.equal(local.migrations?.applied.length, 1);
+      assert.equal(local.migrations?.applied.length, 2);
       assert.equal(local.migrations?.skipped.length, 0);
 
       const integrationColumns = local.sqlite
@@ -36,7 +36,7 @@ describe("local SQLite migrations", () => {
       const secondRun = runMigrations(local.sqlite);
 
       assert.equal(secondRun.applied.length, 0);
-      assert.equal(secondRun.skipped.length, 1);
+      assert.equal(secondRun.skipped.length, 2);
 
       local.close();
     } finally {

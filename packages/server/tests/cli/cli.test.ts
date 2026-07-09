@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 
 import type { ReportContext } from "../../src/analysis/types.js";
 import { runCli } from "../../src/cli/index.js";
+import { authenticatePassword } from "../../src/auth/index.js";
 import { decryptCredentialSecret } from "../../src/security/index.js";
 
 const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -62,6 +63,31 @@ describe("teamtales CLI", () => {
       try {
         assert.equal((sqlite.prepare("SELECT count(*) AS count FROM organizations").get() as { count: number }).count, 1);
         assert.equal((sqlite.prepare("SELECT role FROM organization_memberships WHERE organization_id = ?").get("org_acme") as { role: string }).role, "owner");
+      } finally {
+        sqlite.close();
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("sets a login password for an existing user without exposing it", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "teamtales-cli-"));
+    const db = join(directory, "teamtales.sqlite");
+    const io = capture();
+    try {
+      await createTestOrganization(db);
+      const result = await runCli(
+        ["auth", "set-password", "--db", db, "--user-id", "user_owner", "--password-env", "TEST_PASSWORD"],
+        io.io,
+        { TEST_PASSWORD: "correct horse battery staple" },
+      );
+      assert.equal(result.exitCode, 0);
+      assert.equal(io.stdout.join("\n").includes("correct horse battery staple"), false);
+
+      const sqlite = new DatabaseSync(db);
+      try {
+        assert.equal(authenticatePassword(sqlite, "owner@example.com", "correct horse battery staple")?.userId, "user_owner");
       } finally {
         sqlite.close();
       }

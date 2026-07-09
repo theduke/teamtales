@@ -17,10 +17,15 @@ export type IntegrationListItemDto = IntegrationDto & {
   secretHint?: string;
 };
 
-export function listOrganizations(database: DatabaseSync): OrganizationDto[] {
+export function listOrganizations(database: DatabaseSync, userId: string): OrganizationDto[] {
   return database
-    .prepare("SELECT id, name, slug FROM organizations ORDER BY name, id")
-    .all()
+    .prepare(
+      `SELECT o.id, o.name, o.slug FROM organizations o
+       JOIN organization_memberships m ON m.organization_id = o.id
+       WHERE m.user_id = ? AND m.status = 'active'
+       ORDER BY o.name, o.id`,
+    )
+    .all(userId)
     .map((row) => {
       const record = row as Record<string, unknown>;
       return {
@@ -82,8 +87,8 @@ export function getReportDto(database: DatabaseSync, organizationId: string, rep
     : undefined;
 }
 
-export function getDashboard(database: DatabaseSync, organizationId: string): DashboardDto | undefined {
-  const organizations = listOrganizations(database);
+export function getDashboard(database: DatabaseSync, organizationId: string, userId: string): DashboardDto | undefined {
+  const organizations = listOrganizations(database, userId);
   const organization = organizations.find((item) => item.id === organizationId);
   if (!organization) {
     return undefined;

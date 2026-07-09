@@ -3,6 +3,8 @@ export interface ApiConfig {
   port: number;
   databaseFilename: string;
   credentialEncryptionKey?: string;
+  cookieSecure?: boolean;
+  publicOrigin?: string;
 }
 
 export function createApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -11,7 +13,15 @@ export function createApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig
     port: parsePort(env.PORT ?? env.TEAMTALES_API_PORT ?? "8787"),
     databaseFilename: env.TEAMTALES_DB ?? "teamtales.sqlite",
     credentialEncryptionKey: env.TEAMTALES_CREDENTIAL_KEY,
+    cookieSecure: parseBoolean(env.TEAMTALES_COOKIE_SECURE ?? "false"),
+    publicOrigin: env.TEAMTALES_PUBLIC_ORIGIN,
   };
+}
+
+function parseBoolean(value: string): boolean {
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
+  throw new Error(`Invalid boolean value: ${value}`);
 }
 
 function parsePort(value: string): number {

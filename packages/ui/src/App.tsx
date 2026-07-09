@@ -2,9 +2,6 @@ import type { FormEvent, ReactElement, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
-  AddPatIntegrationRequestDto,
-  AddSyncScopeRequestDto,
-  CreateOrganizationRequestDto,
   DashboardDto,
   GenerateWeeklyReportRequestDto,
   JsonObject,
@@ -13,6 +10,12 @@ import type {
 } from "@teamtales/common/api";
 import type { Provider, ReportScopeType } from "@teamtales/common/domain";
 
+import type {
+  AuthSession,
+  BrowserAddPatIntegrationRequest,
+  BrowserAddSyncScopeRequest,
+  BrowserCreateOrganizationRequest,
+} from "./api";
 import { ApiClientError, apiClient } from "./api";
 
 const sections = ["Dashboard", "Setup", "Sync", "Reports", "Data"] as const;
@@ -48,6 +51,7 @@ export function App(): ReactElement {
   const [reportDetail, setReportDetail] = useState<ReportDetailDto | undefined>();
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice | undefined>();
+  const [auth, setAuth] = useState<AuthSession | undefined>();
 
   const selectedOrganization = useMemo(
     () => organizations.find((organization) => organization.id === selectedOrganizationId),
@@ -60,6 +64,13 @@ export function App(): ReactElement {
 
   const handleError = useCallback(
     (error: unknown) => {
+      if (error instanceof ApiClientError && error.status === 401) {
+        setAuth({ authenticated: false, bootstrapAllowed: false });
+        setOrganizations([]);
+        setSelectedOrganizationId("");
+        setDashboard(undefined);
+        setReportDetail(undefined);
+      }
       const text =
         error instanceof ApiClientError
           ? `${error.code}: ${error.message}`
@@ -119,14 +130,20 @@ export function App(): ReactElement {
         if (!cancelled) {
           setHealth("ok");
         }
-        const page = await apiClient.listOrganizations();
+        const session = await apiClient.getCurrentUser();
         if (!cancelled) {
-          setOrganizations(page.items);
-          setSelectedOrganizationId(page.items[0]?.id ?? "");
+          setAuth(session);
+        }
+        if (session.authenticated) {
+          const page = await apiClient.listOrganizations();
+          if (!cancelled) {
+            setOrganizations(page.items);
+            setSelectedOrganizationId(page.items[0]?.id ?? "");
+          }
         }
       } catch (error) {
         if (!cancelled) {
-          setHealth("error");
+          setHealth((current) => (current === "ok" ? current : "error"));
           handleError(error);
         }
       } finally {
@@ -141,6 +158,60 @@ export function App(): ReactElement {
       cancelled = true;
     };
   }, [handleError]);
+
+  async function authenticate(email: string, password: string): Promise<void> {
+    setLoading(true);
+    try {
+      const session = await apiClient.login({ email, password });
+      if (!session.authenticated) {
+        throw new Error("Login did not establish a session.");
+      }
+      setAuth(session);
+      setNotice(undefined);
+      await loadOrganizations();
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function bootstrapOrganization(request: BrowserCreateOrganizationRequest): Promise<void> {
+    setLoading(true);
+    try {
+      const organization = await apiClient.createOrganization(request);
+      const session = await apiClient.getCurrentUser();
+      if (!session.authenticated) {
+        throw new Error("Bootstrap completed without establishing a session.");
+      }
+      setAuth(session);
+      await loadOrganizations();
+      setSelectedOrganizationId(organization.id);
+      showNotice({ tone: "success", text: `Created ${organization.name}.` });
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function logout(): Promise<void> {
+    setLoading(true);
+    try {
+      await apiClient.logout();
+      setAuth({ authenticated: false, bootstrapAllowed: false });
+      setOrganizations([]);
+      setSelectedOrganizationId("");
+      setDashboard(undefined);
+      setSelectedReportId("");
+      setReportDetail(undefined);
+      setNotice(undefined);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -201,6 +272,20 @@ export function App(): ReactElement {
     };
   }, [handleError, selectedOrganizationId, selectedReportId]);
 
+  if (!auth || !auth.authenticated) {
+    return (
+      <AuthScreen
+        health={health}
+        loading={loading}
+        bootstrapAllowed={auth?.bootstrapAllowed ?? false}
+        notice={notice}
+        onDismissNotice={() => setNotice(undefined)}
+        onLogin={(email, password) => void authenticate(email, password)}
+        onBootstrap={(request) => void bootstrapOrganization(request)}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -213,6 +298,7 @@ export function App(): ReactElement {
           </div>
         </div>
         <div className="topbar-controls">
+          <span className="signed-in-user">{auth.user.displayName || auth.user.email}</span>
           <label>
             Organization
             <select value={selectedOrganizationId} onChange={(event) => setSelectedOrganizationId(event.target.value)}>
@@ -226,6 +312,9 @@ export function App(): ReactElement {
           </label>
           <button type="button" onClick={() => void refresh()}>
             Refresh
+          </button>
+          <button type="button" onClick={() => void logout()}>
+            Sign out
           </button>
         </div>
       </header>
@@ -294,6 +383,140 @@ export function App(): ReactElement {
           />
         ) : null}
         {section === "Data" ? <DataSection dashboard={dashboard} reportDetail={reportDetail} /> : null}
+      </main>
+    </div>
+  );
+}
+
+function AuthScreen({
+  health,
+  loading,
+  bootstrapAllowed,
+  notice,
+  onDismissNotice,
+  onLogin,
+  onBootstrap,
+}: {
+  health: "unknown" | "ok" | "error";
+  loading: boolean;
+  bootstrapAllowed: boolean;
+  notice: Notice | undefined;
+  onDismissNotice: () => void;
+  onLogin: (email: string, password: string) => void;
+  onBootstrap: (request: BrowserCreateOrganizationRequest) => void;
+}): ReactElement {
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [bootstrapForm, setBootstrapForm] = useState({
+    organizationName: "",
+    organizationSlug: "",
+    ownerName: "",
+    ownerEmail: "",
+    ownerPassword: "",
+  });
+
+  function submitLogin(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    onLogin(loginForm.email.trim(), loginForm.password);
+  }
+
+  function submitBootstrap(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    onBootstrap({
+      name: bootstrapForm.organizationName.trim(),
+      slug: optionalText(bootstrapForm.organizationSlug),
+      owner: {
+        displayName: optionalText(bootstrapForm.ownerName),
+        primaryEmail: bootstrapForm.ownerEmail.trim(),
+        password: bootstrapForm.ownerPassword,
+      },
+    });
+  }
+
+  return (
+    <div className="auth-shell">
+      <header className="auth-header">
+        <h1>TeamTales Console</h1>
+        <div className="meta-row">
+          <span className={`status-dot ${health}`}></span>
+          <span>API {health}</span>
+          {loading ? <span>Loading</span> : null}
+        </div>
+      </header>
+
+      {notice ? (
+        <div className={`notice ${notice.tone}`} role="status">
+          <span>{notice.text}</span>
+          <button type="button" onClick={onDismissNotice}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      <main className="auth-main">
+        <section className="panel auth-panel">
+          <PanelTitle title="Sign in" />
+          <form className="form-grid auth-form" onSubmit={submitLogin}>
+            <TextField
+              label="Email"
+              type="email"
+              value={loginForm.email}
+              required
+              onChange={(email) => setLoginForm((current) => ({ ...current, email }))}
+            />
+            <TextField
+              label="Password"
+              type="password"
+              value={loginForm.password}
+              required
+              onChange={(password) => setLoginForm((current) => ({ ...current, password }))}
+            />
+            <button type="submit" disabled={loading}>
+              Sign in
+            </button>
+          </form>
+        </section>
+
+        {bootstrapAllowed ? (
+          <section className="panel auth-panel">
+            <PanelTitle title="Create the first organization" />
+            <p className="auth-help">Set up the first owner account and organization.</p>
+            <form className="form-grid" onSubmit={submitBootstrap}>
+              <TextField
+                label="Organization name"
+                value={bootstrapForm.organizationName}
+                required
+                onChange={(organizationName) => setBootstrapForm((current) => ({ ...current, organizationName }))}
+              />
+              <TextField
+                label="Organization slug"
+                value={bootstrapForm.organizationSlug}
+                onChange={(organizationSlug) => setBootstrapForm((current) => ({ ...current, organizationSlug }))}
+              />
+              <TextField
+                label="Owner name"
+                value={bootstrapForm.ownerName}
+                onChange={(ownerName) => setBootstrapForm((current) => ({ ...current, ownerName }))}
+              />
+              <TextField
+                label="Owner email"
+                type="email"
+                value={bootstrapForm.ownerEmail}
+                required
+                onChange={(ownerEmail) => setBootstrapForm((current) => ({ ...current, ownerEmail }))}
+              />
+              <TextField
+                label="Owner password"
+                type="password"
+                value={bootstrapForm.ownerPassword}
+                required
+                onChange={(ownerPassword) => setBootstrapForm((current) => ({ ...current, ownerPassword }))}
+              />
+              <button type="submit" disabled={loading}>
+                Create organization
+              </button>
+            </form>
+          </section>
+        ) : null}
       </main>
     </div>
   );
@@ -387,11 +610,8 @@ function SetupSection({
   const [organizationForm, setOrganizationForm] = useState({
     name: "",
     slug: "",
-    ownerName: "",
-    ownerEmail: "",
   });
   const [patForm, setPatForm] = useState({
-    userId: "",
     provider: "github" as Provider,
     displayName: "",
     token: "",
@@ -400,20 +620,12 @@ function SetupSection({
   async function createOrganization(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     try {
-      const owner =
-        organizationForm.ownerName || organizationForm.ownerEmail
-          ? {
-              displayName: optionalText(organizationForm.ownerName),
-              primaryEmail: optionalText(organizationForm.ownerEmail),
-            }
-          : undefined;
-      const request: CreateOrganizationRequestDto = {
+      const request: BrowserCreateOrganizationRequest = {
         name: organizationForm.name.trim(),
         slug: optionalText(organizationForm.slug),
-        owner,
       };
       const organization = await apiClient.createOrganization(request);
-      setOrganizationForm({ name: "", slug: "", ownerName: "", ownerEmail: "" });
+      setOrganizationForm({ name: "", slug: "" });
       onCreatedOrganization(organization.id);
       onNotice({ tone: "success", text: `Created ${organization.name}.` });
     } catch (error) {
@@ -424,9 +636,8 @@ function SetupSection({
   async function addPatIntegration(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     try {
-      const request: AddPatIntegrationRequestDto = {
+      const request: BrowserAddPatIntegrationRequest = {
         organizationId: selectedOrganizationId,
-        userId: patForm.userId.trim(),
         provider: patForm.provider,
         displayName: optionalText(patForm.displayName),
         token: patForm.token,
@@ -456,17 +667,6 @@ function SetupSection({
             value={organizationForm.slug}
             onChange={(slug) => setOrganizationForm((current) => ({ ...current, slug }))}
           />
-          <TextField
-            label="Owner name"
-            value={organizationForm.ownerName}
-            onChange={(ownerName) => setOrganizationForm((current) => ({ ...current, ownerName }))}
-          />
-          <TextField
-            label="Owner email"
-            type="email"
-            value={organizationForm.ownerEmail}
-            onChange={(ownerEmail) => setOrganizationForm((current) => ({ ...current, ownerEmail }))}
-          />
           <button type="submit">Create organization</button>
         </form>
       </section>
@@ -475,12 +675,6 @@ function SetupSection({
         <PanelTitle title="PAT Integration" />
         <form className="form-grid" onSubmit={(event) => void addPatIntegration(event)}>
           <ReadOnlyField label="Organization" value={selectedOrganizationId || "None"} />
-          <TextField
-            label="User ID"
-            value={patForm.userId}
-            required
-            onChange={(userId) => setPatForm((current) => ({ ...current, userId }))}
-          />
           <label>
             Provider
             <select
@@ -548,7 +742,6 @@ function SyncSection({
   const integrations = dashboard?.integrations ?? [];
   const syncScopes = dashboard?.syncScopes ?? [];
   const [scopeForm, setScopeForm] = useState({
-    userId: "",
     integrationId: "",
     provider: "github" as Provider,
     scopeType: "github.repository" as SyncScopeDto["scopeType"],
@@ -567,9 +760,8 @@ function SyncSection({
     event.preventDefault();
     try {
       const parsedConfig = parseJsonObject(scopeForm.config);
-      const request: AddSyncScopeRequestDto = {
+      const request: BrowserAddSyncScopeRequest = {
         organizationId: selectedOrganizationId,
-        userId: scopeForm.userId.trim(),
         integrationId: scopeForm.integrationId,
         provider: scopeForm.provider,
         scopeType: scopeForm.scopeType,
@@ -620,12 +812,6 @@ function SyncSection({
         <PanelTitle title="Sync Scope" />
         <form className="form-grid" onSubmit={(event) => void addSyncScope(event)}>
           <ReadOnlyField label="Organization" value={selectedOrganizationId || "None"} />
-          <TextField
-            label="User ID"
-            value={scopeForm.userId}
-            required
-            onChange={(userId) => setScopeForm((current) => ({ ...current, userId }))}
-          />
           <label>
             Integration
             <select

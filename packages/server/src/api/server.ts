@@ -31,6 +31,7 @@ async function handleRequest(
       },
       url,
     );
+    for (const [name, value] of Object.entries(result.headers ?? {})) response.setHeader(name, value);
     writeData(response, result.status, result.data);
   } catch (error) {
     writeError(response, error);

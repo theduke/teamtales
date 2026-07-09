@@ -1,9 +1,11 @@
 import type { IncomingMessage } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
+import type { AuthPrincipal } from "../auth/index.js";
 
 import type { ApiConfig } from "./config.js";
-import type { Handler } from "./handlers.js";
+import type { Handler, HandlerResult } from "./handlers.js";
 import {
+  createApiTokenHandler,
   createOrganizationHandler,
   createPatIntegrationHandler,
   createSyncScopeHandler,
@@ -11,13 +13,19 @@ import {
   dashboardHandler,
   getReportHandler,
   healthHandler,
+  listApiTokensHandler,
   listIntegrationsHandler,
   listOrganizationsHandler,
   listReportsHandler,
   listSyncScopesHandler,
+  loginHandler,
+  logoutHandler,
+  meHandler,
+  revokeApiTokenHandler,
   triggerSyncHandler,
 } from "./handlers.js";
 import { HttpError } from "./http.js";
+import { resolveApiToken, resolveSession } from "../auth/index.js";
 
 export type RouteParams = Record<string, string>;
 
@@ -25,6 +33,8 @@ export interface ApiContext {
   config: ApiConfig;
   database: DatabaseSync;
   request: IncomingMessage;
+  principal?: AuthPrincipal;
+  authKind?: "session" | "api_token";
 }
 
 interface Route {
@@ -32,12 +42,19 @@ interface Route {
   pattern: RegExp;
   paramNames: string[];
   handler: Handler;
+  public?: boolean;
 }
 
 const routes: Route[] = [
-  route("GET", "/api/health", healthHandler),
+  route("GET", "/api/health", healthHandler, true),
+  route("POST", "/api/auth/login", loginHandler, true),
+  route("POST", "/api/auth/logout", logoutHandler, true),
+  route("GET", "/api/auth/me", meHandler, true),
+  route("GET", "/api/auth/tokens", listApiTokensHandler),
+  route("POST", "/api/auth/tokens", createApiTokenHandler),
+  route("DELETE", "/api/auth/tokens/:tokenId", revokeApiTokenHandler),
   route("GET", "/api/organizations", listOrganizationsHandler),
-  route("POST", "/api/organizations", createOrganizationHandler),
+  route("POST", "/api/organizations", createOrganizationHandler, true),
   route("GET", "/api/organizations/:organizationId/integrations", listIntegrationsHandler),
   route("POST", "/api/integrations/pat", createPatIntegrationHandler),
   route("GET", "/api/organizations/:organizationId/sync-scopes", listSyncScopesHandler),
@@ -49,7 +66,7 @@ const routes: Route[] = [
   route("POST", "/api/sync/:provider", triggerSyncHandler),
 ];
 
-export async function dispatchRoute(context: ApiContext, url: URL): Promise<{ status: number; data: import("@teamtales/common/api").JsonValue }> {
+export async function dispatchRoute(context: ApiContext, url: URL): Promise<HandlerResult> {
   const method = context.request.method ?? "GET";
   const pathname = normalizePathname(url.pathname);
 
@@ -70,13 +87,23 @@ export async function dispatchRoute(context: ApiContext, url: URL): Promise<{ st
       }
     });
 
+    const authenticated = authenticateRequest(context);
+    context.principal = authenticated?.principal;
+    context.authKind = authenticated?.kind;
+    if (!candidate.public && !context.principal) {
+      throw new HttpError(401, "unauthorized", "Authentication is required.");
+    }
+    if (context.authKind === "session" && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+      enforceSameOrigin(context);
+    }
+
     return candidate.handler({ context, params, url });
   }
 
   throw new HttpError(404, "not_found", "Route not found.");
 }
 
-function route(method: string, path: string, handler: Handler): Route {
+function route(method: string, path: string, handler: Handler, isPublic = false): Route {
   const paramNames: string[] = [];
   const pattern = path
     .split("/")
@@ -94,7 +121,44 @@ function route(method: string, path: string, handler: Handler): Route {
     pattern: new RegExp(`^${pattern}$`),
     paramNames,
     handler,
+    public: isPublic,
   };
+}
+
+function authenticateRequest(context: ApiContext): { principal: AuthPrincipal; kind: "session" | "api_token" } | undefined {
+  const authorization = context.request.headers.authorization;
+  if (authorization !== undefined) {
+    const match = /^Bearer ([^\s]+)$/.exec(authorization);
+    if (!match?.[1]) throw new HttpError(401, "invalid_token", "Invalid bearer token.");
+    const principal = resolveApiToken(context.database, match[1]);
+    if (!principal) throw new HttpError(401, "invalid_token", "Invalid or expired bearer token.");
+    return { principal, kind: "api_token" };
+  }
+  const cookie = parseCookies(context.request.headers.cookie)["teamtales_session"];
+  if (!cookie) return undefined;
+  const principal = resolveSession(context.database, cookie);
+  return principal ? { principal, kind: "session" } : undefined;
+}
+
+function enforceSameOrigin(context: ApiContext): void {
+  const origin = context.request.headers.origin;
+  const expected = context.config.publicOrigin ?? `http://${context.request.headers.host ?? "localhost"}`;
+  if (!origin || normalizeOrigin(origin) !== normalizeOrigin(expected)) {
+    throw new HttpError(403, "csrf_rejected", "Request origin is not allowed.");
+  }
+}
+
+function normalizeOrigin(value: string): string {
+  try { return new URL(value).origin; } catch { return ""; }
+}
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  if (!header) return {};
+  return Object.fromEntries(header.split(";").map((part) => {
+    const index = part.indexOf("=");
+    if (index < 0) return [part.trim(), ""];
+    return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())];
+  }));
 }
 
 function normalizePathname(pathname: string): string {

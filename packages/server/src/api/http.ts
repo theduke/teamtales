@@ -59,9 +59,10 @@ export function writeData<T extends JsonValue>(response: ServerResponse, status:
 }
 
 export function writeError(response: ServerResponse, error: unknown): void {
-  const status = error instanceof HttpError ? error.status : 500;
-  const code = error instanceof HttpError ? error.code : "internal_error";
-  const message = error instanceof Error ? error.message : "Unexpected server error.";
+  const constraint = isConstraintError(error);
+  const status = error instanceof HttpError ? error.status : constraint ? 409 : 500;
+  const code = error instanceof HttpError ? error.code : constraint ? "conflict" : "internal_error";
+  const message = constraint ? "The request conflicts with an existing resource." : error instanceof Error ? error.message : "Unexpected server error.";
   const details = error instanceof HttpError ? error.details : undefined;
 
   writeJson(response, status, {
@@ -72,6 +73,12 @@ export function writeError(response: ServerResponse, error: unknown): void {
       ...(details === undefined ? {} : { details }),
     },
   });
+}
+
+function isConstraintError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as Error & { code?: string }).code;
+  return code === "ERR_SQLITE_CONSTRAINT" || code === "SQLITE_CONSTRAINT" || /constraint failed/i.test(error.message);
 }
 
 export function assertRecord(value: unknown): Record<string, unknown> {

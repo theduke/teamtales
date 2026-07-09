@@ -6,16 +6,19 @@ import type { ApiResponseDto } from "@teamtales/common/api";
 import type { ReportContext } from "@teamtales/common/domain";
 
 import { createApiServer } from "../../src/api/server.js";
+import { createApiToken } from "../../src/auth/index.js";
 import { openLocalDatabase } from "../../src/db/index.js";
 import { saveCompleteAnalysisResult } from "../../src/persistence/index.js";
 
 const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+let browserCookie = "";
 
 describe("TeamTales API", () => {
   let app: Awaited<ReturnType<typeof startApi>>;
   let generatedReportId = "";
 
   before(async () => {
+    browserCookie = "";
     app = await startApi();
   });
 
@@ -30,13 +33,23 @@ describe("TeamTales API", () => {
     assert.deepEqual(response.body, { ok: true, data: { status: "ok", service: "teamtales-api", database: "ok" } });
   });
 
+  it("rejects protected routes before bootstrap", async () => {
+    const response = await apiFetch<Record<string, unknown>>(app.url, "/api/organizations");
+    assert.equal(response.status, 401);
+  });
+
   it("creates and lists organizations", async () => {
     const created = await apiFetch<Record<string, unknown>>(app.url, "/api/organizations", {
       method: "POST",
       body: {
         id: "org_api",
         name: "API Org",
-        owner: { id: "user_api_owner", displayName: "API Owner", primaryEmail: "owner@example.com" },
+        owner: {
+          id: "user_api_owner",
+          displayName: "API Owner",
+          primaryEmail: "owner@example.com",
+          password: "correct horse battery staple",
+        },
       },
     });
     const listed = await apiFetch<{ items: Array<{ id: string; name: string; slug: string }> }>(app.url, "/api/organizations");
@@ -253,6 +266,80 @@ describe("TeamTales API", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("rejects unsafe cookie requests without a same-origin Origin header", async () => {
+    const response = await fetch(`${app.url}/api/auth/tokens`, {
+      method: "POST",
+      headers: { cookie: browserCookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "blocked" }),
+    });
+    assert.equal(response.status, 403);
+    assert.equal(((await response.json()) as { error: { code: string } }).error.code, "csrf_rejected");
+  });
+
+  it("creates an API token and accepts it without CSRF headers", async () => {
+    const created = await apiFetch<{ token: string; apiToken: { id: string; name: string } }>(
+      app.url,
+      "/api/auth/tokens",
+      { method: "POST", body: { name: "automation" } },
+    );
+    assert.equal(created.status, 201);
+    const token = created.body.ok ? created.body.data.token : "";
+    const cookie = browserCookie;
+    browserCookie = "";
+    const organizations = await apiFetch<{ items: unknown[] }>(app.url, "/api/organizations", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    browserCookie = cookie;
+    assert.equal(organizations.status, 200);
+    assert.equal(organizations.body.ok, true);
+  });
+
+  it("enforces active membership and mutation roles for API-token users", async () => {
+    const now = new Date().toISOString();
+    app.database.sqlite
+      .prepare("INSERT INTO users (id, display_name, primary_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .run("user_viewer", "API Viewer", "viewer@example.com", now, now);
+    const token = createApiToken(app.database.sqlite, "user_viewer", { name: "viewer test" }).token;
+
+    const forbiddenWithoutMembership = await apiFetch(app.url, "/api/organizations/org_api/reports", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(forbiddenWithoutMembership.status, 403);
+
+    app.database.sqlite
+      .prepare(
+        `INSERT INTO organization_memberships
+          (id, organization_id, user_id, role, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run("membership_viewer", "org_api", "user_viewer", "viewer", "active", now, now);
+    const forbiddenMutation = await apiFetch(app.url, "/api/integrations/pat", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: {
+        organizationId: "org_api",
+        userId: "user_api_owner",
+        provider: "github",
+        token: "attempted_spoof",
+      },
+    });
+    assert.equal(forbiddenMutation.status, 403);
+  });
+
+  it("logs out and logs back in with the password", async () => {
+    const loggedOut = await apiFetch<{ loggedOut: boolean }>(app.url, "/api/auth/logout", { method: "POST" });
+    assert.equal(loggedOut.status, 200);
+    assert.equal((await apiFetch(app.url, "/api/organizations")).status, 401);
+
+    const loggedIn = await apiFetch<{ authenticated: boolean }>(app.url, "/api/auth/login", {
+      method: "POST",
+      body: { email: "owner@example.com", password: "correct horse battery staple" },
+    });
+    assert.equal(loggedIn.status, 200);
+    assert.equal(loggedIn.body.ok && loggedIn.body.data.authenticated, true);
+    assert.match(browserCookie, /^teamtales_session=/);
+  });
 });
 
 async function startApi() {
@@ -325,13 +412,22 @@ function seedActivity(database: import("node:sqlite").DatabaseSync): void {
 async function apiFetch<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; body?: unknown } = {},
+  options: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
 ): Promise<{ status: number; body: ApiResponseDto<T> }> {
+  const method = options.method ?? "GET";
+  const headers: Record<string, string> = {};
+  if (options.body !== undefined) headers["content-type"] = "application/json";
+  if (browserCookie) headers.cookie = browserCookie;
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.origin = baseUrl;
+  Object.assign(headers, options.headers);
   const response = await fetch(`${baseUrl}${path}`, {
-    method: options.method ?? "GET",
-    headers: options.body === undefined ? undefined : { "content-type": "application/json" },
+    method,
+    headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
+
+  const setCookie = response.headers.get("set-cookie");
+  if (setCookie) browserCookie = setCookie.split(";", 1)[0] ?? "";
 
   return {
     status: response.status,

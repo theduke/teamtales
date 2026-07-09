@@ -14,11 +14,31 @@ import type {
   ReportDetailDto,
   ReportSummaryDto,
   SyncScopeDto,
-  TeamtalesApiClient,
   TriggerSyncRequestDto,
   TriggerSyncResponseDto,
 } from "@teamtales/common/api";
 import type { Provider } from "@teamtales/common/domain";
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  displayName: string;
+};
+
+export type AuthSession =
+  | { authenticated: false; bootstrapAllowed: boolean }
+  | { authenticated: true; bootstrapAllowed: false; user: AuthUser };
+
+export type LoginRequest = { email: string; password: string };
+export type BrowserCreateOrganizationRequest = Omit<CreateOrganizationRequestDto, "owner"> & {
+  owner?: {
+    displayName?: string;
+    primaryEmail?: string;
+    password?: string;
+  };
+};
+export type BrowserAddPatIntegrationRequest = Omit<AddPatIntegrationRequestDto, "userId">;
+export type BrowserAddSyncScopeRequest = Omit<AddSyncScopeRequestDto, "userId">;
 
 export class ApiClientError extends Error {
   readonly status: number;
@@ -32,7 +52,7 @@ export class ApiClientError extends Error {
   }
 }
 
-class BrowserTeamtalesApiClient implements TeamtalesApiClient {
+class BrowserTeamtalesApiClient {
   getHealth(): Promise<{ status: "ok" }> {
     return request<{ status: "ok" }>("/api/health");
   }
@@ -45,7 +65,7 @@ class BrowserTeamtalesApiClient implements TeamtalesApiClient {
     return request<PageDto<OrganizationSummaryDto>>("/api/organizations");
   }
 
-  createOrganization(requestBody: CreateOrganizationRequestDto): Promise<CreateOrganizationResponseDto> {
+  createOrganization(requestBody: BrowserCreateOrganizationRequest): Promise<CreateOrganizationResponseDto> {
     return request<CreateOrganizationResponseDto>("/api/organizations", jsonPost(requestBody));
   }
 
@@ -55,7 +75,7 @@ class BrowserTeamtalesApiClient implements TeamtalesApiClient {
     );
   }
 
-  addPatIntegration(requestBody: AddPatIntegrationRequestDto): Promise<AddPatIntegrationResponseDto> {
+  addPatIntegration(requestBody: BrowserAddPatIntegrationRequest): Promise<AddPatIntegrationResponseDto> {
     return request<AddPatIntegrationResponseDto>("/api/integrations/pat", jsonPost(requestBody));
   }
 
@@ -65,7 +85,7 @@ class BrowserTeamtalesApiClient implements TeamtalesApiClient {
     );
   }
 
-  addSyncScope(requestBody: AddSyncScopeRequestDto): Promise<SyncScopeDto> {
+  addSyncScope(requestBody: BrowserAddSyncScopeRequest): Promise<SyncScopeDto> {
     return request<SyncScopeDto>("/api/sync-scopes", jsonPost(requestBody));
   }
 
@@ -86,13 +106,26 @@ class BrowserTeamtalesApiClient implements TeamtalesApiClient {
   triggerSync(provider: Provider, requestBody: TriggerSyncRequestDto = {}): Promise<TriggerSyncResponseDto> {
     return request<TriggerSyncResponseDto>(`/api/sync/${encodeURIComponent(provider)}`, jsonPost(requestBody));
   }
+
+  getCurrentUser(): Promise<AuthSession> {
+    return request<AuthSession>("/api/auth/me");
+  }
+
+  login(requestBody: LoginRequest): Promise<AuthSession> {
+    return request<AuthSession>("/api/auth/login", jsonPost(requestBody));
+  }
+
+  logout(): Promise<void> {
+    return request<void>("/api/auth/logout", jsonPost({}));
+  }
 }
 
-export const apiClient: TeamtalesApiClient = new BrowserTeamtalesApiClient();
+export const apiClient = new BrowserTeamtalesApiClient();
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
+    credentials: "same-origin",
     headers: {
       ...(init?.body === undefined ? {} : { "content-type": "application/json" }),
       ...init?.headers,

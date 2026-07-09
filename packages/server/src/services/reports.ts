@@ -13,6 +13,7 @@ export interface GenerateWeeklyReportServiceInput {
   title?: string;
   persist?: boolean;
   analysisRunIdSeed?: string;
+  createdByUserId?: string;
 }
 
 export function generateWeeklyReportService(
@@ -110,6 +111,7 @@ export function generateWeeklyReportService(
     summary: undefined,
     bodyMarkdown: markdown,
     structured: { analysisReportContextId },
+    createdByUserId: input.createdByUserId,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -146,6 +148,7 @@ export function generateWeeklyReportService(
       summary: null,
       bodyMarkdown: markdown,
       structured: { analysisReportContextId },
+      createdByUserId: input.createdByUserId,
     },
     inputs: [
       {
@@ -227,6 +230,7 @@ export function generateWeeklyReportFromStoredContextService(
 export function generateWeeklyReportFromRequestService(
   database: DatabaseSync,
   request: GenerateWeeklyReportRequestDto,
+  options: { createdByUserId?: string } = {},
 ): GenerateReportResponseDto & { markdown: string; analysisReportContextId: string } {
   const resolved = resolveReportContext(database, {
     organizationId: request.organizationId,
@@ -244,5 +248,6 @@ export function generateWeeklyReportFromRequestService(
     title: request.title,
     persist: request.persist ?? true,
     analysisRunIdSeed: "api",
+    createdByUserId: options.createdByUserId,
   });
 }
