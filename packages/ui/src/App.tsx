@@ -600,8 +600,16 @@ function SyncSection({
         integrationId: optionalText(triggerForm.integrationId),
         syncScopeId: optionalText(triggerForm.syncScopeId),
       });
-      onNotice({ tone: "info", text: result.message ?? `Sync status: ${result.status}.` });
+      const text =
+        result.status === "not_implemented"
+          ? "Sync execution is not available for this provider."
+          : (result.message ?? `Sync status: ${result.status}.`);
+      onNotice({ tone: "info", text });
     } catch (error) {
+      if (error instanceof ApiClientError && error.code === "sync_not_implemented") {
+        onNotice({ tone: "info", text: "Sync execution is not available for this provider." });
+        return;
+      }
       onError(error);
     }
   }
@@ -709,6 +717,7 @@ function SyncSection({
 
       <section className="panel">
         <PanelTitle title="Trigger Sync" />
+        <EmptyState text="Choose a provider and scope to run a manual sync." />
         <form className="form-grid" onSubmit={(event) => void triggerSync(event)}>
           <ReadOnlyField label="Organization" value={selectedOrganizationId || "None"} />
           <label>
@@ -755,7 +764,7 @@ function SyncSection({
             </select>
           </label>
           <button type="submit" disabled={!selectedOrganizationId}>
-            Trigger sync
+            Run sync
           </button>
         </form>
       </section>

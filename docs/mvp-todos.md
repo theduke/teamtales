@@ -24,12 +24,13 @@
 - [x] Enforce organization ownership with SQLite foreign keys and scoped uniqueness.
 - [x] Validate tenant membership and same-organization integration ownership in CLI writes.
 - [x] Add organization-scoped persistence reads and cross-tenant isolation tests.
+- [x] Add browser UI for setup, dashboard, sync controls, reports, and raw data views.
+- [x] Wire provider sync execution through the API and CLI.
 
 ## Deferred
 
 - [ ] Webhooks and replay processing.
 - [ ] Historic source object versions.
 - [ ] GitHub App and Linear OAuth/App auth flows.
-- [ ] UI.
 - [ ] Monthly and quarterly stacked reports.
 - [ ] Comic and movie artifact generation.
