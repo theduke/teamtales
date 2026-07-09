@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { GenerateReportResponseDto, GenerateWeeklyReportRequestDto, JsonObject, ReportDto, ReportInputDto } from "@teamtales/common/api";
-import type { ReportContext } from "@teamtales/common/domain";
+import type { Highlight, ReportContext } from "@teamtales/common/domain";
 
 import { getAnalysisReportContext, saveCompleteAnalysisResult, saveCompleteReportResult } from "../persistence/index.js";
 import { generateWeeklyMarkdownReport } from "../reports/index.js";
@@ -52,7 +52,33 @@ export function generateWeeklyReportService(
         ...metric,
         id: stableId("metric", analysisRunId, String(index), metric.name, JSON.stringify(metric.dimensions ?? {})),
       })),
-      highlights: [],
+      highlights: input.context.highlights.flatMap((highlight, index) => {
+        const workItemId = highlight.relatedWorkItems[0];
+        if (workItemId === undefined) {
+          return [];
+        }
+
+        return [{
+          id: stableId(
+            "highlight",
+            analysisRunId,
+            String(index),
+            highlight.title,
+            highlight.reason,
+            JSON.stringify(highlight.sourceRefs),
+            JSON.stringify(highlight.relatedPeople),
+            JSON.stringify(highlight.relatedWorkItems),
+          ),
+          workItemId,
+          highlightType: inferHighlightType(highlight),
+          score: Math.max(1, 100 - index),
+          title: highlight.title,
+          reason: [highlight.reason],
+          sourceRefs: highlight.sourceRefs,
+          relatedPeople: highlight.relatedPeople,
+          relatedWorkItems: highlight.relatedWorkItems,
+        }];
+      }),
       reportContext: {
         id: analysisReportContextId,
         context: input.context,
@@ -161,6 +187,23 @@ export function generateWeeklyReportService(
     markdown,
     analysisReportContextId,
   };
+}
+
+function inferHighlightType(highlight: ReportContext["highlights"][number]): Highlight["highlightType"] {
+  const text = `${highlight.title} ${highlight.reason}`.toLowerCase();
+  if (text.includes("pull request") || text.includes("merged")) {
+    return "merged_pr";
+  }
+  if (text.includes("discussion") || text.includes("comment") || text.includes("review")) {
+    return "active_discussion";
+  }
+  if (text.includes("project")) {
+    return "project_progress";
+  }
+  if (text.includes("block") || text.includes("risk")) {
+    return "potential_blocker";
+  }
+  return "completed_work";
 }
 
 export function generateWeeklyReportFromStoredContextService(

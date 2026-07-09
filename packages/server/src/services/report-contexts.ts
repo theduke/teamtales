@@ -39,6 +39,9 @@ export function resolveReportContext(database: DatabaseSync, input: ResolveRepor
     name: input.organizationName ?? readOrganizationName(database, input.organizationId) ?? input.organizationId,
   };
   const scope = resolveScope(input);
+  const events = readActivityEvents(database, input.organizationId, input.periodStart, input.periodEnd, scope);
+  const workItemIds = new Set(events.map((event) => event.workItemId).filter((id): id is string => id !== undefined));
+  const personIds = new Set(events.map((event) => event.actorPersonId).filter((id): id is string => id !== undefined));
 
   return {
     context: buildReportContext({
@@ -49,9 +52,9 @@ export function resolveReportContext(database: DatabaseSync, input: ResolveRepor
         end: input.periodEnd,
       },
       freshness: databaseFreshness(database, input.organizationId),
-      events: readActivityEvents(database, input.organizationId, input.periodStart, input.periodEnd),
-      workItems: readWorkItems(database, input.organizationId),
-      people: readPeople(database, input.organizationId),
+      events,
+      workItems: readWorkItems(database, input.organizationId, scope.type === "organization" ? undefined : workItemIds),
+      people: readPeople(database, input.organizationId, scope.type === "organization" ? undefined : personIds),
     }),
   };
 }
@@ -59,11 +62,15 @@ export function resolveReportContext(database: DatabaseSync, input: ResolveRepor
 export function latestReportContext(
   database: DatabaseSync,
   input: Pick<ResolveReportContextInput, "organizationId"> &
-    Partial<Pick<ResolveReportContextInput, "scopeId" | "periodStart" | "periodEnd">>,
+    Partial<Pick<ResolveReportContextInput, "scopeType" | "scopeId" | "periodStart" | "periodEnd">>,
 ): ResolvedReportContext | undefined {
   const clauses: string[] = ["organization_id = ?"];
   const values: string[] = [input.organizationId];
 
+  if (input.scopeType) {
+    clauses.push("scope_type = ?");
+    values.push(input.scopeType);
+  }
   if (input.scopeId) {
     clauses.push("scope_id = ?");
     values.push(input.scopeId);
@@ -102,14 +109,24 @@ export function readActivityEvents(
   organizationId: string,
   periodStart: string,
   periodEnd: string,
+  scope?: ScopeRef,
 ): ActivityEvent[] {
+  const clauses = ["organization_id = ?", "occurred_at >= ?", "occurred_at <= ?"];
+  const values = [organizationId, periodStart, periodEnd];
+
+  const scopedColumn = scopeColumn(scope);
+  if (scope !== undefined && scopedColumn !== undefined) {
+    clauses.push(`${scopedColumn} = ?`);
+    values.push(scope.id);
+  }
+
   return database
     .prepare(
       `SELECT * FROM activity_events
-       WHERE organization_id = ? AND occurred_at >= ? AND occurred_at <= ?
+       WHERE ${clauses.join(" AND ")}
        ORDER BY occurred_at, id`,
     )
-    .all(organizationId, periodStart, periodEnd)
+    .all(...values)
     .map((row) => {
       const record = row as Record<string, unknown>;
       const sourceObjectId = optionalColumn(record, "source_object_id");
@@ -132,10 +149,21 @@ export function readActivityEvents(
     });
 }
 
-export function readWorkItems(database: DatabaseSync, organizationId: string): WorkItem[] {
+export function readWorkItems(database: DatabaseSync, organizationId: string, workItemIds?: ReadonlySet<string>): WorkItem[] {
+  if (workItemIds !== undefined && workItemIds.size === 0) {
+    return [];
+  }
+
+  const clauses = ["organization_id = ?"];
+  const values = [organizationId];
+  if (workItemIds !== undefined) {
+    clauses.push(`id IN (${placeholders(workItemIds.size)})`);
+    values.push(...workItemIds);
+  }
+
   return database
-    .prepare("SELECT * FROM work_items WHERE organization_id = ? ORDER BY updated_at_source, id")
-    .all(organizationId)
+    .prepare(`SELECT * FROM work_items WHERE ${clauses.join(" AND ")} ORDER BY updated_at_source, id`)
+    .all(...values)
     .map((row) => {
       const record = row as Record<string, unknown>;
       return stripUndefined({
@@ -154,10 +182,21 @@ export function readWorkItems(database: DatabaseSync, organizationId: string): W
     });
 }
 
-export function readPeople(database: DatabaseSync, organizationId: string): Person[] {
+export function readPeople(database: DatabaseSync, organizationId: string, personIds?: ReadonlySet<string>): Person[] {
+  if (personIds !== undefined && personIds.size === 0) {
+    return [];
+  }
+
+  const clauses = ["organization_id = ?"];
+  const values = [organizationId];
+  if (personIds !== undefined) {
+    clauses.push(`id IN (${placeholders(personIds.size)})`);
+    values.push(...personIds);
+  }
+
   return database
-    .prepare("SELECT id, display_name FROM people WHERE organization_id = ? ORDER BY display_name, id")
-    .all(organizationId)
+    .prepare(`SELECT id, display_name FROM people WHERE ${clauses.join(" AND ")} ORDER BY display_name, id`)
+    .all(...values)
     .map((row) => {
       const record = row as Record<string, unknown>;
       return {
@@ -203,6 +242,26 @@ function resolveScope(input: ResolveReportContextInput): ScopeRef {
     id: input.scopeId ?? input.organizationId,
     name: input.scopeName ?? input.scopeId ?? input.organizationName ?? input.organizationId,
   };
+}
+
+function scopeColumn(scope: ScopeRef | undefined): string | undefined {
+  switch (scope?.type) {
+    case "github_repository":
+      return "repository_id";
+    case "linear_team":
+      return "linear_team_id";
+    case "linear_project":
+      return "linear_project_id";
+    case "person":
+      return "actor_person_id";
+    case "organization":
+    case undefined:
+      return undefined;
+  }
+}
+
+function placeholders(count: number): string {
+  return Array.from({ length: count }, () => "?").join(", ");
 }
 
 function requiredColumn(row: Record<string, unknown>, key: string): string {
