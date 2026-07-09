@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import type { AppDatabase } from "./sqlite.js";
 
 export interface Migration {
   filename: string;
@@ -40,13 +41,14 @@ export function loadMigrations(migrationsDir = defaultMigrationsDir()): Migratio
   });
 }
 
-export function runMigrations(database: DatabaseSync, migrationsDir = defaultMigrationsDir()): MigrationResult {
-  database.exec("PRAGMA foreign_keys = ON;");
+export function runMigrations(database: AppDatabase | DatabaseSync, migrationsDir = defaultMigrationsDir()): MigrationResult {
+  const sqlite = "$client" in database ? database.$client : database;
+  sqlite.exec("PRAGMA foreign_keys = ON;");
   ensureMigrationsTable(database);
 
   const migrations = loadMigrations(migrationsDir);
   const appliedByName = new Map<string, AppliedMigration>();
-  const existingRows = database
+  const existingRows = sqlite
     .prepare("SELECT filename, checksum, applied_at AS appliedAt FROM schema_migrations ORDER BY filename")
     .all()
     .map((row) => ({
@@ -78,15 +80,15 @@ export function runMigrations(database: DatabaseSync, migrationsDir = defaultMig
 
     const appliedAt = new Date().toISOString();
 
-    database.exec("BEGIN;");
+    sqlite.exec("BEGIN;");
     try {
-      database.exec(migration.sql);
-      database
+      sqlite.exec(migration.sql);
+      sqlite
         .prepare("INSERT INTO schema_migrations (filename, checksum, applied_at) VALUES (?, ?, ?)")
         .run(migration.filename, migration.checksum, appliedAt);
-      database.exec("COMMIT;");
+      sqlite.exec("COMMIT;");
     } catch (error) {
-      database.exec("ROLLBACK;");
+      sqlite.exec("ROLLBACK;");
       throw error;
     }
 
@@ -100,8 +102,9 @@ export function runMigrations(database: DatabaseSync, migrationsDir = defaultMig
   return result;
 }
 
-function ensureMigrationsTable(database: DatabaseSync): void {
-  database.exec(`
+function ensureMigrationsTable(database: AppDatabase | DatabaseSync): void {
+  const sqlite = "$client" in database ? database.$client : database;
+  sqlite.exec(`
 CREATE TABLE IF NOT EXISTS schema_migrations (
   filename TEXT PRIMARY KEY,
   checksum TEXT NOT NULL,
