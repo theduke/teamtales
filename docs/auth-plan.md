@@ -7,7 +7,7 @@ TeamTales supports two credential transports:
 - Browser requests authenticate with an opaque server-side session in an `HttpOnly` cookie. Browser JavaScript never reads or stores the session token.
 - Programmatic API requests authenticate with an opaque bearer token attached to a user. API tokens are shown once when created.
 
-Passwords are hashed with a memory-hard password KDF and unique salts. Session and API token secrets are generated with a cryptographically secure random source. Only SHA-256 token hashes are stored in SQLite; plaintext credentials are never persisted or logged.
+Passwords are hashed with a memory-hard password KDF and unique salts. Session and API token secrets are generated with a cryptographically secure random source. Only SHA-256 token hashes are stored in MySQL; plaintext credentials are never persisted or logged.
 
 Authentication establishes a user principal. Organization authorization is evaluated separately from active membership and role. Request bodies must not select the acting user.
 
@@ -24,9 +24,11 @@ Existing databases may contain users created before password authentication was 
 ```sh
 read -s TEAMTALES_PASSWORD && export TEAMTALES_PASSWORD
 npm run cli -- auth set-password \
-  --db ./teamtales.sqlite --user-id user_id --password-env TEAMTALES_PASSWORD
+  --user-id user_id --password-env TEAMTALES_PASSWORD
 unset TEAMTALES_PASSWORD
 ```
+
+Configure MySQL with `DATABASE_URL` or with `DB_HOST`, `DB_PORT`, `DB_USER`/`DB_USERNAME`, `DB_PASSWORD`, and `DB_NAME`.
 
 ## API-token flow
 

@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import type { DatabaseSync } from "node:sqlite";
+import type { AppDatabase } from "../db/mysql.js";
 import type { AuthPrincipal } from "../auth/index.js";
 
 import type { ApiConfig } from "./config.js";
@@ -31,7 +31,7 @@ export type RouteParams = Record<string, string>;
 
 export interface ApiContext {
   config: ApiConfig;
-  database: DatabaseSync;
+  database: AppDatabase;
   request: IncomingMessage;
   principal?: AuthPrincipal;
   authKind?: "session" | "api_token";
@@ -87,7 +87,7 @@ export async function dispatchRoute(context: ApiContext, url: URL): Promise<Hand
       }
     });
 
-    const authenticated = authenticateRequest(context);
+    const authenticated = await authenticateRequest(context);
     context.principal = authenticated?.principal;
     context.authKind = authenticated?.kind;
     if (!candidate.public && !context.principal) {
@@ -125,18 +125,18 @@ function route(method: string, path: string, handler: Handler, isPublic = false)
   };
 }
 
-function authenticateRequest(context: ApiContext): { principal: AuthPrincipal; kind: "session" | "api_token" } | undefined {
+async function authenticateRequest(context: ApiContext): Promise<{ principal: AuthPrincipal; kind: "session" | "api_token" } | undefined> {
   const authorization = context.request.headers.authorization;
   if (authorization !== undefined) {
     const match = /^Bearer ([^\s]+)$/.exec(authorization);
     if (!match?.[1]) throw new HttpError(401, "invalid_token", "Invalid bearer token.");
-    const principal = resolveApiToken(context.database, match[1]);
+    const principal = await resolveApiToken(context.database, match[1]);
     if (!principal) throw new HttpError(401, "invalid_token", "Invalid or expired bearer token.");
     return { principal, kind: "api_token" };
   }
   const cookie = parseCookies(context.request.headers.cookie)["teamtales_session"];
   if (!cookie) return undefined;
-  const principal = resolveSession(context.database, cookie);
+  const principal = await resolveSession(context.database, cookie);
   return principal ? { principal, kind: "session" } : undefined;
 }
 

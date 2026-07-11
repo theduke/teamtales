@@ -12,13 +12,14 @@
     "dev:server": "npm run dev:api -w @teamtales/server",
     "dev:ui": "npm run dev -w @teamtales/ui",
     "dev:all": "sh -c 'trap \"kill 0\" EXIT; npm run dev:server & npm run dev:ui & wait'",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w @teamtales/ui && npm run build -w @teamtales/server",
+    "start": "node packages/server/dist/server.js",
     "ui:dev": "npm run dev -w @teamtales/ui",
     "ui:build": "npm run build -w @teamtales/ui",
     "typecheck": "npm run typecheck --workspaces",
     "schema:check": "npm run schema:check -w @teamtales/server",
     "test": "npm test -w @teamtales/server --",
-    "check": "npm run typecheck && npm test -w @teamtales/server -- --test-reporter=spec && npm run build -w @teamtales/ui && npm run schema:check -w @teamtales/server"
+    "check": "npm run typecheck && npm test -w @teamtales/server -- --test-reporter=spec && npm run build && npm run schema:check -w @teamtales/server"
   },
   "devDependencies": {
     "@types/node": "^24.13.2",

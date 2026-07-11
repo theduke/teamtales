@@ -1,6 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
+import { and, eq, sql } from "drizzle-orm";
 
-import { withTransaction } from "./sqlite.js";
+import { integrations, organizationMemberships, organizations, users } from "../db/schema.js";
+import { type PersistenceDatabase, withTransaction } from "./database.js";
 
 export type OrganizationRole = "owner" | "admin" | "member" | "viewer";
 
@@ -31,16 +32,8 @@ export interface OrganizationMembershipRecord {
 }
 
 export interface CreateOrganizationInput {
-  organization: {
-    id: string;
-    name: string;
-    slug: string;
-  };
-  owner: {
-    id: string;
-    displayName: string;
-    primaryEmail?: string | null;
-  };
+  organization: { id: string; name: string; slug: string };
+  owner: { id: string; displayName: string; primaryEmail?: string | null };
   membershipId: string;
 }
 
@@ -50,167 +43,124 @@ export interface CreatedOrganizationResult {
   membership: OrganizationMembershipRecord;
 }
 
-export function createOrganizationWithOwner(
-  database: DatabaseSync,
+export async function createOrganizationWithOwner(
+  database: PersistenceDatabase,
   input: CreateOrganizationInput,
-): CreatedOrganizationResult {
-  return withTransaction(database, () => {
-    database
-      .prepare(
-        `INSERT INTO organizations (id, name, slug, created_at, updated_at)
-         VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      )
-      .run(input.organization.id, input.organization.name, input.organization.slug);
-
-    database
-      .prepare(
-        `INSERT INTO users (id, display_name, primary_email, created_at, updated_at)
-         VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-         ON CONFLICT(id) DO UPDATE SET
-           display_name = excluded.display_name,
-           primary_email = COALESCE(users.primary_email, excluded.primary_email),
-           updated_at = CURRENT_TIMESTAMP`,
-      )
-      .run(input.owner.id, input.owner.displayName, input.owner.primaryEmail ?? null);
-
-    database
-      .prepare(
-        `INSERT INTO organization_memberships (
-          id, organization_id, user_id, role, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      )
-      .run(input.membershipId, input.organization.id, input.owner.id, "owner", "active");
+): Promise<CreatedOrganizationResult> {
+  return withTransaction(database, async (transaction) => {
+    const now = new Date().toISOString();
+    await transaction.insert(organizations).values({ ...input.organization, createdAt: now, updatedAt: now });
+    await transaction.insert(users).values({
+      id: input.owner.id,
+      displayName: input.owner.displayName,
+      primaryEmail: input.owner.primaryEmail ?? null,
+      createdAt: now,
+      updatedAt: now,
+    }).onDuplicateKeyUpdate({ set: {
+      displayName: input.owner.displayName,
+      primaryEmail: sql`coalesce(${users.primaryEmail}, values(primary_email))`,
+      updatedAt: now,
+    } });
+    await transaction.insert(organizationMemberships).values({
+      id: input.membershipId,
+      organizationId: input.organization.id,
+      userId: input.owner.id,
+      role: "owner",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
 
     return {
-      organization: requireOrganization(database, input.organization.id),
-      owner: requireUser(database, input.owner.id),
-      membership: requireOrganizationMembership(database, input.organization.id, input.owner.id),
+      organization: await requireOrganization(transaction, input.organization.id),
+      owner: await requireUser(transaction, input.owner.id),
+      membership: await requireOrganizationMembership(transaction, input.organization.id, input.owner.id),
     };
   });
 }
 
-export function getOrganization(database: DatabaseSync, organizationId: string): OrganizationRecord | undefined {
-  const row = database.prepare("SELECT * FROM organizations WHERE id = ?").get(organizationId);
-  return row ? mapOrganization(row as Record<string, unknown>) : undefined;
+export async function getOrganization(
+  database: PersistenceDatabase,
+  organizationId: string,
+): Promise<OrganizationRecord | undefined> {
+  const [row] = await database.select().from(organizations).where(eq(organizations.id, organizationId)).limit(1);
+  return row ? mapOrganization(row) : undefined;
 }
 
-export function requireOrganization(database: DatabaseSync, organizationId: string): OrganizationRecord {
-  const organization = getOrganization(database, organizationId);
-  if (!organization) {
-    throw new Error(`Organization not found: ${organizationId}`);
-  }
+export async function requireOrganization(database: PersistenceDatabase, organizationId: string): Promise<OrganizationRecord> {
+  const organization = await getOrganization(database, organizationId);
+  if (!organization) throw new Error(`Organization not found: ${organizationId}`);
   return organization;
 }
 
-export function getUser(database: DatabaseSync, userId: string): UserRecord | undefined {
-  const row = database.prepare("SELECT * FROM users WHERE id = ?").get(userId);
-  return row ? mapUser(row as Record<string, unknown>) : undefined;
+export async function getUser(database: PersistenceDatabase, userId: string): Promise<UserRecord | undefined> {
+  const [row] = await database.select().from(users).where(eq(users.id, userId)).limit(1);
+  return row ? mapUser(row) : undefined;
 }
 
-export function requireUser(database: DatabaseSync, userId: string): UserRecord {
-  const user = getUser(database, userId);
-  if (!user) {
-    throw new Error(`User not found: ${userId}`);
-  }
+export async function requireUser(database: PersistenceDatabase, userId: string): Promise<UserRecord> {
+  const user = await getUser(database, userId);
+  if (!user) throw new Error(`User not found: ${userId}`);
   return user;
 }
 
-export function getOrganizationMembership(
-  database: DatabaseSync,
+export async function getOrganizationMembership(
+  database: PersistenceDatabase,
   organizationId: string,
   userId: string,
-): OrganizationMembershipRecord | undefined {
-  const row = database
-    .prepare("SELECT * FROM organization_memberships WHERE organization_id = ? AND user_id = ?")
-    .get(organizationId, userId);
-  return row ? mapMembership(row as Record<string, unknown>) : undefined;
+): Promise<OrganizationMembershipRecord | undefined> {
+  const [row] = await database.select().from(organizationMemberships).where(and(
+    eq(organizationMemberships.organizationId, organizationId),
+    eq(organizationMemberships.userId, userId),
+  )).limit(1);
+  return row ? mapMembership(row) : undefined;
 }
 
-export function requireOrganizationMembership(
-  database: DatabaseSync,
+export async function requireOrganizationMembership(
+  database: PersistenceDatabase,
   organizationId: string,
   userId: string,
-): OrganizationMembershipRecord {
-  const membership = getOrganizationMembership(database, organizationId, userId);
+): Promise<OrganizationMembershipRecord> {
+  const membership = await getOrganizationMembership(database, organizationId, userId);
   if (!membership || membership.status !== "active") {
     throw new Error(`Active organization membership not found: ${organizationId}/${userId}`);
   }
   return membership;
 }
 
-export function requireOrganizationRole(
-  database: DatabaseSync,
+export async function requireOrganizationRole(
+  database: PersistenceDatabase,
   organizationId: string,
   userId: string,
   allowedRoles: readonly OrganizationRole[],
-): OrganizationMembershipRecord {
-  const membership = requireOrganizationMembership(database, organizationId, userId);
+): Promise<OrganizationMembershipRecord> {
+  const membership = await requireOrganizationMembership(database, organizationId, userId);
   if (!allowedRoles.includes(membership.role)) {
     throw new Error(`User ${userId} is not authorized for organization ${organizationId}.`);
   }
   return membership;
 }
 
-export function requireIntegrationInOrganization(
-  database: DatabaseSync,
+export async function requireIntegrationInOrganization(
+  database: PersistenceDatabase,
   organizationId: string,
   integrationId: string,
-): void {
-  const row = database
-    .prepare("SELECT id FROM integrations WHERE id = ? AND organization_id = ?")
-    .get(integrationId, organizationId);
-  if (!row) {
-    throw new Error(`Integration not found in organization ${organizationId}: ${integrationId}`);
-  }
+): Promise<void> {
+  const [row] = await database.select({ id: integrations.id }).from(integrations).where(and(
+    eq(integrations.id, integrationId),
+    eq(integrations.organizationId, organizationId),
+  )).limit(1);
+  if (!row) throw new Error(`Integration not found in organization ${organizationId}: ${integrationId}`);
 }
 
-function mapOrganization(row: Record<string, unknown>): OrganizationRecord {
-  return {
-    id: requiredString(row, "id"),
-    name: requiredString(row, "name"),
-    slug: requiredString(row, "slug"),
-    createdAt: requiredString(row, "created_at"),
-    updatedAt: requiredString(row, "updated_at"),
-  };
+function mapOrganization(row: typeof organizations.$inferSelect): OrganizationRecord {
+  return row;
 }
 
-function mapUser(row: Record<string, unknown>): UserRecord {
-  return {
-    id: requiredString(row, "id"),
-    displayName: requiredString(row, "display_name"),
-    primaryEmail: optionalString(row, "primary_email"),
-    createdAt: requiredString(row, "created_at"),
-    updatedAt: requiredString(row, "updated_at"),
-  };
+function mapUser(row: typeof users.$inferSelect): UserRecord {
+  return row;
 }
 
-function mapMembership(row: Record<string, unknown>): OrganizationMembershipRecord {
-  return {
-    id: requiredString(row, "id"),
-    organizationId: requiredString(row, "organization_id"),
-    userId: requiredString(row, "user_id"),
-    role: requiredString(row, "role") as OrganizationRole,
-    status: requiredString(row, "status") as "active" | "inactive",
-    createdAt: requiredString(row, "created_at"),
-    updatedAt: requiredString(row, "updated_at"),
-  };
-}
-
-function requiredString(row: Record<string, unknown>, key: string): string {
-  const value = row[key];
-  if (typeof value !== "string") {
-    throw new Error(`Expected string column: ${key}`);
-  }
-  return value;
-}
-
-function optionalString(row: Record<string, unknown>, key: string): string | null {
-  const value = row[key];
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value !== "string") {
-    throw new Error(`Expected nullable string column: ${key}`);
-  }
-  return value;
+function mapMembership(row: typeof organizationMemberships.$inferSelect): OrganizationMembershipRecord {
+  return { ...row, role: row.role as OrganizationRole, status: row.status as "active" | "inactive" };
 }

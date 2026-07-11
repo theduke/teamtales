@@ -1,6 +1,8 @@
 import type { JsonObject, JsonValue, SyncScopeDto } from "@teamtales/common/api";
 import type { Provider, ReportScopeType } from "@teamtales/common/domain";
 import type { AuthPrincipal } from "../auth/index.js";
+import { and, count, eq, isNull } from "drizzle-orm";
+import { apiTokens, organizationMemberships, users } from "../db/schema.js";
 
 import type { ApiContext, RouteParams } from "./router.js";
 import {
@@ -49,7 +51,7 @@ export async function loginHandler(input: HandlerInput): Promise<HandlerResult> 
   const body = assertRecord(await readJsonBody(input.context.request));
   let principal: AuthPrincipal | undefined;
   try {
-    principal = authenticatePassword(
+    principal = await authenticatePassword(
       input.context.database,
       requiredString(body, "email"),
       requiredString(body, "password"),
@@ -58,7 +60,7 @@ export async function loginHandler(input: HandlerInput): Promise<HandlerResult> 
     principal = undefined;
   }
   if (!principal) throw new HttpError(401, "invalid_credentials", "Invalid email or password.");
-  const created = createSession(input.context.database, principal.userId);
+  const created = await createSession(input.context.database, principal.userId);
   return {
     status: 200,
     data: { authenticated: true, bootstrapAllowed: false, user: principalDto(principal) },
@@ -69,9 +71,9 @@ export async function loginHandler(input: HandlerInput): Promise<HandlerResult> 
   };
 }
 
-export function logoutHandler(input: HandlerInput): HandlerResult {
+export async function logoutHandler(input: HandlerInput): Promise<HandlerResult> {
   const token = requestCookie(input.context.request.headers.cookie, "teamtales_session");
-  if (token) revokeSession(input.context.database, token);
+  if (token) await revokeSession(input.context.database, token);
   return {
     status: 200,
     data: { loggedOut: true },
@@ -82,8 +84,8 @@ export function logoutHandler(input: HandlerInput): HandlerResult {
   };
 }
 
-export function meHandler(input: HandlerInput): HandlerResult {
-  const bootstrapAllowed = userCount(input.context.database) === 0;
+export async function meHandler(input: HandlerInput): Promise<HandlerResult> {
+  const bootstrapAllowed = await userCount(input.context.database) === 0;
   if (!input.context.principal) {
     return { status: 200, data: { authenticated: false, bootstrapAllowed }, headers: { "cache-control": "no-store" } };
   }
@@ -94,15 +96,9 @@ export function meHandler(input: HandlerInput): HandlerResult {
   };
 }
 
-export function listApiTokensHandler(input: HandlerInput): HandlerResult {
+export async function listApiTokensHandler(input: HandlerInput): Promise<HandlerResult> {
   const userId = requirePrincipal(input).userId;
-  const items = input.context.database
-    .prepare(
-      `SELECT id, name, token_prefix, created_at, expires_at, last_used_at FROM api_tokens
-       WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC, id`,
-    )
-    .all(userId)
-    .map(mapApiToken);
+  const items = (await input.context.database.select().from(apiTokens).where(and(eq(apiTokens.userId, userId), isNull(apiTokens.revokedAt))).orderBy(apiTokens.createdAt, apiTokens.id)).map(mapApiToken);
   return { status: 200, data: { items }, headers: { "cache-control": "no-store" } };
 }
 
@@ -113,9 +109,9 @@ export async function createApiTokenHandler(input: HandlerInput): Promise<Handle
   if (expiresAt && Number.isNaN(expiresAt.getTime())) {
     throw new HttpError(400, "invalid_request", "expiresAt must be a valid date.");
   }
-  let created: ReturnType<typeof createApiToken>;
+  let created: Awaited<ReturnType<typeof createApiToken>>;
   try {
-    created = createApiToken(input.context.database, requirePrincipal(input).userId, {
+    created = await createApiToken(input.context.database, requirePrincipal(input).userId, {
       name: requiredString(body, "name"),
       expiresAt,
     });
@@ -129,36 +125,33 @@ export async function createApiTokenHandler(input: HandlerInput): Promise<Handle
   };
 }
 
-export function revokeApiTokenHandler(input: HandlerInput): HandlerResult {
+export async function revokeApiTokenHandler(input: HandlerInput): Promise<HandlerResult> {
   const tokenId = input.params.tokenId ?? "";
-  const owned = input.context.database.prepare("SELECT id FROM api_tokens WHERE id = ? AND user_id = ?").get(
-    tokenId,
-    requirePrincipal(input).userId,
-  );
+  const [owned] = await input.context.database.select({ id: apiTokens.id }).from(apiTokens).where(and(eq(apiTokens.id, tokenId), eq(apiTokens.userId, requirePrincipal(input).userId))).limit(1);
   if (!owned) throw new HttpError(404, "not_found", "API token not found.");
-  revokeApiToken(input.context.database, tokenId);
+  await revokeApiToken(input.context.database, tokenId);
   return { status: 200, data: { revoked: true } };
 }
 
-export function healthHandler(input: HandlerInput): { status: number; data: JsonValue } {
-  input.context.database.prepare("SELECT 1").get();
+export async function healthHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
+  await input.context.database.select({ count: count() }).from(users);
   return { status: 200, data: { status: "ok", service: "teamtales-api", database: "ok" } };
 }
 
-export function listOrganizationsHandler(input: HandlerInput): { status: number; data: JsonValue } {
-  return { status: 200, data: { items: listOrganizations(input.context.database, requirePrincipal(input).userId) } };
+export async function listOrganizationsHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
+  return { status: 200, data: { items: await listOrganizations(input.context.database, requirePrincipal(input).userId) } };
 }
 
 export async function createOrganizationHandler(input: HandlerInput): Promise<HandlerResult> {
   const body = assertRecord(await readJsonBody(input.context.request));
   const owner = body.owner === undefined ? {} : assertRecord(body.owner);
-  const bootstrap = userCount(input.context.database) === 0;
+  const bootstrap = await userCount(input.context.database) === 0;
   const principal = input.context.principal;
   if (!bootstrap && !principal) throw new HttpError(401, "unauthorized", "Authentication is required.");
   const ownerEmail = bootstrap ? requiredString(owner, "primaryEmail") : principal!.email ?? undefined;
   const ownerName = bootstrap ? optionalString(owner, "displayName") : principal!.displayName;
   if (bootstrap) validateBootstrapPassword(requiredString(owner, "password"));
-  const result = createOrganizationService(input.context.database, {
+  const result = await createOrganizationService(input.context.database, {
     id: optionalString(body, "id"),
     name: requiredString(body, "name"),
     slug: optionalString(body, "slug"),
@@ -170,8 +163,8 @@ export async function createOrganizationHandler(input: HandlerInput): Promise<Ha
 
   let headers: Record<string, string> | undefined;
   if (bootstrap) {
-    setPassword(input.context.database, result.ownerUserId, requiredString(owner, "password"));
-    const session = createSession(input.context.database, result.ownerUserId);
+    await setPassword(input.context.database, result.ownerUserId, requiredString(owner, "password"));
+    const session = await createSession(input.context.database, result.ownerUserId);
     headers = { "set-cookie": sessionCookie(session.token, input.context.config.cookieSecure === true) };
   }
   return {
@@ -185,24 +178,24 @@ export async function createOrganizationHandler(input: HandlerInput): Promise<Ha
   };
 }
 
-export function listIntegrationsHandler(input: HandlerInput): { status: number; data: JsonValue } {
-  requireMembership(input, input.params.organizationId ?? "");
+export async function listIntegrationsHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
+  await requireMembership(input, input.params.organizationId ?? "");
   return {
     status: 200,
-    data: { items: listIntegrations(input.context.database, input.params.organizationId ?? "") },
+    data: { items: await listIntegrations(input.context.database, input.params.organizationId ?? "") },
   };
 }
 
 export async function createPatIntegrationHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
   const body = assertRecord(await readJsonBody(input.context.request));
   const organizationId = requiredString(body, "organizationId");
-  const principal = requireMembership(input, organizationId, ["owner", "admin"]);
+  const principal = await requireMembership(input, organizationId, ["owner", "admin"]);
   const encryptionKey = input.context.config.credentialEncryptionKey;
   if (!encryptionKey) {
     throw new HttpError(500, "credential_key_missing", "Credential encryption key is not configured.");
   }
 
-  const result = addPersonalAccessTokenIntegrationService(input.context.database, {
+  const result = await addPersonalAccessTokenIntegrationService(input.context.database, {
     id: optionalString(body, "id"),
     credentialId: optionalString(body, "credentialId"),
     organizationId,
@@ -219,19 +212,19 @@ export async function createPatIntegrationHandler(input: HandlerInput): Promise<
   };
 }
 
-export function listSyncScopesHandler(input: HandlerInput): { status: number; data: JsonValue } {
-  requireMembership(input, input.params.organizationId ?? "");
+export async function listSyncScopesHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
+  await requireMembership(input, input.params.organizationId ?? "");
   return {
     status: 200,
-    data: { items: listSyncScopes(input.context.database, input.params.organizationId ?? "") },
+    data: { items: await listSyncScopes(input.context.database, input.params.organizationId ?? "") },
   };
 }
 
 export async function createSyncScopeHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
   const body = assertRecord(await readJsonBody(input.context.request));
   const organizationId = requiredString(body, "organizationId");
-  const principal = requireMembership(input, organizationId, ["owner", "admin"]);
-  const result = addSyncScopeService(input.context.database, {
+  const principal = await requireMembership(input, organizationId, ["owner", "admin"]);
+  const result = await addSyncScopeService(input.context.database, {
     id: optionalString(body, "id"),
     organizationId,
     userId: principal.userId,
@@ -247,22 +240,22 @@ export async function createSyncScopeHandler(input: HandlerInput): Promise<{ sta
   return { status: 201, data: result };
 }
 
-export function listReportsHandler(input: HandlerInput): { status: number; data: JsonValue } {
-  requireMembership(input, input.params.organizationId ?? "");
+export async function listReportsHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
+  await requireMembership(input, input.params.organizationId ?? "");
   return {
     status: 200,
-    data: { items: listReports(input.context.database, input.params.organizationId ?? "") },
+    data: { items: await listReports(input.context.database, input.params.organizationId ?? "") },
   };
 }
 
-export function getReportHandler(input: HandlerInput): { status: number; data: JsonValue } {
+export async function getReportHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
   const organizationId = input.url.searchParams.get("organizationId");
   if (!organizationId) {
     throw new HttpError(400, "invalid_request", "Missing required query parameter: organizationId.");
   }
-  requireMembership(input, organizationId);
+  await requireMembership(input, organizationId);
 
-  const report = getReportDto(input.context.database, organizationId, input.params.reportId ?? "");
+  const report = await getReportDto(input.context.database, organizationId, input.params.reportId ?? "");
   if (!report) {
     throw new HttpError(404, "not_found", "Report not found.");
   }
@@ -273,9 +266,9 @@ export function getReportHandler(input: HandlerInput): { status: number; data: J
 export async function createWeeklyReportHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
   const body = assertRecord(await readJsonBody(input.context.request));
   const organizationId = requiredString(body, "organizationId");
-  const principal = requireMembership(input, organizationId);
+  const principal = await requireMembership(input, organizationId);
   const persist = optionalBoolean(body, "persist");
-  const result = generateWeeklyReportFromRequestService(input.context.database, {
+  const result = await generateWeeklyReportFromRequestService(input.context.database, {
     organizationId,
     organizationName: optionalString(body, "organizationName"),
     scopeType: optionalReportScopeType(body, "scopeType"),
@@ -296,14 +289,14 @@ export async function createWeeklyReportHandler(input: HandlerInput): Promise<{ 
   };
 }
 
-export function dashboardHandler(input: HandlerInput): { status: number; data: JsonValue } {
+export async function dashboardHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
   const organizationId = input.url.searchParams.get("organizationId");
   if (!organizationId) {
     throw new HttpError(400, "invalid_request", "Missing required query parameter: organizationId.");
   }
-  requireMembership(input, organizationId);
+  await requireMembership(input, organizationId);
 
-  const dashboard = getDashboard(input.context.database, organizationId, requirePrincipal(input).userId);
+  const dashboard = await getDashboard(input.context.database, organizationId, requirePrincipal(input).userId);
   if (!dashboard) {
     throw new HttpError(404, "not_found", "Organization not found.");
   }
@@ -315,7 +308,7 @@ export async function triggerSyncHandler(input: HandlerInput): Promise<{ status:
   const provider = parseProvider(input.params.provider ?? "");
   const body = input.context.request.method === "POST" ? assertRecord(await readJsonBody(input.context.request)) : {};
   const organizationId = requiredString(body, "organizationId");
-  requireMembership(input, organizationId);
+  await requireMembership(input, organizationId);
   const encryptionKey = input.context.config.credentialEncryptionKey;
   if (!encryptionKey) {
     throw new HttpError(500, "credential_key_missing", "Credential encryption key is not configured.");
@@ -361,26 +354,23 @@ function requirePrincipal(input: HandlerInput): AuthPrincipal {
   return input.context.principal;
 }
 
-function requireMembership(
+async function requireMembership(
   input: HandlerInput,
   organizationId: string,
   allowedRoles?: readonly string[],
-): AuthPrincipal {
+): Promise<AuthPrincipal> {
   const principal = requirePrincipal(input);
-  const row = input.context.database
-    .prepare(
-      `SELECT role FROM organization_memberships
-       WHERE organization_id = ? AND user_id = ? AND status = 'active'`,
-    )
-    .get(organizationId, principal.userId) as { role: string } | undefined;
+  const [row] = await input.context.database.select({ role: organizationMemberships.role }).from(organizationMemberships)
+    .where(and(eq(organizationMemberships.organizationId, organizationId), eq(organizationMemberships.userId, principal.userId), eq(organizationMemberships.status, "active"))).limit(1);
   if (!row || (allowedRoles && !allowedRoles.includes(row.role))) {
     throw new HttpError(403, "forbidden", "You do not have permission to access this organization.");
   }
   return principal;
 }
 
-function userCount(database: ApiContext["database"]): number {
-  return (database.prepare("SELECT count(*) AS count FROM users").get() as { count: number }).count;
+async function userCount(database: ApiContext["database"]): Promise<number> {
+  const [row] = await database.select({ value: count() }).from(users);
+  return row?.value ?? 0;
 }
 
 function principalDto(principal: AuthPrincipal): JsonObject {

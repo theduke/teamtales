@@ -1,249 +1,68 @@
-import type { DatabaseSync } from "node:sqlite";
-import type {
-  DashboardDto,
-  IntegrationDto,
-  JsonObject,
-  OrganizationDto,
-  ReportDetailDto,
-  ReportSummaryDto,
-  SyncScopeDto,
-} from "@teamtales/common/api";
+import { and, asc, desc, eq } from "drizzle-orm";
+import type { DashboardDto, IntegrationDto, JsonObject, OrganizationDto, ReportDetailDto, ReportSummaryDto, SyncScopeDto } from "@teamtales/common/api";
 import type { Metric, Provider, ReportContext } from "@teamtales/common/domain";
+import type { DbExecutor } from "../db/mysql.js";
+import { analysisReportContexts, integrationCredentials, integrations, organizationMemberships, organizations, reports, syncScopes } from "../db/schema.js";
 
-import { getReportForOrganization } from "../persistence/index.js";
-import { parseJsonObject } from "../persistence/sqlite.js";
+export type IntegrationListItemDto = IntegrationDto & { secretHint?: string };
 
-export type IntegrationListItemDto = IntegrationDto & {
-  secretHint?: string;
-};
-
-export function listOrganizations(database: DatabaseSync, userId: string): OrganizationDto[] {
-  return database
-    .prepare(
-      `SELECT o.id, o.name, o.slug FROM organizations o
-       JOIN organization_memberships m ON m.organization_id = o.id
-       WHERE m.user_id = ? AND m.status = 'active'
-       ORDER BY o.name, o.id`,
-    )
-    .all(userId)
-    .map((row) => {
-      const record = row as Record<string, unknown>;
-      return {
-        id: requiredString(record, "id"),
-        name: requiredString(record, "name"),
-        slug: requiredString(record, "slug"),
-      };
-    });
+export async function listOrganizations(db: DbExecutor, userId: string): Promise<OrganizationDto[]> {
+  return db.select({ id: organizations.id, name: organizations.name, slug: organizations.slug }).from(organizations)
+    .innerJoin(organizationMemberships, eq(organizationMemberships.organizationId, organizations.id))
+    .where(and(eq(organizationMemberships.userId, userId), eq(organizationMemberships.status, "active")))
+    .orderBy(asc(organizations.name), asc(organizations.id));
 }
 
-export function listIntegrations(database: DatabaseSync, organizationId: string): IntegrationListItemDto[] {
-  return database
-    .prepare(
-      `SELECT integrations.*, integration_credentials.secret_hint
-       FROM integrations
-       LEFT JOIN integration_credentials ON integration_credentials.integration_id = integrations.id
-       WHERE integrations.organization_id = ?
-       ORDER BY integrations.created_at, integrations.id`,
-    )
-    .all(organizationId)
-    .map(mapIntegration);
+export async function listIntegrations(db: DbExecutor, organizationId: string): Promise<IntegrationListItemDto[]> {
+  const rows = await db.select({ integration: integrations, secretHint: integrationCredentials.secretHint }).from(integrations)
+    .leftJoin(integrationCredentials, eq(integrationCredentials.integrationId, integrations.id))
+    .where(eq(integrations.organizationId, organizationId)).orderBy(asc(integrations.createdAt), asc(integrations.id));
+  return rows.map(({ integration, secretHint }) => ({ ...integration, provider: integration.provider as Provider, authType: integration.authType === "personal_access_token" ? "personal_access_token" : "oauth", status: integration.status as IntegrationDto["status"], ...(secretHint ? { secretHint } : {}) }));
 }
 
-export function listSyncScopes(database: DatabaseSync, organizationId: string): SyncScopeDto[] {
-  return database
-    .prepare("SELECT * FROM sync_scopes WHERE organization_id = ? ORDER BY created_at, id")
-    .all(organizationId)
-    .map(mapSyncScope);
+export async function listSyncScopes(db: DbExecutor, organizationId: string): Promise<SyncScopeDto[]> {
+  const rows = await db.select().from(syncScopes).where(eq(syncScopes.organizationId, organizationId)).orderBy(asc(syncScopes.createdAt), asc(syncScopes.id));
+  return rows.map(row => ({ id: row.id, organizationId: row.organizationId, integrationId: row.integrationId, provider: row.provider as Provider, scopeType: row.scopeType as SyncScopeDto["scopeType"], externalId: row.externalId ?? "", externalName: row.externalName, config: JSON.parse(row.configJson) as JsonObject, enabled: Boolean(row.enabled), ...(row.lastSuccessAt ? { lastSuccessAt: row.lastSuccessAt } : {}), ...(row.lastAttemptAt ? { lastAttemptAt: row.lastAttemptAt } : {}), createdAt: row.createdAt, updatedAt: row.updatedAt }));
 }
 
-export function listReports(database: DatabaseSync, organizationId: string): ReportSummaryDto[] {
-  return database
-    .prepare("SELECT * FROM reports WHERE organization_id = ? ORDER BY period_end DESC, created_at DESC, id")
-    .all(organizationId)
-    .map(mapReportSummary);
+export async function listReports(db: DbExecutor, organizationId: string): Promise<ReportSummaryDto[]> {
+  const rows = await db.select().from(reports).where(eq(reports.organizationId, organizationId)).orderBy(desc(reports.periodEnd), desc(reports.createdAt), asc(reports.id));
+  return rows.map(toReportSummary);
 }
 
-export function getReportDto(database: DatabaseSync, organizationId: string, reportId: string): ReportDetailDto | undefined {
-  const report = getReportForOrganization(database, organizationId, reportId);
-  return report
-    ? {
-        id: report.id,
-        organizationId: report.organizationId,
-        analysisReportContextId: report.analysisReportContextId,
-        reportType: report.reportType,
-        scopeType: report.scopeType,
-        scopeId: report.scopeId,
-        periodStart: report.periodStart,
-        periodEnd: report.periodEnd,
-        status: report.status,
-        title: report.title,
-        summary: report.summary ?? undefined,
-        bodyMarkdown: report.bodyMarkdown,
-        structured: report.structured as JsonObject,
-        createdByUserId: report.createdByUserId ?? undefined,
-        createdAt: report.createdAt ?? "",
-        updatedAt: report.updatedAt ?? "",
-      }
-    : undefined;
+export async function getReportDto(db: DbExecutor, organizationId: string, reportId: string): Promise<ReportDetailDto | undefined> {
+  const [row] = await db.select().from(reports).where(and(eq(reports.organizationId, organizationId), eq(reports.id, reportId))).limit(1);
+  return row ? toReportDetail(row) : undefined;
 }
 
-export function getDashboard(database: DatabaseSync, organizationId: string, userId: string): DashboardDto | undefined {
-  const organizations = listOrganizations(database, userId);
-  const organization = organizations.find((item) => item.id === organizationId);
-  if (!organization) {
-    return undefined;
-  }
-  const latestReport = readLatestReport(database, organizationId);
-  const latestContext = latestReport
-    ? readReportContext(database, latestReport.analysisReportContextId)
-    : readLatestReportContext(database, organizationId);
-
-  return {
-    organizations,
-    selectedOrganizationId: organizationId,
-    organization,
-    integrations: listIntegrations(database, organizationId),
-    syncScopes: listSyncScopes(database, organizationId),
-    reports: listReports(database, organizationId),
-    ...(latestReport === undefined ? {} : { latestReport }),
-    metrics: readDashboardMetrics(latestContext),
-    highlights: readDashboardHighlights(latestContext),
-    workItems: readDashboardWorkItems(latestContext),
-    people: readDashboardPeople(latestContext),
-  };
+export async function getDashboard(db: DbExecutor, organizationId: string, userId: string): Promise<DashboardDto | undefined> {
+  const organizationItems = await listOrganizations(db, userId);
+  const organization = organizationItems.find(item => item.id === organizationId);
+  if (!organization) return undefined;
+  const [integrationItems, scopeItems, reportItems, latestReport] = await Promise.all([
+    listIntegrations(db, organizationId), listSyncScopes(db, organizationId), listReports(db, organizationId), readLatestReport(db, organizationId),
+  ]);
+  const latestContext = latestReport ? await readReportContext(db, latestReport.analysisReportContextId) : await readLatestReportContext(db, organizationId);
+  return { organizations: organizationItems, selectedOrganizationId: organizationId, organization, integrations: integrationItems, syncScopes: scopeItems, reports: reportItems, ...(latestReport ? { latestReport } : {}), metrics: readDashboardMetrics(latestContext), highlights: readDashboardHighlights(latestContext), workItems: readDashboardWorkItems(latestContext), people: readDashboardPeople(latestContext) };
 }
 
-export function readDashboardMetrics(context: ReportContext | undefined): Metric[] {
-  return context?.metrics ?? [];
+export const readDashboardMetrics = (context: ReportContext | undefined): Metric[] => context?.metrics ?? [];
+export const readDashboardHighlights = (context: ReportContext | undefined): ReportContext["highlights"] => context?.highlights ?? [];
+export const readDashboardWorkItems = (context: ReportContext | undefined): ReportContext["workItems"] => context?.workItems ?? [];
+export const readDashboardPeople = (context: ReportContext | undefined): ReportContext["people"] => context?.people ?? [];
+
+async function readLatestReport(db: DbExecutor, organizationId: string): Promise<ReportDetailDto | undefined> {
+  const [row] = await db.select().from(reports).where(eq(reports.organizationId, organizationId)).orderBy(desc(reports.periodEnd), desc(reports.createdAt), desc(reports.id)).limit(1);
+  return row ? toReportDetail(row) : undefined;
 }
-
-export function readDashboardHighlights(context: ReportContext | undefined): ReportContext["highlights"] {
-  return context?.highlights ?? [];
+async function readReportContext(db: DbExecutor, id: string): Promise<ReportContext | undefined> {
+  const [row] = await db.select({ contextJson: analysisReportContexts.contextJson }).from(analysisReportContexts).where(eq(analysisReportContexts.id, id)).limit(1);
+  return row ? JSON.parse(row.contextJson) as ReportContext : undefined;
 }
-
-export function readDashboardWorkItems(context: ReportContext | undefined): ReportContext["workItems"] {
-  return context?.workItems ?? [];
+async function readLatestReportContext(db: DbExecutor, organizationId: string): Promise<ReportContext | undefined> {
+  const [row] = await db.select({ contextJson: analysisReportContexts.contextJson }).from(analysisReportContexts).where(eq(analysisReportContexts.organizationId, organizationId)).orderBy(desc(analysisReportContexts.periodEnd), desc(analysisReportContexts.createdAt), desc(analysisReportContexts.id)).limit(1);
+  return row ? JSON.parse(row.contextJson) as ReportContext : undefined;
 }
-
-export function readDashboardPeople(context: ReportContext | undefined): ReportContext["people"] {
-  return context?.people ?? [];
-}
-
-function mapIntegration(row: unknown): IntegrationListItemDto {
-  const record = row as Record<string, unknown>;
-  const secretHint = optionalString(record, "secret_hint");
-  return {
-    id: requiredString(record, "id"),
-    organizationId: requiredString(record, "organization_id"),
-    provider: requiredString(record, "provider") as Provider,
-    authType: requiredString(record, "auth_type") === "personal_access_token" ? "personal_access_token" : "oauth",
-    status: requiredString(record, "status") as IntegrationDto["status"],
-    displayName: requiredString(record, "display_name"),
-    createdAt: requiredString(record, "created_at"),
-    updatedAt: requiredString(record, "updated_at"),
-    ...(secretHint === undefined ? {} : { secretHint }),
-  };
-}
-
-function mapSyncScope(row: unknown): SyncScopeDto {
-  const record = row as Record<string, unknown>;
-  const lastSuccessAt = optionalString(record, "last_success_at");
-  const lastAttemptAt = optionalString(record, "last_attempt_at");
-
-  return {
-    id: requiredString(record, "id"),
-    organizationId: requiredString(record, "organization_id"),
-    integrationId: requiredString(record, "integration_id"),
-    provider: requiredString(record, "provider") as Provider,
-    scopeType: requiredString(record, "scope_type") as SyncScopeDto["scopeType"],
-    externalId: optionalString(record, "external_id") ?? "",
-    externalName: requiredString(record, "external_name"),
-    config: parseJsonObject(requiredString(record, "config_json")) as JsonObject,
-    enabled: Boolean(requiredNumber(record, "enabled")),
-    ...(lastSuccessAt === undefined ? {} : { lastSuccessAt }),
-    ...(lastAttemptAt === undefined ? {} : { lastAttemptAt }),
-    createdAt: requiredString(record, "created_at"),
-    updatedAt: requiredString(record, "updated_at"),
-  };
-}
-
-function mapReportSummary(row: unknown): ReportSummaryDto {
-  const record = row as Record<string, unknown>;
-  const summary = optionalString(record, "summary");
-  const createdByUserId = optionalString(record, "created_by_user_id");
-
-  return {
-    id: requiredString(record, "id"),
-    organizationId: requiredString(record, "organization_id"),
-    analysisReportContextId: requiredString(record, "analysis_report_context_id"),
-    reportType: requiredString(record, "report_type") as ReportSummaryDto["reportType"],
-    scopeType: requiredString(record, "scope_type") as ReportSummaryDto["scopeType"],
-    scopeId: requiredString(record, "scope_id"),
-    periodStart: requiredString(record, "period_start"),
-    periodEnd: requiredString(record, "period_end"),
-    status: requiredString(record, "status") as ReportSummaryDto["status"],
-    title: requiredString(record, "title"),
-    ...(summary === undefined ? {} : { summary }),
-    ...(createdByUserId === undefined ? {} : { createdByUserId }),
-    createdAt: requiredString(record, "created_at"),
-    updatedAt: requiredString(record, "updated_at"),
-  };
-}
-
-function readLatestReport(database: DatabaseSync, organizationId: string): ReportDetailDto | undefined {
-  const row = database
-    .prepare("SELECT * FROM reports WHERE organization_id = ? ORDER BY period_end DESC, created_at DESC, id DESC LIMIT 1")
-    .get(organizationId);
-  return row ? mapReportDetail(row) : undefined;
-}
-
-function readReportContext(database: DatabaseSync, analysisReportContextId: string): ReportContext | undefined {
-  const row = database
-    .prepare("SELECT context_json FROM analysis_report_contexts WHERE id = ?")
-    .get(analysisReportContextId) as Record<string, unknown> | undefined;
-  return typeof row?.context_json === "string" ? (JSON.parse(row.context_json) as ReportContext) : undefined;
-}
-
-function readLatestReportContext(database: DatabaseSync, organizationId: string): ReportContext | undefined {
-  const row = database
-    .prepare(
-      `SELECT context_json
-       FROM analysis_report_contexts
-       WHERE organization_id = ?
-       ORDER BY period_end DESC, created_at DESC, id DESC
-       LIMIT 1`,
-    )
-    .get(organizationId) as Record<string, unknown> | undefined;
-  return typeof row?.context_json === "string" ? (JSON.parse(row.context_json) as ReportContext) : undefined;
-}
-
-function mapReportDetail(row: unknown): ReportDetailDto {
-  const summary = mapReportSummary(row);
-  const record = row as Record<string, unknown>;
-  return {
-    ...summary,
-    bodyMarkdown: requiredString(record, "body_markdown"),
-    structured: parseJsonObject(requiredString(record, "structured_json")) as JsonObject,
-  };
-}
-
-function requiredString(row: Record<string, unknown>, key: string): string {
-  const value = row[key];
-  if (typeof value !== "string") {
-    throw new Error(`Expected string column: ${key}`);
-  }
-  return value;
-}
-
-function optionalString(row: Record<string, unknown>, key: string): string | undefined {
-  const value = row[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function requiredNumber(row: Record<string, unknown>, key: string): number {
-  const value = row[key];
-  if (typeof value !== "number") {
-    throw new Error(`Expected number column: ${key}`);
-  }
-  return value;
-}
+type ReportRow = typeof reports.$inferSelect;
+function toReportSummary(row: ReportRow): ReportSummaryDto { return { id: row.id, organizationId: row.organizationId, analysisReportContextId: row.analysisReportContextId, reportType: row.reportType as ReportSummaryDto["reportType"], scopeType: row.scopeType as ReportSummaryDto["scopeType"], scopeId: row.scopeId, periodStart: row.periodStart, periodEnd: row.periodEnd, status: row.status as ReportSummaryDto["status"], title: row.title, ...(row.summary ? { summary: row.summary } : {}), ...(row.createdByUserId ? { createdByUserId: row.createdByUserId } : {}), createdAt: row.createdAt, updatedAt: row.updatedAt }; }
+function toReportDetail(row: ReportRow): ReportDetailDto { return { ...toReportSummary(row), bodyMarkdown: row.bodyMarkdown, structured: JSON.parse(row.structuredJson) as JsonObject }; }

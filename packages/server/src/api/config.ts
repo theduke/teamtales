@@ -1,7 +1,6 @@
 export interface ApiConfig {
   host: string;
   port: number;
-  databaseFilename: string;
   credentialEncryptionKey?: string;
   cookieSecure?: boolean;
   publicOrigin?: string;
@@ -11,7 +10,6 @@ export function createApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig
   return {
     host: env.TEAMTALES_API_HOST ?? "127.0.0.1",
     port: parsePort(env.PORT ?? env.TEAMTALES_API_PORT ?? "8787"),
-    databaseFilename: env.TEAMTALES_DB ?? "teamtales.sqlite",
     credentialEncryptionKey: env.TEAMTALES_CREDENTIAL_KEY,
     cookieSecure: parseBoolean(env.TEAMTALES_COOKIE_SECURE ?? "false"),
     publicOrigin: env.TEAMTALES_PUBLIC_ORIGIN,

@@ -1,4 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AppDatabase } from "../db/mysql.js";
+import { syncScopes } from "../db/schema.js";
 import type { JsonObject, SyncScopeDto } from "@teamtales/common/api";
 import type { Provider } from "@teamtales/common/domain";
 
@@ -30,10 +31,10 @@ const supportedSyncScopeTypes = [
   "linear.project",
 ] as const satisfies readonly SyncScopeDto["scopeType"][];
 
-export function addSyncScopeService(database: DatabaseSync, input: AddSyncScopeServiceInput): SyncScopeDto {
-  requireOrganization(database, input.organizationId);
-  requireOrganizationRole(database, input.organizationId, input.userId, ["owner", "admin"]);
-  requireIntegrationInOrganization(database, input.organizationId, input.integrationId);
+export async function addSyncScopeService(database: AppDatabase, input: AddSyncScopeServiceInput): Promise<SyncScopeDto> {
+  await requireOrganization(database, input.organizationId);
+  await requireOrganizationRole(database, input.organizationId, input.userId, ["owner", "admin"]);
+  await requireIntegrationInOrganization(database, input.organizationId, input.integrationId);
   validateScopeTypeForProvider(input.provider, input.scopeType);
 
   const now = new Date().toISOString();
@@ -41,26 +42,7 @@ export function addSyncScopeService(database: DatabaseSync, input: AddSyncScopeS
     input.id ?? stableId("scope", input.organizationId, input.integrationId, input.scopeType, input.externalName);
   const enabled = input.enabled ?? true;
 
-  database
-    .prepare(
-      `INSERT INTO sync_scopes (
-        id, organization_id, integration_id, provider, scope_type, external_id, external_name,
-        config_json, enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      scopeId,
-      input.organizationId,
-      input.integrationId,
-      input.provider,
-      input.scopeType,
-      input.externalId ?? null,
-      input.externalName,
-      JSON.stringify(input.config ?? {}),
-      enabled ? 1 : 0,
-      now,
-      now,
-    );
+  await database.insert(syncScopes).values({ id: scopeId, organizationId: input.organizationId, integrationId: input.integrationId, provider: input.provider, scopeType: input.scopeType, externalId: input.externalId ?? null, externalName: input.externalName, configJson: JSON.stringify(input.config ?? {}), enabled: enabled ? 1 : 0, createdAt: now, updatedAt: now });
 
   return {
     id: scopeId,

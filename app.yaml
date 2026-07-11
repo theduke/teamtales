@@ -1,0 +1,30 @@
+name: teamtales
+app_id: da_RLmILtvUlJN5
+owner: theduke
+package: .
+domains:
+- teamtales.wasmer.app
+env:
+  PORT: '8080'
+  TEAMTALES_API_HOST: 0.0.0.0
+  TEAMTALES_COOKIE_SECURE: 'true'
+capabilities:
+  database:
+    engine: mysql
+kind: wasmer.io/App.v0
+annotations:
+  shipitcli.com/config:
+    build_command: npm run build
+    commands:
+      start: node packages/server/dist/server.js
+    extra_dependencies: []
+    install_requires_all_files: true
+    node_version: '24'
+    optimize_node_dependencies: true
+    package_manager: npm
+    port: 8080
+    precompile_edgejs: true
+    remove_native_binaries: true
+    use_edgejs: true
+  shipitcli.com/provider: node
+  shipitcli.com/version: 0.21.5

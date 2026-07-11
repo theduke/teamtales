@@ -1,19 +1,22 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
+import { and, count, eq } from "drizzle-orm";
 
 import type { ApiResponseDto } from "@teamtales/common/api";
 import type { ReportContext } from "@teamtales/common/domain";
 
 import { createApiServer } from "../../src/api/server.js";
 import { createApiToken } from "../../src/auth/index.js";
-import { openLocalDatabase } from "../../src/db/index.js";
+import type { AppDatabase } from "../../src/db/index.js";
+import { activityEvents, integrationCredentials, integrations, organizationMemberships, organizations, people, sourceObjects, users, workItems } from "../../src/db/schema.js";
 import { saveCompleteAnalysisResult } from "../../src/persistence/index.js";
+import { mysqlTestOptions, openTestDatabase } from "../helpers/mysql.js";
 
 const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 let browserCookie = "";
 
-describe("TeamTales API", () => {
+describe("TeamTales API", mysqlTestOptions, () => {
   let app: Awaited<ReturnType<typeof startApi>>;
   let generatedReportId = "";
 
@@ -78,16 +81,12 @@ describe("TeamTales API", () => {
     assert.equal(JSON.stringify(response.body).includes(token), false);
     assert.equal(response.body.ok && response.body.data.secretHint, "gith...7890");
 
-    const row = app.database.sqlite
-      .prepare("SELECT encrypted_secret FROM integration_credentials WHERE integration_id = ?")
-      .get(response.body.ok ? response.body.data.id : "") as { encrypted_secret: string };
-    assert.equal(row.encrypted_secret.includes(token), false);
+    const [row] = await app.database.db.select({ encryptedSecret: integrationCredentials.encryptedSecret }).from(integrationCredentials).where(eq(integrationCredentials.integrationId, response.body.ok ? String(response.body.data.id) : ""));
+    assert.equal(row?.encryptedSecret.includes(token), false);
   });
 
   it("adds and lists a sync scope", async () => {
-    const integration = app.database.sqlite
-      .prepare("SELECT id FROM integrations WHERE organization_id = ? AND provider = ?")
-      .get("org_api", "github") as { id: string };
+    const [integration] = await app.database.db.select({ id: integrations.id }).from(integrations).where(and(eq(integrations.organizationId, "org_api"), eq(integrations.provider, "github")));
     const created = await apiFetch<Record<string, unknown>>(app.url, "/api/sync-scopes", {
       method: "POST",
       body: {
@@ -111,7 +110,7 @@ describe("TeamTales API", () => {
   });
 
   it("generates and persists a weekly report", async () => {
-    seedAnalysisContext(app.database.sqlite);
+    await seedAnalysisContext(app.database.db);
 
     const generated = await apiFetch<{ report: { id: string; bodyMarkdown: string }; inputs: unknown[] }>(
       app.url,
@@ -159,7 +158,7 @@ describe("TeamTales API", () => {
         owner: { id: "user_db_owner", displayName: "DB Owner", primaryEmail: "db@example.com" },
       },
     });
-    seedActivity(app.database.sqlite);
+    await seedActivity(app.database.db);
 
     const generated = await apiFetch<{ report: { bodyMarkdown: string } }>(app.url, "/api/reports/weekly", {
       method: "POST",
@@ -256,10 +255,8 @@ describe("TeamTales API", () => {
       assert.equal(response.body.ok && response.body.data.counters.objectsFetched, 1);
       assert.equal(
         (
-          app.database.sqlite
-            .prepare("SELECT count(*) AS count FROM source_objects WHERE organization_id = ? AND object_type = ?")
-            .get("org_api", "github.repository") as { count: number }
-        ).count,
+          await app.database.db.select({ count: count() }).from(sourceObjects).where(and(eq(sourceObjects.organizationId, "org_api"), eq(sourceObjects.objectType, "github.repository")))
+        )[0]?.count,
         1,
       );
     } finally {
@@ -297,23 +294,15 @@ describe("TeamTales API", () => {
 
   it("enforces active membership and mutation roles for API-token users", async () => {
     const now = new Date().toISOString();
-    app.database.sqlite
-      .prepare("INSERT INTO users (id, display_name, primary_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .run("user_viewer", "API Viewer", "viewer@example.com", now, now);
-    const token = createApiToken(app.database.sqlite, "user_viewer", { name: "viewer test" }).token;
+    await app.database.db.insert(users).values({ id: "user_viewer", displayName: "API Viewer", primaryEmail: "viewer@example.com", createdAt: now, updatedAt: now });
+    const token = (await createApiToken(app.database.db, "user_viewer", { name: "viewer test" })).token;
 
     const forbiddenWithoutMembership = await apiFetch(app.url, "/api/organizations/org_api/reports", {
       headers: { authorization: `Bearer ${token}` },
     });
     assert.equal(forbiddenWithoutMembership.status, 403);
 
-    app.database.sqlite
-      .prepare(
-        `INSERT INTO organization_memberships
-          (id, organization_id, user_id, role, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run("membership_viewer", "org_api", "user_viewer", "viewer", "active", now, now);
+    await app.database.db.insert(organizationMemberships).values({ id: "membership_viewer", organizationId: "org_api", userId: "user_viewer", role: "viewer", status: "active", createdAt: now, updatedAt: now });
     const forbiddenMutation = await apiFetch(app.url, "/api/integrations/pat", {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
@@ -343,15 +332,14 @@ describe("TeamTales API", () => {
 });
 
 async function startApi() {
-  const database = openLocalDatabase({ runMigrations: true });
+  const database = await openTestDatabase();
   const server = createApiServer({
     config: {
       host: "127.0.0.1",
       port: 0,
-      databaseFilename: ":memory:",
       credentialEncryptionKey: key,
     },
-    database: database.sqlite,
+    database: database.db,
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -364,49 +352,15 @@ async function startApi() {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
-      database.close();
+      await database.close();
     },
   };
 }
 
-function seedActivity(database: import("node:sqlite").DatabaseSync): void {
-  database
-    .prepare("INSERT INTO people (id, organization_id, display_name) VALUES (?, ?, ?)")
-    .run("person_db", "org_from_db", "Database Person");
-  database
-    .prepare(
-      `INSERT INTO work_items (
-        id, organization_id, provider, source_type, external_id, title, status, work_type, updated_at_source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      "work_db",
-      "org_from_db",
-      "github",
-      "pull_request",
-      "42",
-      "Database-backed work",
-      "merged",
-      "github_pull_request",
-      "2026-06-28T12:00:00.000Z",
-    );
-  database
-    .prepare(
-      `INSERT INTO activity_events (
-        id, organization_id, provider, event_type, actor_person_id, work_item_id, occurred_at, title, metadata_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      "event_db",
-      "org_from_db",
-      "github",
-      "pull_request.merged",
-      "person_db",
-      "work_db",
-      "2026-06-28T12:00:00.000Z",
-      "Merged database-backed work",
-      "{}",
-    );
+async function seedActivity(database: AppDatabase): Promise<void> {
+  await database.insert(people).values({ id: "person_db", organizationId: "org_from_db", displayName: "Database Person" });
+  await database.insert(workItems).values({ id: "work_db", organizationId: "org_from_db", provider: "github", sourceType: "pull_request", externalId: "42", title: "Database-backed work", status: "merged", workType: "github_pull_request", updatedAtSource: "2026-06-28T12:00:00.000Z" });
+  await database.insert(activityEvents).values({ id: "event_db", organizationId: "org_from_db", provider: "github", eventType: "pull_request.merged", actorPersonId: "person_db", workItemId: "work_db", occurredAt: "2026-06-28T12:00:00.000Z", title: "Merged database-backed work", metadataJson: "{}" });
 }
 
 async function apiFetch<T>(
@@ -442,7 +396,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function seedAnalysisContext(database: import("node:sqlite").DatabaseSync): void {
+async function seedAnalysisContext(database: AppDatabase): Promise<void> {
   const context: ReportContext = {
     organization: { id: "org_api", name: "API Org" },
     scope: { type: "organization", id: "org_api", name: "API Org" },
@@ -455,7 +409,7 @@ function seedAnalysisContext(database: import("node:sqlite").DatabaseSync): void
     risks: [],
   };
 
-  saveCompleteAnalysisResult(database, {
+  await saveCompleteAnalysisResult(database, {
     run: {
       id: "analysis_run_api",
       organizationId: "org_api",

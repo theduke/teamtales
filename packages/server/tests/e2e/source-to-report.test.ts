@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import type { DatabaseSync } from "node:sqlite";
+import { count, eq } from "drizzle-orm";
 
 import {
   buildReportContext,
@@ -15,7 +15,8 @@ import {
   type Person,
   type WorkItem,
 } from "../../src/analysis/index.js";
-import { openLocalDatabase } from "../../src/db/index.js";
+import type { AppDatabase } from "../../src/db/index.js";
+import { activityEvents, integrations, organizationMemberships, organizations, people, sourceObjects, syncScopes, users, workItems } from "../../src/db/schema.js";
 import { hashCanonicalJson, type JsonValue } from "../../src/ingestion/json.js";
 import type { Provider } from "../../src/ingestion/providers.js";
 import type { SourceObjectType } from "../../src/ingestion/source-object.js";
@@ -39,27 +40,28 @@ import {
   saveCompleteReportResult,
 } from "../../src/persistence/index.js";
 import { generateWeeklyMarkdownReport } from "../../src/reports/index.js";
+import { mysqlTestOptions, openTestDatabase } from "../helpers/mysql.js";
 
 const fixturePath = join(dirname(fileURLToPath(import.meta.url)), "../fixtures/e2e/source-to-report.json");
 
-describe("source-to-report fixture flow", () => {
-  it("normalizes GitHub and Linear source objects into a deterministic persisted markdown report", () => {
+describe("source-to-report fixture flow", mysqlTestOptions, () => {
+  it("normalizes GitHub and Linear source objects into a deterministic persisted markdown report", async () => {
     const fixture = loadFixture();
-    const local = openLocalDatabase({ runMigrations: true });
+    const local = await openTestDatabase();
 
     try {
-      seedTenantAndIntegrationRows(local.sqlite, fixture);
-      insertPeople(local.sqlite, fixture.organization.id, fixture.people);
+      await seedTenantAndIntegrationRows(local.db, fixture);
+      await insertPeople(local.db, fixture.organization.id, fixture.people);
 
       const normalized = normalizeFixtureSourceObjects(fixture.sourceObjects);
       for (const source of fixture.sourceObjects) {
-        insertSourceObject(local.sqlite, fixture.organization.id, source);
+        await insertSourceObject(local.db, fixture.organization.id, source);
       }
       for (const workItem of normalized.workItems) {
-        insertWorkItem(local.sqlite, fixture.organization.id, workItem, normalized.sourceObjectByWorkItem.get(workItem.id));
+        await insertWorkItem(local.db, fixture.organization.id, workItem, normalized.sourceObjectByWorkItem.get(workItem.id));
       }
       for (const event of normalized.events) {
-        insertActivityEvent(local.sqlite, fixture.organization.id, event, normalized.sourceObjectByEvent.get(event.id));
+        await insertActivityEvent(local.db, fixture.organization.id, event, normalized.sourceObjectByEvent.get(event.id));
       }
 
       const periodEvents = eventsInPeriod(normalized.events, fixture.period.start, fixture.period.end);
@@ -80,7 +82,7 @@ describe("source-to-report fixture flow", () => {
       const reportContext = buildReportContext(analysisInput);
       assert.deepEqual(buildReportContext(analysisInput), reportContext);
 
-      const analysis = saveCompleteAnalysisResult(local.sqlite, {
+      const analysis = await saveCompleteAnalysisResult(local.db, {
         run: {
           id: "analysis_run_fixture",
           organizationId: fixture.organization.id,
@@ -110,7 +112,7 @@ describe("source-to-report fixture flow", () => {
       assert.match(markdown, /github\.prs_merged: 1/);
       assert.match(markdown, /linear\.issues_completed: 1/);
 
-      const report = saveCompleteReportResult(local.sqlite, {
+      const report = await saveCompleteReportResult(local.db, {
         report: {
           id: "report_fixture",
           organizationId: fixture.organization.id,
@@ -166,21 +168,23 @@ describe("source-to-report fixture flow", () => {
         ],
       });
 
-      assert.equal(getAnalysisRun(local.sqlite, "analysis_run_fixture")?.status, "completed");
-      assert.deepEqual(getAnalysisReportContext(local.sqlite, "analysis_report_context_fixture")?.context, reportContext);
-      assert.equal(listAnalysisMetrics(local.sqlite, "analysis_run_fixture").length, metrics.length);
+      assert.equal((await getAnalysisRun(local.db, "analysis_run_fixture"))?.status, "completed");
+      assert.deepEqual((await getAnalysisReportContext(local.db, "analysis_report_context_fixture"))?.context, reportContext);
+      assert.equal((await listAnalysisMetrics(local.db, "analysis_run_fixture")).length, metrics.length);
       assert.deepEqual(
-        listAnalysisMetrics(local.sqlite, "analysis_run_fixture").map((metric) => [metric.name, metric.value]),
+        (await listAnalysisMetrics(local.db, "analysis_run_fixture")).map((metric) => [metric.name, metric.value]),
         metrics.map((metric) => [metric.name, metric.value]),
       );
-      assert.equal(listAnalysisHighlights(local.sqlite, "analysis_run_fixture").length, highlights.length);
-      assert.equal(getReport(local.sqlite, "report_fixture")?.bodyMarkdown, markdown);
-      assert.equal(listReportInputs(local.sqlite, report.report.id).length, report.inputs.length);
-      assert.equal(countRows(local.sqlite, "source_objects"), fixture.sourceObjects.length);
-      assert.equal(countRows(local.sqlite, "work_items"), normalized.workItems.length);
-      assert.equal(countRows(local.sqlite, "activity_events"), normalized.events.length);
+      assert.equal((await listAnalysisHighlights(local.db, "analysis_run_fixture")).length, highlights.length);
+      assert.equal((await getReport(local.db, "report_fixture"))?.bodyMarkdown, markdown);
+      assert.equal((await listReportInputs(local.db, report.report.id)).length, report.inputs.length);
+      assert.equal(await countRows(local.db, sourceObjects, fixture.organization.id), fixture.sourceObjects.length);
+      assert.equal(await countRows(local.db, workItems, fixture.organization.id), normalized.workItems.length);
+      assert.equal(await countRows(local.db, activityEvents, fixture.organization.id), normalized.events.length);
     } finally {
-      local.close();
+      await local.db.delete(organizations).where(eq(organizations.id, fixture.organization.id));
+      await local.db.delete(users).where(eq(users.id, "user_fixture_owner"));
+      await local.close();
     }
   });
 });
@@ -212,74 +216,23 @@ function loadFixture(): Fixture {
   return JSON.parse(readFileSync(fixturePath, "utf8")) as Fixture;
 }
 
-function seedTenantAndIntegrationRows(database: DatabaseSync, fixture: Fixture): void {
+async function seedTenantAndIntegrationRows(database: AppDatabase, fixture: Fixture): Promise<void> {
   const ownerUserId = "user_fixture_owner";
-
-  database
-    .prepare("INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)")
-    .run(fixture.organization.id, fixture.organization.name, "fixtureco");
-  database
-    .prepare("INSERT INTO users (id, display_name, primary_email) VALUES (?, ?, ?)")
-    .run(ownerUserId, "Fixture Owner", "owner@fixtureco.example");
-  database
-    .prepare(
-      `INSERT INTO organization_memberships (id, organization_id, user_id, role, status)
-       VALUES (?, ?, ?, ?, ?)`,
-    )
-    .run("membership_fixture_owner", fixture.organization.id, ownerUserId, "owner", "active");
-  database
-    .prepare(
-      `INSERT INTO integrations (id, organization_id, provider, auth_type, status, display_name)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run("integration_github", fixture.organization.id, "github", "personal_access_token", "active", "Fixture GitHub");
-  database
-    .prepare(
-      `INSERT INTO integrations (id, organization_id, provider, auth_type, status, display_name)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run("integration_linear", fixture.organization.id, "linear", "personal_access_token", "active", "Fixture Linear");
-  database
-    .prepare(
-      `INSERT INTO sync_scopes (
-        id, organization_id, integration_id, provider, scope_type, external_id, external_name,
-        last_success_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      "scope_github_widgets",
-      fixture.organization.id,
-      "integration_github",
-      "github",
-      "repository",
-      "fixtureco/widgets",
-      "fixtureco/widgets",
-      fixture.freshness.github,
-    );
-  database
-    .prepare(
-      `INSERT INTO sync_scopes (
-        id, organization_id, integration_id, provider, scope_type, external_id, external_name,
-        last_success_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      "scope_linear_workspace",
-      fixture.organization.id,
-      "integration_linear",
-      "linear",
-      "workspace",
-      "fixture-linear",
-      "Fixture Linear",
-      fixture.freshness.linear,
-    );
+  await database.insert(organizations).values({ id: fixture.organization.id, name: fixture.organization.name, slug: "fixtureco" });
+  await database.insert(users).values({ id: ownerUserId, displayName: "Fixture Owner", primaryEmail: "owner@fixtureco.example" });
+  await database.insert(organizationMemberships).values({ id: "membership_fixture_owner", organizationId: fixture.organization.id, userId: ownerUserId, role: "owner", status: "active" });
+  await database.insert(integrations).values([
+    { id: "integration_github", organizationId: fixture.organization.id, provider: "github", authType: "personal_access_token", status: "active", displayName: "Fixture GitHub" },
+    { id: "integration_linear", organizationId: fixture.organization.id, provider: "linear", authType: "personal_access_token", status: "active", displayName: "Fixture Linear" },
+  ]);
+  await database.insert(syncScopes).values([
+    { id: "scope_github_widgets", organizationId: fixture.organization.id, integrationId: "integration_github", provider: "github", scopeType: "github.repository", externalId: "fixtureco/widgets", externalName: "fixtureco/widgets", configJson: "{}", lastSuccessAt: fixture.freshness.github },
+    { id: "scope_linear_workspace", organizationId: fixture.organization.id, integrationId: "integration_linear", provider: "linear", scopeType: "linear.workspace", externalId: "fixture-linear", externalName: "Fixture Linear", configJson: "{}", lastSuccessAt: fixture.freshness.linear },
+  ]);
 }
 
-function insertPeople(database: DatabaseSync, organizationId: string, people: readonly Person[]): void {
-  const statement = database.prepare("INSERT INTO people (id, organization_id, display_name) VALUES (?, ?, ?)");
-  for (const person of people) {
-    statement.run(person.id, organizationId, person.displayName);
-  }
+async function insertPeople(database: AppDatabase, organizationId: string, values: readonly Person[]): Promise<void> {
+  await database.insert(people).values(values.map(person => ({ id: person.id, organizationId, displayName: person.displayName })));
 }
 
 function normalizeFixtureSourceObjects(sourceObjects: readonly FixtureSourceObject[]): {
@@ -342,100 +295,30 @@ function normalizeFixtureSourceObjects(sourceObjects: readonly FixtureSourceObje
   return { workItems, events, sourceObjectByWorkItem, sourceObjectByEvent };
 }
 
-function insertSourceObject(database: DatabaseSync, organizationId: string, source: FixtureSourceObject): void {
+async function insertSourceObject(database: AppDatabase, organizationId: string, source: FixtureSourceObject): Promise<void> {
   const seenAt = "2026-06-29T08:00:00.000Z";
-  database
-    .prepare(
-      `INSERT INTO source_objects (
-        id, organization_id, integration_id, sync_scope_id, provider, object_type, external_id,
-        external_url, external_created_at, external_updated_at, raw_json, content_hash,
-        first_seen_at, last_seen_at, last_changed_at, source_state
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      source.id,
-      organizationId,
-      source.integrationId,
-      source.syncScopeId,
-      source.provider,
-      source.objectType,
-      source.externalId,
-      source.externalUrl ?? null,
-      source.externalCreatedAt ?? null,
-      source.externalUpdatedAt ?? null,
-      JSON.stringify(source.raw),
-      hashCanonicalJson(source.raw as JsonValue),
-      seenAt,
-      seenAt,
-      seenAt,
-      "active",
-    );
+  await database.insert(sourceObjects).values({ id: source.id, organizationId, integrationId: source.integrationId, syncScopeId: source.syncScopeId, provider: source.provider, objectType: source.objectType, externalId: source.externalId, externalUrl: source.externalUrl, externalCreatedAt: source.externalCreatedAt, externalUpdatedAt: source.externalUpdatedAt, rawJson: JSON.stringify(source.raw), contentHash: hashCanonicalJson(source.raw as JsonValue), firstSeenAt: seenAt, lastSeenAt: seenAt, lastChangedAt: seenAt, sourceState: "active" });
 }
 
-function insertWorkItem(
-  database: DatabaseSync,
+async function insertWorkItem(
+  database: AppDatabase,
   organizationId: string,
   workItem: WorkItem,
   sourceObjectId: string | undefined,
-): void {
-  database
-    .prepare(
-      `INSERT INTO work_items (
-        id, organization_id, source_object_id, provider, source_type, external_id, title,
-        url, status, work_type, created_at_source, updated_at_source, started_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      workItem.id,
-      organizationId,
-      sourceObjectId ?? null,
-      workItem.provider,
-      workItem.sourceType,
-      workItem.externalId,
-      workItem.title,
-      workItem.url ?? null,
-      workItem.status,
-      workItem.sourceType,
-      workItem.createdAtSource ?? null,
-      workItem.updatedAtSource ?? null,
-      workItem.startedAt ?? null,
-      workItem.completedAt ?? null,
-    );
+): Promise<void> {
+  await database.insert(workItems).values({ id: workItem.id, organizationId, sourceObjectId, provider: workItem.provider, sourceType: workItem.sourceType, externalId: workItem.externalId, title: workItem.title, url: workItem.url, status: workItem.status, workType: workItem.sourceType, createdAtSource: workItem.createdAtSource, updatedAtSource: workItem.updatedAtSource, startedAt: workItem.startedAt, completedAt: workItem.completedAt });
 }
 
-function insertActivityEvent(
-  database: DatabaseSync,
+async function insertActivityEvent(
+  database: AppDatabase,
   organizationId: string,
   event: ActivityEvent,
   sourceObjectId: string | undefined,
-): void {
-  database
-    .prepare(
-      `INSERT INTO activity_events (
-        id, organization_id, source_object_id, provider, event_type, actor_person_id, work_item_id,
-        repository_id, linear_team_id, linear_project_id, occurred_at, title, body, url, metadata_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      event.id,
-      organizationId,
-      sourceObjectId ?? null,
-      event.provider,
-      event.eventType,
-      event.actorPersonId ?? null,
-      event.workItemId ?? null,
-      event.repositoryId ?? null,
-      event.linearTeamId ?? null,
-      event.linearProjectId ?? null,
-      event.occurredAt,
-      event.title,
-      event.body ?? null,
-      event.url ?? null,
-      JSON.stringify(event.metadata ?? {}),
-    );
+): Promise<void> {
+  await database.insert(activityEvents).values({ id: event.id, organizationId, sourceObjectId, provider: event.provider, eventType: event.eventType, actorPersonId: event.actorPersonId, workItemId: event.workItemId, repositoryId: event.repositoryId, linearTeamId: event.linearTeamId, linearProjectId: event.linearProjectId, occurredAt: event.occurredAt, title: event.title, body: event.body, url: event.url, metadataJson: JSON.stringify(event.metadata ?? {}) });
 }
 
-function countRows(database: DatabaseSync, table: string): number {
-  const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number };
-  return row.count;
+async function countRows(database: AppDatabase, table: typeof sourceObjects | typeof workItems | typeof activityEvents, organizationId: string): Promise<number> {
+  const [row] = await database.select({ value: count() }).from(table).where(eq(table.organizationId, organizationId));
+  return row?.value ?? 0;
 }

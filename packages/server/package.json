@@ -16,16 +16,20 @@
     "api:dev": "npm run dev:api",
     "cli": "tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
-    "schema:check": "node --experimental-strip-types scripts/check-schema.ts",
+    "schema:check": "drizzle-kit check --config drizzle.config.ts",
+    "build": "esbuild src/api/production-server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
+    "start": "node dist/server.js",
     "drizzle:generate": "drizzle-kit generate --config drizzle.config.ts",
     "test": "tsx --test tests/**/*.test.ts",
     "check": "npm run typecheck && npm run schema:check"
   },
   "dependencies": {
     "@teamtales/common": "file:../common",
-    "drizzle-orm": "^1.0.0-beta.16-c2458b2"
+    "drizzle-orm": "^1.0.0-beta.16-c2458b2",
+    "mysql2": "^3.14.4"
   },
   "devDependencies": {
-    "drizzle-kit": "^1.0.0-beta.16-2ffd1a5"
+    "drizzle-kit": "^1.0.0-beta.16-2ffd1a5",
+    "esbuild": "^0.25.6"
   }
 }

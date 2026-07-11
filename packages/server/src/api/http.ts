@@ -78,7 +78,7 @@ export function writeError(response: ServerResponse, error: unknown): void {
 function isConstraintError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as Error & { code?: string }).code;
-  return code === "ERR_SQLITE_CONSTRAINT" || code === "SQLITE_CONSTRAINT" || /constraint failed/i.test(error.message);
+  return code === "ER_DUP_ENTRY" || code === "ER_NO_REFERENCED_ROW_2" || code === "ER_ROW_IS_REFERENCED_2" || /constraint failed/i.test(error.message);
 }
 
 export function assertRecord(value: unknown): Record<string, unknown> {

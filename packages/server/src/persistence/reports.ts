@@ -1,7 +1,18 @@
-import type { DatabaseSync } from "node:sqlite";
+import { and, asc, eq } from "drizzle-orm";
 
 import type { ReportScopeType } from "../analysis/types.js";
-import { jsonStringify, parseJsonObject, withTransaction } from "./sqlite.js";
+import {
+  activityEvents,
+  analysisHighlights,
+  analysisMetrics,
+  analysisReportContexts,
+  organizationMemberships,
+  reportInputs,
+  reports,
+  sourceObjects,
+  workItems,
+} from "../db/schema.js";
+import { jsonStringify, parseJsonObject, type PersistenceDatabase, withTransaction } from "./database.js";
 
 export type ReportType = "weekly" | "monthly" | "quarterly" | "custom";
 export type ReportStatus = "draft" | "completed" | "failed";
@@ -47,234 +58,171 @@ export interface SaveCompleteReportResultInput {
   inputs: readonly Omit<ReportInputRecord, "reportId">[];
 }
 
-export interface SavedReportResult {
-  report: ReportRecord;
-  inputs: ReportInputRecord[];
-}
+export interface SavedReportResult { report: ReportRecord; inputs: ReportInputRecord[] }
 
-export function insertReport(database: DatabaseSync, report: ReportRecord): ReportRecord {
-  requireReferencedAnalysisContext(database, report.organizationId, report.analysisReportContextId);
-  if (report.createdByUserId) {
-    requireUserMembership(database, report.organizationId, report.createdByUserId);
-  }
+export async function insertReport(database: PersistenceDatabase, report: ReportRecord): Promise<ReportRecord> {
+  await requireReferencedAnalysisContext(database, report.organizationId, report.analysisReportContextId);
+  if (report.createdByUserId) await requireUserMembership(database, report.organizationId, report.createdByUserId);
 
-  database
-    .prepare(
-      `INSERT INTO reports (
-        id, organization_id, analysis_report_context_id, report_type, scope_type, scope_id,
-        period_start, period_end, status, title, summary, body_markdown, structured_json,
-        created_by_user_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      report.id,
-      report.organizationId,
-      report.analysisReportContextId,
-      report.reportType,
-      report.scopeType,
-      report.scopeId,
-      report.periodStart,
-      report.periodEnd,
-      report.status,
-      report.title,
-      report.summary ?? null,
-      report.bodyMarkdown,
-      jsonStringify(report.structured),
-      report.createdByUserId ?? null,
-    );
-
+  await database.insert(reports).values({
+    id: report.id,
+    organizationId: report.organizationId,
+    analysisReportContextId: report.analysisReportContextId,
+    reportType: report.reportType,
+    scopeType: report.scopeType,
+    scopeId: report.scopeId,
+    periodStart: report.periodStart,
+    periodEnd: report.periodEnd,
+    status: report.status,
+    title: report.title,
+    summary: report.summary ?? null,
+    bodyMarkdown: report.bodyMarkdown,
+    structuredJson: jsonStringify(report.structured),
+    createdByUserId: report.createdByUserId ?? null,
+  });
   return requireReport(database, report.id);
 }
 
-export function insertReportInput(database: DatabaseSync, input: ReportInputRecord): ReportInputRecord {
-  const report = requireReport(database, input.reportId);
-  requireReportInputReference(database, report.organizationId, input);
-
-  database
-    .prepare(
-      `INSERT INTO report_inputs (id, report_id, input_type, input_id, metadata_json)
-       VALUES (?, ?, ?, ?, ?)`,
-    )
-    .run(input.id, input.reportId, input.inputType, input.inputId, jsonStringify(input.metadata ?? {}));
-
+export async function insertReportInput(database: PersistenceDatabase, input: ReportInputRecord): Promise<ReportInputRecord> {
+  const report = await requireReport(database, input.reportId);
+  await requireReportInputReference(database, report.organizationId, input);
+  await database.insert(reportInputs).values({
+    id: input.id,
+    reportId: input.reportId,
+    inputType: input.inputType,
+    inputId: input.inputId,
+    metadataJson: jsonStringify(input.metadata ?? {}),
+  });
   return requireReportInput(database, input.id);
 }
 
-export function saveCompleteReportResult(
-  database: DatabaseSync,
+export async function saveCompleteReportResult(
+  database: PersistenceDatabase,
   input: SaveCompleteReportResultInput,
-): SavedReportResult {
-  return withTransaction(database, () => {
-    const report = insertReport(database, input.report);
-    const inputs = input.inputs.map((reportInput) =>
-      insertReportInput(database, {
-        ...reportInput,
-        reportId: report.id,
-      }),
-    );
-
+): Promise<SavedReportResult> {
+  return withTransaction(database, async (transaction) => {
+    const report = await insertReport(transaction, input.report);
+    const inputs: ReportInputRecord[] = [];
+    for (const reportInput of input.inputs) {
+      inputs.push(await insertReportInput(transaction, { ...reportInput, reportId: report.id }));
+    }
     return { report, inputs };
   });
 }
 
-export function getReport(database: DatabaseSync, id: string): ReportRecord | undefined {
-  const row = database.prepare("SELECT * FROM reports WHERE id = ?").get(id);
-  return row ? mapReport(row as Record<string, unknown>) : undefined;
+export async function getReport(database: PersistenceDatabase, id: string): Promise<ReportRecord | undefined> {
+  const [row] = await database.select().from(reports).where(eq(reports.id, id)).limit(1);
+  return row ? mapReport(row) : undefined;
 }
 
-export function getReportForOrganization(
-  database: DatabaseSync,
+export async function getReportForOrganization(
+  database: PersistenceDatabase,
   organizationId: string,
   id: string,
-): ReportRecord | undefined {
-  const row = database.prepare("SELECT * FROM reports WHERE organization_id = ? AND id = ?").get(organizationId, id);
-  return row ? mapReport(row as Record<string, unknown>) : undefined;
+): Promise<ReportRecord | undefined> {
+  const [row] = await database.select().from(reports).where(and(
+    eq(reports.organizationId, organizationId), eq(reports.id, id),
+  )).limit(1);
+  return row ? mapReport(row) : undefined;
 }
 
-export function requireReport(database: DatabaseSync, id: string): ReportRecord {
-  const report = getReport(database, id);
-
-  if (!report) {
-    throw new Error(`Report not found: ${id}`);
-  }
-
+export async function requireReport(database: PersistenceDatabase, id: string): Promise<ReportRecord> {
+  const report = await getReport(database, id);
+  if (!report) throw new Error(`Report not found: ${id}`);
   return report;
 }
 
-export function listReportInputs(database: DatabaseSync, reportId: string): ReportInputRecord[] {
-  return database
-    .prepare("SELECT * FROM report_inputs WHERE report_id = ? ORDER BY id")
-    .all(reportId)
-    .map((row) => mapReportInput(row as Record<string, unknown>));
+export async function listReportInputs(database: PersistenceDatabase, reportId: string): Promise<ReportInputRecord[]> {
+  const rows = await database.select().from(reportInputs).where(eq(reportInputs.reportId, reportId))
+    .orderBy(asc(reportInputs.id));
+  return rows.map(mapReportInput);
 }
 
-export function listReportInputsForOrganization(
-  database: DatabaseSync,
+export async function listReportInputsForOrganization(
+  database: PersistenceDatabase,
   organizationId: string,
   reportId: string,
-): ReportInputRecord[] {
-  return database
-    .prepare(
-      `SELECT report_inputs.*
-       FROM report_inputs
-       JOIN reports ON reports.id = report_inputs.report_id
-       WHERE reports.organization_id = ? AND report_inputs.report_id = ?
-       ORDER BY report_inputs.id`,
-    )
-    .all(organizationId, reportId)
-    .map((row) => mapReportInput(row as Record<string, unknown>));
+): Promise<ReportInputRecord[]> {
+  const rows = await database.select({ input: reportInputs }).from(reportInputs)
+    .innerJoin(reports, eq(reports.id, reportInputs.reportId))
+    .where(and(eq(reports.organizationId, organizationId), eq(reportInputs.reportId, reportId)))
+    .orderBy(asc(reportInputs.id));
+  return rows.map(({ input }) => mapReportInput(input));
 }
 
-export function requireReportInput(database: DatabaseSync, id: string): ReportInputRecord {
-  const row = database.prepare("SELECT * FROM report_inputs WHERE id = ?").get(id);
-
-  if (!row) {
-    throw new Error(`Report input not found: ${id}`);
-  }
-
-  return mapReportInput(row as Record<string, unknown>);
+export async function requireReportInput(database: PersistenceDatabase, id: string): Promise<ReportInputRecord> {
+  const [row] = await database.select().from(reportInputs).where(eq(reportInputs.id, id)).limit(1);
+  if (!row) throw new Error(`Report input not found: ${id}`);
+  return mapReportInput(row);
 }
 
-function requireReferencedAnalysisContext(database: DatabaseSync, organizationId: string, contextId: string): void {
-  const row = database
-    .prepare("SELECT id FROM analysis_report_contexts WHERE organization_id = ? AND id = ?")
-    .get(organizationId, contextId);
-  if (!row) {
-    throw new Error(`Analysis report context not found in organization ${organizationId}: ${contextId}`);
-  }
+async function requireReferencedAnalysisContext(
+  database: PersistenceDatabase,
+  organizationId: string,
+  contextId: string,
+): Promise<void> {
+  const [row] = await database.select({ id: analysisReportContexts.id }).from(analysisReportContexts).where(and(
+    eq(analysisReportContexts.organizationId, organizationId), eq(analysisReportContexts.id, contextId),
+  )).limit(1);
+  if (!row) throw new Error(`Analysis report context not found in organization ${organizationId}: ${contextId}`);
 }
 
-function requireUserMembership(database: DatabaseSync, organizationId: string, userId: string): void {
-  const row = database
-    .prepare(
-      `SELECT id FROM organization_memberships
-       WHERE organization_id = ? AND user_id = ? AND status = 'active'`,
-    )
-    .get(organizationId, userId);
-  if (!row) {
-    throw new Error(`Active organization membership not found: ${organizationId}/${userId}`);
-  }
+async function requireUserMembership(database: PersistenceDatabase, organizationId: string, userId: string): Promise<void> {
+  const [row] = await database.select({ id: organizationMemberships.id }).from(organizationMemberships).where(and(
+    eq(organizationMemberships.organizationId, organizationId),
+    eq(organizationMemberships.userId, userId),
+    eq(organizationMemberships.status, "active"),
+  )).limit(1);
+  if (!row) throw new Error(`Active organization membership not found: ${organizationId}/${userId}`);
 }
 
-function requireReportInputReference(
-  database: DatabaseSync,
+async function requireReportInputReference(
+  database: PersistenceDatabase,
   organizationId: string,
   input: Pick<ReportInputRecord, "inputType" | "inputId">,
-): void {
-  const tableByInputType: Partial<Record<ReportInputType, string>> = {
-    analysis_report_context: "analysis_report_contexts",
-    analysis_metric: "analysis_metrics",
-    analysis_highlight: "analysis_highlights",
-    activity_event: "activity_events",
-    work_item: "work_items",
-    source_object: "source_objects",
-    previous_report: "reports",
-  };
-  const table = tableByInputType[input.inputType];
-  if (!table) {
-    return;
+): Promise<void> {
+  let exists = false;
+  switch (input.inputType) {
+    case "analysis_report_context": exists = Boolean((await database.select({ id: analysisReportContexts.id }).from(analysisReportContexts).where(and(eq(analysisReportContexts.organizationId, organizationId), eq(analysisReportContexts.id, input.inputId))).limit(1))[0]); break;
+    case "analysis_metric": exists = Boolean((await database.select({ id: analysisMetrics.id }).from(analysisMetrics).where(and(eq(analysisMetrics.organizationId, organizationId), eq(analysisMetrics.id, input.inputId))).limit(1))[0]); break;
+    case "analysis_highlight": exists = Boolean((await database.select({ id: analysisHighlights.id }).from(analysisHighlights).where(and(eq(analysisHighlights.organizationId, organizationId), eq(analysisHighlights.id, input.inputId))).limit(1))[0]); break;
+    case "activity_event": exists = Boolean((await database.select({ id: activityEvents.id }).from(activityEvents).where(and(eq(activityEvents.organizationId, organizationId), eq(activityEvents.id, input.inputId))).limit(1))[0]); break;
+    case "work_item": exists = Boolean((await database.select({ id: workItems.id }).from(workItems).where(and(eq(workItems.organizationId, organizationId), eq(workItems.id, input.inputId))).limit(1))[0]); break;
+    case "source_object": exists = Boolean((await database.select({ id: sourceObjects.id }).from(sourceObjects).where(and(eq(sourceObjects.organizationId, organizationId), eq(sourceObjects.id, input.inputId))).limit(1))[0]); break;
+    case "previous_report": exists = Boolean((await database.select({ id: reports.id }).from(reports).where(and(eq(reports.organizationId, organizationId), eq(reports.id, input.inputId))).limit(1))[0]); break;
+    default: return;
   }
-
-  const row = database
-    .prepare(`SELECT id FROM ${table} WHERE organization_id = ? AND id = ?`)
-    .get(organizationId, input.inputId);
-  if (!row) {
-    throw new Error(`${input.inputType} input not found in organization ${organizationId}: ${input.inputId}`);
-  }
+  if (!exists) throw new Error(`${input.inputType} input not found in organization ${organizationId}: ${input.inputId}`);
 }
 
-function mapReport(row: Record<string, unknown>): ReportRecord {
+function mapReport(row: typeof reports.$inferSelect): ReportRecord {
   return {
-    id: requiredString(row, "id"),
-    organizationId: requiredString(row, "organization_id"),
-    analysisReportContextId: requiredString(row, "analysis_report_context_id"),
-    reportType: requiredString(row, "report_type") as ReportType,
-    scopeType: requiredString(row, "scope_type") as ReportScopeType,
-    scopeId: requiredString(row, "scope_id"),
-    periodStart: requiredString(row, "period_start"),
-    periodEnd: requiredString(row, "period_end"),
-    status: requiredString(row, "status") as ReportStatus,
-    title: requiredString(row, "title"),
-    summary: optionalString(row, "summary"),
-    bodyMarkdown: requiredString(row, "body_markdown"),
-    structured: parseJsonObject(requiredString(row, "structured_json")),
-    createdByUserId: optionalString(row, "created_by_user_id"),
-    createdAt: requiredString(row, "created_at"),
-    updatedAt: requiredString(row, "updated_at"),
+    id: row.id,
+    organizationId: row.organizationId,
+    analysisReportContextId: row.analysisReportContextId,
+    reportType: row.reportType as ReportType,
+    scopeType: row.scopeType as ReportScopeType,
+    scopeId: row.scopeId,
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    status: row.status as ReportStatus,
+    title: row.title,
+    summary: row.summary,
+    bodyMarkdown: row.bodyMarkdown,
+    structured: parseJsonObject(row.structuredJson),
+    createdByUserId: row.createdByUserId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
-function mapReportInput(row: Record<string, unknown>): ReportInputRecord {
+function mapReportInput(row: typeof reportInputs.$inferSelect): ReportInputRecord {
   return {
-    id: requiredString(row, "id"),
-    reportId: requiredString(row, "report_id"),
-    inputType: requiredString(row, "input_type") as ReportInputType,
-    inputId: requiredString(row, "input_id"),
-    metadata: parseJsonObject(requiredString(row, "metadata_json")),
-    createdAt: requiredString(row, "created_at"),
+    id: row.id,
+    reportId: row.reportId,
+    inputType: row.inputType as ReportInputType,
+    inputId: row.inputId,
+    metadata: parseJsonObject(row.metadataJson),
+    createdAt: row.createdAt,
   };
-}
-
-function requiredString(row: Record<string, unknown>, key: string): string {
-  const value = row[key];
-
-  if (typeof value !== "string") {
-    throw new Error(`Expected string column: ${key}`);
-  }
-
-  return value;
-}
-
-function optionalString(row: Record<string, unknown>, key: string): string | null {
-  const value = row[key];
-
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  if (typeof value !== "string") {
-    throw new Error(`Expected nullable string column: ${key}`);
-  }
-
-  return value;
 }

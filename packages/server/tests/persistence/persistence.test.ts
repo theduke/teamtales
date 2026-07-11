@@ -1,318 +1,53 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-
+import { eq } from "drizzle-orm";
 import type { Highlight, ReportContext } from "../../src/analysis/types.js";
-import { openLocalDatabase } from "../../src/db/index.js";
-import {
-  getAnalysisRun,
-  getAnalysisRunForOrganization,
-  getReportForOrganization,
-  getReport,
-  listAnalysisHighlights,
-  listAnalysisHighlightsForOrganization,
-  listAnalysisMetrics,
-  listAnalysisMetricsForOrganization,
-  listReportInputs,
-  listReportInputsForOrganization,
-  saveCompleteAnalysisResult,
-  saveCompleteReportResult,
-} from "../../src/persistence/index.js";
+import { organizations, workItems } from "../../src/db/schema.js";
+import { getAnalysisRun, getAnalysisRunForOrganization, getReport, getReportForOrganization, listAnalysisHighlights, listAnalysisHighlightsForOrganization, listAnalysisMetrics, listAnalysisMetricsForOrganization, listReportInputs, listReportInputsForOrganization, saveCompleteAnalysisResult, saveCompleteReportResult } from "../../src/persistence/index.js";
+import type { SaveCompleteAnalysisResultInput } from "../../src/persistence/index.js";
+import { mysqlTestOptions, openTestDatabase, uniqueId } from "../helpers/mysql.js";
 
-const context: ReportContext = {
-  organization: { id: "org_1", name: "Acme" },
-  scope: { type: "github_repository", id: "repo_1", name: "acme/widgets" },
-  period: { start: "2026-06-22", end: "2026-06-29" },
-  freshness: { github: "2026-06-29T09:00:00.000Z", warnings: [] },
-  metrics: [{ name: "activity.events", value: 2, dimensions: { provider: "github" } }],
-  highlights: [
-    {
-      title: "Merged billing export",
-      reason: "PR merged during this period",
-      sourceRefs: ["github:pr:42"],
-      relatedPeople: ["person_1"],
-      relatedWorkItems: ["work_1"],
-    },
-  ],
-  people: [],
-  workItems: [
-    {
-      id: "work_1",
-      provider: "github",
-      title: "Billing export",
-      url: "https://github.com/acme/widgets/pull/42",
-      status: "merged",
-      summaryFacts: ["github github_pull_request is merged"],
-    },
-  ],
-  risks: [],
-};
-
-const highlight: Highlight = {
-  workItemId: "work_1",
-  highlightType: "merged_pr",
-  score: 9,
-  title: "Merged billing export",
-  reason: ["PR merged during this period"],
-  sourceRefs: ["github:pr:42"],
-  relatedPeople: ["person_1"],
-  relatedWorkItems: ["work_1"],
-};
-
-describe("persistence repositories", () => {
-  it("saves and reads a complete analysis result", () => {
-    const local = openLocalDatabase({ runMigrations: true });
-
+describe("persistence repositories", mysqlTestOptions, () => {
+  it("saves and reads complete analysis and report results asynchronously", async () => {
+    const opened = await openTestDatabase(); const suffix = uniqueId("persist"), organizationId = `org_${suffix}`, workItemId = `work_${suffix}`;
     try {
-      insertOrganization(local.sqlite);
-      insertWorkItem(local.sqlite);
-
-      const saved = saveCompleteAnalysisResult(local.sqlite, {
-        run: {
-          id: "analysis_run_1",
-          organizationId: "org_1",
-          scopeType: "github_repository",
-          scopeId: "repo_1",
-          periodStart: "2026-06-22",
-          periodEnd: "2026-06-29",
-          status: "completed",
-          startedAt: "2026-06-29T09:00:00.000Z",
-          finishedAt: "2026-06-29T09:01:00.000Z",
-        },
-        metrics: [{ id: "metric_1", name: "activity.events", value: 2, dimensions: { provider: "github" } }],
-        highlights: [{ id: "highlight_1", ...highlight }],
-        reportContext: {
-          id: "report_context_1",
-          context,
-        },
-      });
-
-      assert.equal(saved.run.id, "analysis_run_1");
-      assert.equal(saved.reportContext.context.scope.name, "acme/widgets");
-
-      assert.deepEqual(listAnalysisMetrics(local.sqlite, "analysis_run_1"), [
-        {
-          id: "metric_1",
-          organizationId: "org_1",
-          analysisRunId: "analysis_run_1",
-          scopeType: "github_repository",
-          scopeId: "repo_1",
-          periodStart: "2026-06-22",
-          periodEnd: "2026-06-29",
-          name: "activity.events",
-          value: 2,
-          dimensions: { provider: "github" },
-          createdAt: saved.metrics[0]?.createdAt,
-        },
-      ]);
-      assert.deepEqual(listAnalysisHighlights(local.sqlite, "analysis_run_1")[0]?.sourceRefs, ["github:pr:42"]);
-    } finally {
-      local.close();
-    }
+      await seed(opened.db, organizationId, workItemId);
+      const context = reportContext(organizationId, workItemId); const ids = testIds(suffix);
+      const analysis = await saveCompleteAnalysisResult(opened.db, analysisInput(ids, organizationId, context, workItemId));
+      assert.equal(analysis.run.id, ids.run); assert.deepEqual((await listAnalysisMetrics(opened.db, ids.run))[0]?.dimensions, { provider: "github" });
+      assert.deepEqual((await listAnalysisHighlights(opened.db, ids.run))[0]?.sourceRefs, ["github:pr:42"]);
+      const saved = await saveCompleteReportResult(opened.db, { report: { id: ids.report, organizationId, analysisReportContextId: ids.context, reportType: "weekly", scopeType: "github_repository", scopeId: "repo_1", periodStart: "2026-06-22", periodEnd: "2026-06-29", status: "completed", title: "Weekly report", bodyMarkdown: "# Weekly report\n", structured: { contextId: ids.context } }, inputs: [{ id: ids.input, inputType: "analysis_report_context", inputId: ids.context, metadata: { role: "primary" } }] });
+      assert.equal((await getReport(opened.db, ids.report))?.bodyMarkdown, "# Weekly report\n");
+      assert.deepEqual((await listReportInputs(opened.db, saved.report.id))[0]?.metadata, { role: "primary" });
+    } finally { await opened.db.delete(organizations).where(eq(organizations.id, organizationId)); await opened.close(); }
   });
 
-  it("saves and reads a complete report result with inputs", () => {
-    const local = openLocalDatabase({ runMigrations: true });
-
+  it("rolls back a complete analysis result when a child insert fails", async () => {
+    const opened = await openTestDatabase(); const suffix = uniqueId("rollback"), organizationId = `org_${suffix}`, workItemId = `work_${suffix}`;
     try {
-      insertOrganization(local.sqlite);
-      insertWorkItem(local.sqlite);
-      const analysis = saveCompleteAnalysisResult(local.sqlite, {
-        run: {
-          id: "analysis_run_1",
-          organizationId: "org_1",
-          scopeType: "github_repository",
-          scopeId: "repo_1",
-          periodStart: "2026-06-22",
-          periodEnd: "2026-06-29",
-          status: "completed",
-          startedAt: "2026-06-29T09:00:00.000Z",
-          finishedAt: "2026-06-29T09:01:00.000Z",
-        },
-        metrics: [{ id: "metric_1", name: "activity.events", value: 2 }],
-        highlights: [{ id: "highlight_1", ...highlight }],
-        reportContext: { id: "report_context_1", context },
-      });
-
-      const saved = saveCompleteReportResult(local.sqlite, {
-        report: {
-          id: "report_1",
-          organizationId: "org_1",
-          analysisReportContextId: analysis.reportContext.id,
-          reportType: "weekly",
-          scopeType: "github_repository",
-          scopeId: "repo_1",
-          periodStart: "2026-06-22",
-          periodEnd: "2026-06-29",
-          status: "completed",
-          title: "Weekly report: acme/widgets",
-          summary: "Two observed events.",
-          bodyMarkdown: "# Weekly report: acme/widgets\n",
-          structured: { contextId: analysis.reportContext.id },
-        },
-        inputs: [
-          {
-            id: "report_input_1",
-            inputType: "analysis_report_context",
-            inputId: analysis.reportContext.id,
-            metadata: { role: "primary" },
-          },
-          { id: "report_input_2", inputType: "analysis_metric", inputId: "metric_1" },
-        ],
-      });
-
-      assert.equal(getReport(local.sqlite, "report_1")?.bodyMarkdown, "# Weekly report: acme/widgets\n");
-      assert.deepEqual(
-        listReportInputs(local.sqlite, saved.report.id).map((input) => ({
-          inputType: input.inputType,
-          inputId: input.inputId,
-          metadata: input.metadata,
-        })),
-        [
-          { inputType: "analysis_report_context", inputId: "report_context_1", metadata: { role: "primary" } },
-          { inputType: "analysis_metric", inputId: "metric_1", metadata: {} },
-        ],
-      );
-    } finally {
-      local.close();
-    }
+      await seed(opened.db, organizationId, workItemId); const ids = testIds(suffix); const base = analysisInput(ids, organizationId, reportContext(organizationId, workItemId), workItemId);
+      const input: SaveCompleteAnalysisResultInput = { ...base, metrics: [...base.metrics, { ...base.metrics[0]!, id: ids.metric }] };
+      await assert.rejects(saveCompleteAnalysisResult(opened.db, input), /duplicate|unique/i);
+      assert.equal(await getAnalysisRun(opened.db, ids.run), undefined); assert.equal((await listAnalysisMetrics(opened.db, ids.run)).length, 0);
+    } finally { await opened.db.delete(organizations).where(eq(organizations.id, organizationId)); await opened.close(); }
   });
 
-  it("rolls back a complete analysis result when a child insert fails", () => {
-    const local = openLocalDatabase({ runMigrations: true });
-
+  it("keeps analysis and report reads scoped by organization", async () => {
+    const opened = await openTestDatabase(); const suffix = uniqueId("tenant"), org1 = `org1_${suffix}`, org2 = `org2_${suffix}`, work1 = `work1_${suffix}`, work2 = `work2_${suffix}`;
     try {
-      insertOrganization(local.sqlite);
-      assert.throws(
-        () =>
-          saveCompleteAnalysisResult(local.sqlite, {
-            run: {
-              id: "analysis_run_1",
-              organizationId: "org_1",
-              scopeType: "github_repository",
-              scopeId: "repo_1",
-              periodStart: "2026-06-22",
-              periodEnd: "2026-06-29",
-              status: "completed",
-              startedAt: "2026-06-29T09:00:00.000Z",
-            },
-            metrics: [{ id: "metric_1", name: "activity.events", value: 2 }],
-            highlights: [{ id: "highlight_1", ...highlight }],
-            reportContext: { id: "report_context_1", context },
-          }),
-        /FOREIGN KEY/,
-      );
-
-      assert.equal(getAnalysisRun(local.sqlite, "analysis_run_1"), undefined);
-      assert.equal(listAnalysisMetrics(local.sqlite, "analysis_run_1").length, 0);
-    } finally {
-      local.close();
-    }
-  });
-
-  it("keeps analysis and report reads scoped by organization", () => {
-    const local = openLocalDatabase({ runMigrations: true });
-
-    try {
-      insertOrganization(local.sqlite, "org_1", "Acme", "acme");
-      insertOrganization(local.sqlite, "org_2", "Beta", "beta");
-      insertWorkItem(local.sqlite, "org_1", "work_1");
-      insertWorkItem(local.sqlite, "org_2", "work_2");
-
-      const org1Context = context;
-      const org2Context: ReportContext = {
-        ...context,
-        organization: { id: "org_2", name: "Beta" },
-        workItems: [{ ...context.workItems[0]!, id: "work_2", title: "Beta export" }],
-      };
-
-      const org1 = saveCompleteAnalysisResult(local.sqlite, {
-        run: {
-          id: "analysis_run_1",
-          organizationId: "org_1",
-          scopeType: "github_repository",
-          scopeId: "repo_1",
-          periodStart: "2026-06-22",
-          periodEnd: "2026-06-29",
-          status: "completed",
-          startedAt: "2026-06-29T09:00:00.000Z",
-        },
-        metrics: [{ id: "metric_1", name: "activity.events", value: 2 }],
-        highlights: [{ id: "highlight_1", ...highlight }],
-        reportContext: { id: "report_context_1", context: org1Context },
-      });
-      saveCompleteAnalysisResult(local.sqlite, {
-        run: {
-          id: "analysis_run_2",
-          organizationId: "org_2",
-          scopeType: "github_repository",
-          scopeId: "repo_2",
-          periodStart: "2026-06-22",
-          periodEnd: "2026-06-29",
-          status: "completed",
-          startedAt: "2026-06-29T09:00:00.000Z",
-        },
-        metrics: [{ id: "metric_2", name: "activity.events", value: 5 }],
-        highlights: [{ id: "highlight_2", ...highlight, workItemId: "work_2" }],
-        reportContext: { id: "report_context_2", context: org2Context },
-      });
-
-      const report = saveCompleteReportResult(local.sqlite, {
-        report: {
-          id: "report_1",
-          organizationId: "org_1",
-          analysisReportContextId: org1.reportContext.id,
-          reportType: "weekly",
-          scopeType: "github_repository",
-          scopeId: "repo_1",
-          periodStart: "2026-06-22",
-          periodEnd: "2026-06-29",
-          status: "completed",
-          title: "Weekly report: acme/widgets",
-          bodyMarkdown: "# Weekly report: acme/widgets\n",
-          structured: {},
-        },
-        inputs: [{ id: "report_input_1", inputType: "analysis_metric", inputId: "metric_1" }],
-      });
-
-      assert.equal(getAnalysisRunForOrganization(local.sqlite, "org_1", "analysis_run_1")?.id, "analysis_run_1");
-      assert.equal(getAnalysisRunForOrganization(local.sqlite, "org_2", "analysis_run_1"), undefined);
-      assert.deepEqual(
-        listAnalysisMetricsForOrganization(local.sqlite, "org_1", "analysis_run_1").map((metric) => metric.id),
-        ["metric_1"],
-      );
-      assert.deepEqual(listAnalysisHighlightsForOrganization(local.sqlite, "org_2", "analysis_run_1"), []);
-      assert.equal(getReportForOrganization(local.sqlite, "org_1", report.report.id)?.id, "report_1");
-      assert.equal(getReportForOrganization(local.sqlite, "org_2", report.report.id), undefined);
-      assert.deepEqual(
-        listReportInputsForOrganization(local.sqlite, "org_1", report.report.id).map((input) => input.id),
-        ["report_input_1"],
-      );
-      assert.deepEqual(listReportInputsForOrganization(local.sqlite, "org_2", report.report.id), []);
-    } finally {
-      local.close();
-    }
+      await seed(opened.db, org1, work1); await seed(opened.db, org2, work2);
+      const one = testIds(`one_${suffix}`), two = testIds(`two_${suffix}`);
+      await saveCompleteAnalysisResult(opened.db, analysisInput(one, org1, reportContext(org1, work1), work1));
+      await saveCompleteAnalysisResult(opened.db, analysisInput(two, org2, reportContext(org2, work2), work2));
+      await saveCompleteReportResult(opened.db, { report: { id: one.report, organizationId: org1, analysisReportContextId: one.context, reportType: "weekly", scopeType: "organization", scopeId: org1, periodStart: "2026-06-22", periodEnd: "2026-06-29", status: "completed", title: "One", bodyMarkdown: "# One", structured: {} }, inputs: [{ id: one.input, inputType: "analysis_report_context", inputId: one.context }] });
+      assert.equal((await getAnalysisRunForOrganization(opened.db, org1, one.run))?.id, one.run); assert.equal(await getAnalysisRunForOrganization(opened.db, org2, one.run), undefined);
+      assert.equal((await listAnalysisMetricsForOrganization(opened.db, org2, one.run)).length, 0); assert.equal((await listAnalysisHighlightsForOrganization(opened.db, org2, one.run)).length, 0);
+      assert.equal((await getReportForOrganization(opened.db, org1, one.report))?.id, one.report); assert.equal(await getReportForOrganization(opened.db, org2, one.report), undefined); assert.equal((await listReportInputsForOrganization(opened.db, org2, one.report)).length, 0);
+    } finally { await opened.db.delete(organizations).where(eq(organizations.id, org1)); await opened.db.delete(organizations).where(eq(organizations.id, org2)); await opened.close(); }
   });
 });
 
-function insertOrganization(
-  database: { prepare(sql: string): { run(...values: unknown[]): unknown } },
-  id = "org_1",
-  name = "Acme",
-  slug = "acme",
-): void {
-  database.prepare("INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)").run(id, name, slug);
-}
-
-function insertWorkItem(
-  database: { prepare(sql: string): { run(...values: unknown[]): unknown } },
-  organizationId = "org_1",
-  id = "work_1",
-): void {
-  database
-    .prepare(
-      `INSERT INTO work_items (
-        id, organization_id, provider, source_type, external_id, title, status, work_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(id, organizationId, "github", "github.pull_request", id, "Billing export", "merged", "github_pull_request");
-}
+function testIds(suffix: string) { return { run: `run_${suffix}`, metric: `metric_${suffix}`, highlight: `highlight_${suffix}`, context: `context_${suffix}`, report: `report_${suffix}`, input: `input_${suffix}` }; }
+function reportContext(organizationId: string, workItemId: string): ReportContext { return { organization: { id: organizationId, name: organizationId }, scope: { type: "github_repository", id: "repo_1", name: "acme/widgets" }, period: { start: "2026-06-22", end: "2026-06-29" }, freshness: { warnings: [] }, metrics: [{ name: "activity.events", value: 2 }], highlights: [{ title: "Merged billing export", reason: "PR merged", sourceRefs: ["github:pr:42"], relatedPeople: [], relatedWorkItems: [workItemId] }], people: [], workItems: [{ id: workItemId, provider: "github", title: "Billing export", url: "https://github.com/acme/widgets/pull/42", status: "merged", summaryFacts: [] }], risks: [] }; }
+function analysisInput(ids: ReturnType<typeof testIds>, organizationId: string, context: ReportContext, workItemId: string): SaveCompleteAnalysisResultInput { const highlight: Highlight = { workItemId, highlightType: "merged_pr", score: 9, title: "Merged billing export", reason: ["PR merged"], sourceRefs: ["github:pr:42"], relatedPeople: [], relatedWorkItems: [workItemId] }; return { run: { id: ids.run, organizationId, scopeType: "github_repository", scopeId: "repo_1", periodStart: "2026-06-22", periodEnd: "2026-06-29", status: "completed", startedAt: "2026-06-29T09:00:00.000Z" }, metrics: [{ id: ids.metric, name: "activity.events", value: 2, dimensions: { provider: "github" } }], highlights: [{ id: ids.highlight, ...highlight }], reportContext: { id: ids.context, context } }; }
+async function seed(db: Awaited<ReturnType<typeof openTestDatabase>>["db"], organizationId: string, workItemId: string) { await db.insert(organizations).values({ id: organizationId, name: organizationId, slug: organizationId }); await db.insert(workItems).values({ id: workItemId, organizationId, provider: "github", sourceType: "pull_request", externalId: workItemId, title: workItemId, status: "merged", workType: "github_pull_request" }); }

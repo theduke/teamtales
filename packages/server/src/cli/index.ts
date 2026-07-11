@@ -2,7 +2,6 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -15,8 +14,9 @@ import {
   type ReportScopeType,
   type WorkItem,
 } from "../index.js";
-import { openLocalDatabase } from "../db/index.js";
 import { setPassword } from "../auth/index.js";
+import { openDatabase, type AppDatabase } from "../db/index.js";
+import { parseJsonObject } from "../persistence/database.js";
 import {
   addPersonalAccessTokenIntegrationService,
   addSyncScopeService,
@@ -25,7 +25,6 @@ import {
   resolveReportContext,
   runProviderSyncService,
 } from "../services/index.js";
-import { parseJsonObject } from "../persistence/sqlite.js";
 
 export interface CliIo {
   stdout?: (message: string) => void;
@@ -54,32 +53,43 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
       return { exitCode: 0 };
     }
 
-    switch (`${command}${subcommand ? ` ${subcommand}` : ""}`) {
-      case "init-db":
-      case "migrate":
-        out(JSON.stringify(migrateDatabase(parsed), null, 2));
-        return { exitCode: 0 };
-      case "org create":
-        out(JSON.stringify(createOrganization(parsed), null, 2));
-        return { exitCode: 0 };
-      case "auth set-password":
-        out(JSON.stringify(setUserPassword(parsed, env), null, 2));
-        return { exitCode: 0 };
-      case "integration add-pat":
-        out(JSON.stringify(addPersonalAccessTokenIntegration(parsed, env), null, 2));
-        return { exitCode: 0 };
-      case "scope add":
-        out(JSON.stringify(addSyncScope(parsed), null, 2));
-        return { exitCode: 0 };
-      case "sync github":
-      case "sync linear":
-        out(JSON.stringify(await runProviderSync(commandProvider(subcommand), parsed, env), null, 2));
-        return { exitCode: 0 };
-      case "report weekly":
-        out(JSON.stringify(generateWeeklyReport(parsed), null, 2));
-        return { exitCode: 0 };
-      default:
-        throw new Error(`Unknown command: ${parsed.command.join(" ")}`);
+    const commandName = `${command}${subcommand ? ` ${subcommand}` : ""}`;
+    if (!supportedCommands.has(commandName)) throw new Error(`Unknown command: ${parsed.command.join(" ")}`);
+
+    const opened = await openCliDatabase(parsed, env);
+    try {
+      let result: Record<string, unknown>;
+      switch (commandName) {
+        case "init-db":
+        case "migrate":
+          result = migrateDatabase(parsed, env);
+          break;
+        case "org create":
+          result = await createOrganization(opened.db, parsed);
+          break;
+        case "auth set-password":
+          result = await setUserPassword(opened.db, parsed, env);
+          break;
+        case "integration add-pat":
+          result = await addPersonalAccessTokenIntegration(opened.db, parsed, env);
+          break;
+        case "scope add":
+          result = await addSyncScope(opened.db, parsed);
+          break;
+        case "sync github":
+        case "sync linear":
+          result = await runProviderSync(opened.db, commandProvider(subcommand), parsed, env);
+          break;
+        case "report weekly":
+          result = await generateWeeklyReport(opened.db, parsed);
+          break;
+        default:
+          throw new Error(`Unknown command: ${parsed.command.join(" ")}`);
+      }
+      out(JSON.stringify(result, null, 2));
+      return { exitCode: 0 };
+    } finally {
+      await opened.close();
     }
   } catch (error) {
     err(error instanceof Error ? error.message : String(error));
@@ -87,59 +97,52 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
   }
 }
 
-function migrateDatabase(parsed: ParsedArgs): Record<string, unknown> {
-  const local = openCliDatabase(parsed, true);
-  try {
-    return {
-      database: local.filename,
-      applied: local.migrations?.applied.map((migration) => migration.filename) ?? [],
-      skipped: local.migrations?.skipped.map((migration) => migration.filename) ?? [],
-    };
-  } finally {
-    local.close();
-  }
+const supportedCommands = new Set([
+  "init-db",
+  "migrate",
+  "org create",
+  "auth set-password",
+  "integration add-pat",
+  "scope add",
+  "sync github",
+  "sync linear",
+  "report weekly",
+]);
+
+function migrateDatabase(parsed: ParsedArgs, env: NodeJS.ProcessEnv): Record<string, unknown> {
+  return {
+    database: databaseLabel(parsed, env),
+    migrated: true,
+  };
 }
 
-function createOrganization(parsed: ParsedArgs): Record<string, unknown> {
-  const name = requiredOption(parsed, "name");
-  const local = openCliDatabase(parsed, true);
-
-  try {
-    const created = createOrganizationService(local.sqlite, {
-      id: optionalString(parsed, "id"),
-      name,
-      slug: optionalString(parsed, "slug"),
-      ownerEmail: optionalString(parsed, "owner-email"),
-      ownerName: optionalString(parsed, "owner-name"),
-      ownerId: optionalString(parsed, "owner-id"),
-      membershipId: optionalString(parsed, "membership-id"),
-    });
-
-    return {
-      id: created.organization.id,
-      name: created.organization.name,
-      slug: created.organization.slug,
-      ownerUserId: created.ownerUserId,
-      ownerMembershipId: created.ownerMembershipId,
-    };
-  } finally {
-    local.close();
-  }
+async function createOrganization(database: AppDatabase, parsed: ParsedArgs): Promise<Record<string, unknown>> {
+  const created = await createOrganizationService(database, {
+    id: optionalString(parsed, "id"),
+    name: requiredOption(parsed, "name"),
+    slug: optionalString(parsed, "slug"),
+    ownerEmail: optionalString(parsed, "owner-email"),
+    ownerName: optionalString(parsed, "owner-name"),
+    ownerId: optionalString(parsed, "owner-id"),
+    membershipId: optionalString(parsed, "membership-id"),
+  });
+  return {
+    id: created.organization.id,
+    name: created.organization.name,
+    slug: created.organization.slug,
+    ownerUserId: created.ownerUserId,
+    ownerMembershipId: created.ownerMembershipId,
+  };
 }
 
-function setUserPassword(parsed: ParsedArgs, env: NodeJS.ProcessEnv): Record<string, unknown> {
+async function setUserPassword(database: AppDatabase, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
   const userId = requiredOption(parsed, "user-id");
   const password = readSecret(parsed, "password", "password-file", "password-env", env);
-  const local = openCliDatabase(parsed, true);
-  try {
-    setPassword(local.sqlite, userId, password);
-    return { userId, passwordUpdated: true };
-  } finally {
-    local.close();
-  }
+  await setPassword(database, userId, password);
+  return { userId, passwordUpdated: true };
 }
 
-function addPersonalAccessTokenIntegration(parsed: ParsedArgs, env: NodeJS.ProcessEnv): Record<string, unknown> {
+async function addPersonalAccessTokenIntegration(database: AppDatabase, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
   const provider = parseProvider(requiredOption(parsed, "provider"));
   const organizationId = requiredOption(parsed, "organization-id");
   const displayName = optionalString(parsed, "name") ?? `${provider} PAT`;
@@ -147,39 +150,30 @@ function addPersonalAccessTokenIntegration(parsed: ParsedArgs, env: NodeJS.Proce
   const credentialId = optionalString(parsed, "credential-id") ?? stableId("credential", integrationId);
   const token = readSecret(parsed, "token", "token-file", "token-env", env);
   const encryptionKey = optionalString(parsed, "encryption-key") ?? env.TEAMTALES_CREDENTIAL_KEY;
+  if (!encryptionKey) throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
 
-  if (!encryptionKey) {
-    throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
-  }
-
-  const local = openCliDatabase(parsed, true);
-  try {
-    const integration = addPersonalAccessTokenIntegrationService(local.sqlite, {
-      id: integrationId,
-      credentialId,
-      organizationId,
-      userId: requiredOption(parsed, "user-id"),
-      provider,
-      displayName,
-      token,
-      encryptionKey,
-    });
-
-    return {
-      id: integration.id,
-      organizationId: integration.organizationId,
-      provider: integration.provider,
-      authType: integration.authType,
-      displayName: integration.displayName,
-      credentialId: integration.credentialId,
-      secretHint: integration.secretHint,
-    };
-  } finally {
-    local.close();
-  }
+  const integration = await addPersonalAccessTokenIntegrationService(database, {
+    id: integrationId,
+    credentialId,
+    organizationId,
+    userId: requiredOption(parsed, "user-id"),
+    provider,
+    displayName,
+    token,
+    encryptionKey,
+  });
+  return {
+    id: integration.id,
+    organizationId: integration.organizationId,
+    provider: integration.provider,
+    authType: integration.authType,
+    displayName: integration.displayName,
+    credentialId: integration.credentialId,
+    secretHint: integration.secretHint,
+  };
 }
 
-function addSyncScope(parsed: ParsedArgs): Record<string, unknown> {
+async function addSyncScope(database: AppDatabase, parsed: ParsedArgs): Promise<Record<string, unknown>> {
   const provider = parseProvider(requiredOption(parsed, "provider"));
   const organizationId = requiredOption(parsed, "organization-id");
   const integrationId = requiredOption(parsed, "integration-id");
@@ -187,108 +181,77 @@ function addSyncScope(parsed: ParsedArgs): Record<string, unknown> {
   const externalName = requiredOption(parsed, "name");
   const scopeId = optionalString(parsed, "id") ?? stableId("scope", organizationId, integrationId, scopeType, externalName);
   const config = optionalString(parsed, "config-json") ? parseJsonObject(requiredOption(parsed, "config-json")) : {};
-  const local = openCliDatabase(parsed, true);
-
-  try {
-    const scope = addSyncScopeService(local.sqlite, {
-      id: scopeId,
-      organizationId,
-      userId: requiredOption(parsed, "user-id"),
-      integrationId,
-      provider,
-      scopeType: scopeType as Parameters<typeof addSyncScopeService>[1]["scopeType"],
-      externalId: optionalString(parsed, "external-id"),
-      externalName,
-      config: config as Parameters<typeof addSyncScopeService>[1]["config"],
-      enabled: !getBoolean(parsed, "disabled"),
-    });
-
-    return {
-      id: scope.id,
-      organizationId: scope.organizationId,
-      integrationId: scope.integrationId,
-      provider: scope.provider,
-      scopeType: scope.scopeType,
-      externalName: scope.externalName,
-      enabled: scope.enabled,
-      config: scope.config,
-    };
-  } finally {
-    local.close();
-  }
+  const scope = await addSyncScopeService(database, {
+    id: scopeId,
+    organizationId,
+    userId: requiredOption(parsed, "user-id"),
+    integrationId,
+    provider,
+    scopeType: scopeType as Parameters<typeof addSyncScopeService>[1]["scopeType"],
+    externalId: optionalString(parsed, "external-id"),
+    externalName,
+    config: config as Parameters<typeof addSyncScopeService>[1]["config"],
+    enabled: !getBoolean(parsed, "disabled"),
+  });
+  return {
+    id: scope.id,
+    organizationId: scope.organizationId,
+    integrationId: scope.integrationId,
+    provider: scope.provider,
+    scopeType: scope.scopeType,
+    externalName: scope.externalName,
+    enabled: scope.enabled,
+    config: scope.config,
+  };
 }
 
-async function runProviderSync(provider: Provider, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
-  const local = openCliDatabase(parsed, true);
-  try {
-    const encryptionKey = optionalString(parsed, "encryption-key") ?? env.TEAMTALES_CREDENTIAL_KEY;
-    if (!encryptionKey) {
-      throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
-    }
-
-    const result = await runProviderSyncService(local.sqlite, {
-      provider,
-      organizationId: optionalString(parsed, "organization-id"),
-      integrationId: optionalString(parsed, "integration-id"),
-      syncScopeId: optionalString(parsed, "scope-id") ?? optionalString(parsed, "sync-scope-id"),
-      encryptionKey,
-    });
-
-    return result;
-  } finally {
-    local.close();
-  }
+async function runProviderSync(database: AppDatabase, provider: Provider, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+  const encryptionKey = optionalString(parsed, "encryption-key") ?? env.TEAMTALES_CREDENTIAL_KEY;
+  if (!encryptionKey) throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
+  return runProviderSyncService(database, {
+    provider,
+    organizationId: optionalString(parsed, "organization-id"),
+    integrationId: optionalString(parsed, "integration-id"),
+    syncScopeId: optionalString(parsed, "scope-id") ?? optionalString(parsed, "sync-scope-id"),
+    encryptionKey,
+  });
 }
 
-function generateWeeklyReport(parsed: ParsedArgs): Record<string, unknown> {
+async function generateWeeklyReport(database: AppDatabase, parsed: ParsedArgs): Promise<Record<string, unknown>> {
   const fixture = optionalString(parsed, "fixture");
   const output = optionalString(parsed, "output");
   const persist = getBoolean(parsed, "persist");
-  const local = openCliDatabase(parsed, true);
-
-  try {
-    const contextSource = fixture ? reportContextFromFixture(fixture, parsed) : reportContextFromDatabase(local.sqlite, parsed);
-    const generated = generateWeeklyReportService(local.sqlite, {
-      analysisReportContextId: contextSource.analysisReportContextId,
-      context: contextSource.context,
-      title: optionalString(parsed, "title"),
-      persist,
-      analysisRunIdSeed: "cli",
-    });
-
-    if (output) {
-      mkdirSync(dirname(output), { recursive: true });
-      writeFileSync(output, generated.markdown, "utf8");
-    }
-
-    return {
-      reportId: persist ? generated.report.id : undefined,
-      analysisReportContextId: persist ? generated.analysisReportContextId : contextSource.analysisReportContextId,
-      output,
-      markdown: output ? undefined : generated.markdown,
-    };
-  } finally {
-    local.close();
+  const contextSource = fixture ? reportContextFromFixture(fixture, parsed) : await reportContextFromDatabase(database, parsed);
+  const generated = await generateWeeklyReportService(database, {
+    analysisReportContextId: contextSource.analysisReportContextId,
+    context: contextSource.context,
+    title: optionalString(parsed, "title"),
+    persist,
+    analysisRunIdSeed: "cli",
+  });
+  if (output) {
+    mkdirSync(dirname(output), { recursive: true });
+    writeFileSync(output, generated.markdown, "utf8");
   }
+  return {
+    reportId: persist ? generated.report.id : undefined,
+    analysisReportContextId: persist ? generated.analysisReportContextId : contextSource.analysisReportContextId,
+    output,
+    markdown: output ? undefined : generated.markdown,
+  };
 }
 
-function reportContextFromFixture(
-  filename: string,
-  parsed: ParsedArgs,
-): { context: ReportContext; analysisReportContextId?: string } {
+function reportContextFromFixture(filename: string, parsed: ParsedArgs): { context: ReportContext; analysisReportContextId?: string } {
   const value = JSON.parse(readFileSync(filename, "utf8")) as unknown;
-
   if (isRecord(value) && isRecord(value.context)) {
     return {
       context: value.context as ReportContext,
       analysisReportContextId: typeof value.analysisReportContextId === "string" ? value.analysisReportContextId : undefined,
     };
   }
-
   if (isRecord(value) && Array.isArray(value.events) && Array.isArray(value.workItems) && Array.isArray(value.people)) {
-    return { context: buildReportContext(value as AnalysisInput) };
+    return { context: buildReportContext(value as unknown as AnalysisInput) };
   }
-
   if (isRecord(value) && Array.isArray(value.events) && Array.isArray(value.work_items) && Array.isArray(value.people)) {
     return {
       context: buildReportContext({
@@ -302,22 +265,14 @@ function reportContextFromFixture(
       }),
     };
   }
-
-  if (isReportContext(value)) {
-    return { context: value };
-  }
-
+  if (isReportContext(value)) return { context: value };
   throw new Error("Fixture must be a ReportContext, { context }, or AnalysisInput-like JSON.");
 }
 
-function reportContextFromDatabase(
-  database: DatabaseSync,
-  parsed: ParsedArgs,
-): { context: ReportContext; analysisReportContextId?: string } {
+async function reportContextFromDatabase(database: AppDatabase, parsed: ParsedArgs): Promise<{ context: ReportContext; analysisReportContextId?: string }> {
   const organization = requiredOrganization(parsed);
   const scope = requiredScope(parsed);
   const period = requiredPeriod(parsed);
-
   return resolveReportContext(database, {
     organizationId: organization.id,
     organizationName: organization.name,
@@ -329,153 +284,11 @@ function reportContextFromDatabase(
   });
 }
 
-function latestReportContext(
-  database: DatabaseSync,
-  parsed: ParsedArgs,
-): { context: ReportContext; analysisReportContextId: string } | undefined {
-  const organizationId = requiredOption(parsed, "organization-id");
-  const scopeId = optionalString(parsed, "scope-id");
-  const periodStart = optionalString(parsed, "period-start");
-  const periodEnd = optionalString(parsed, "period-end");
-  const clauses: string[] = ["organization_id = ?"];
-  const values: string[] = [organizationId];
-
-  if (scopeId) {
-    clauses.push("scope_id = ?");
-    values.push(scopeId);
-  }
-  if (periodStart) {
-    clauses.push("period_start = ?");
-    values.push(periodStart);
-  }
-  if (periodEnd) {
-    clauses.push("period_end = ?");
-    values.push(periodEnd);
-  }
-
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-  const row = database
-    .prepare(`SELECT id, context_json FROM analysis_report_contexts ${where} ORDER BY created_at DESC, id DESC LIMIT 1`)
-    .get(...values) as Record<string, unknown> | undefined;
-
-  if (!row || typeof row.id !== "string" || typeof row.context_json !== "string") {
-    return undefined;
-  }
-
-  return {
-    analysisReportContextId: row.id,
-    context: JSON.parse(row.context_json) as ReportContext,
-  };
-}
-
-function readActivityEvents(database: DatabaseSync, parsed: ParsedArgs): ActivityEvent[] {
-  const organizationId = requiredOption(parsed, "organization-id");
-  const { start, end } = requiredPeriod(parsed);
-
-  return database
-    .prepare(
-      `SELECT * FROM activity_events
-       WHERE organization_id = ? AND occurred_at >= ? AND occurred_at <= ?
-       ORDER BY occurred_at, id`,
-    )
-    .all(organizationId, start, end)
-    .map((row) => {
-      const record = row as Record<string, unknown>;
-      return stripUndefined({
-        id: requiredColumn(record, "id"),
-        provider: requiredColumn(record, "provider") as Provider,
-        eventType: requiredColumn(record, "event_type"),
-        actorPersonId: optionalColumn(record, "actor_person_id"),
-        workItemId: optionalColumn(record, "work_item_id"),
-        repositoryId: optionalColumn(record, "repository_id"),
-        linearTeamId: optionalColumn(record, "linear_team_id"),
-        linearProjectId: optionalColumn(record, "linear_project_id"),
-        occurredAt: requiredColumn(record, "occurred_at"),
-        title: requiredColumn(record, "title"),
-        body: optionalColumn(record, "body"),
-        url: optionalColumn(record, "url"),
-        sourceRef: optionalColumn(record, "source_object_id") ? `source_object:${optionalColumn(record, "source_object_id")}` : undefined,
-        metadata: parseJsonObject(requiredColumn(record, "metadata_json")),
-      });
-    });
-}
-
-function readWorkItems(database: DatabaseSync, parsed: ParsedArgs): WorkItem[] {
-  const organizationId = requiredOption(parsed, "organization-id");
-
-  return database
-    .prepare("SELECT * FROM work_items WHERE organization_id = ? ORDER BY updated_at_source, id")
-    .all(organizationId)
-    .map((row) => {
-      const record = row as Record<string, unknown>;
-      return stripUndefined({
-        id: requiredColumn(record, "id"),
-        provider: requiredColumn(record, "provider") as Provider,
-        sourceType: requiredColumn(record, "work_type") as WorkItem["sourceType"],
-        externalId: requiredColumn(record, "external_id"),
-        title: requiredColumn(record, "title"),
-        url: optionalColumn(record, "url"),
-        status: requiredColumn(record, "status") as WorkItem["status"],
-        createdAtSource: optionalColumn(record, "created_at_source"),
-        updatedAtSource: optionalColumn(record, "updated_at_source"),
-        startedAt: optionalColumn(record, "started_at"),
-        completedAt: optionalColumn(record, "completed_at"),
-      });
-    });
-}
-
-function readPeople(database: DatabaseSync, parsed: ParsedArgs): Person[] {
-  const organizationId = requiredOption(parsed, "organization-id");
-
-  return database
-    .prepare("SELECT id, display_name FROM people WHERE organization_id = ? ORDER BY display_name, id")
-    .all(organizationId)
-    .map((row) => {
-      const record = row as Record<string, unknown>;
-      return {
-        id: requiredColumn(record, "id"),
-        displayName: requiredColumn(record, "display_name"),
-      };
-    });
-}
-
-function databaseFreshness(database: DatabaseSync, organizationId: string): AnalysisInput["freshness"] {
-  const rows = database
-    .prepare(
-      `SELECT provider, MAX(last_success_at) AS last_success_at
-       FROM sync_scopes
-       WHERE organization_id = ?
-       GROUP BY provider
-       ORDER BY provider`,
-    )
-    .all(organizationId) as Array<Record<string, unknown>>;
-  const freshness: { github?: string; linear?: string; warnings: string[] } = { warnings: [] };
-
-  for (const row of rows) {
-    const provider = row.provider;
-    const lastSuccessAt = row.last_success_at;
-    if ((provider === "github" || provider === "linear") && typeof lastSuccessAt === "string") {
-      freshness[provider] = lastSuccessAt;
-    }
-  }
-
-  return freshness;
-}
-
 function requiredOrganization(parsed: ParsedArgs): AnalysisInput["organization"] {
   return {
     id: requiredOption(parsed, "organization-id"),
     name: optionalString(parsed, "organization-name") ?? requiredOption(parsed, "organization-id"),
   };
-}
-
-function slugify(value: string): string {
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug.length > 0 ? slug : "organization";
 }
 
 function requiredScope(parsed: ParsedArgs): AnalysisInput["scope"] {
@@ -487,55 +300,50 @@ function requiredScope(parsed: ParsedArgs): AnalysisInput["scope"] {
 }
 
 function requiredPeriod(parsed: ParsedArgs): AnalysisInput["period"] {
-  return {
-    start: requiredOption(parsed, "period-start"),
-    end: requiredOption(parsed, "period-end"),
-  };
+  return { start: requiredOption(parsed, "period-start"), end: requiredOption(parsed, "period-end") };
 }
 
-function openCliDatabase(parsed: ParsedArgs, runMigrations: boolean) {
-  return openLocalDatabase({ filename: optionalString(parsed, "db") ?? "teamtales.sqlite", runMigrations });
+function cliEnvironment(parsed: ParsedArgs, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const databaseUrl = optionalString(parsed, "db");
+  return databaseUrl ? { ...env, DATABASE_URL: databaseUrl } : env;
+}
+
+function openCliDatabase(parsed: ParsedArgs, env: NodeJS.ProcessEnv) {
+  return openDatabase({ env: cliEnvironment(parsed, env), runMigrations: true });
+}
+
+function databaseLabel(parsed: ParsedArgs, env: NodeJS.ProcessEnv): string | undefined {
+  return optionalString(parsed, "db") ?? (env.DATABASE_URL ? "DATABASE_URL" : env.DB_NAME);
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const command: string[] = [];
   const options = new Map<string, string | boolean>();
-
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === undefined) {
-      continue;
-    }
-
+    if (arg === undefined) continue;
     if (arg.startsWith("--")) {
       const eq = arg.indexOf("=");
       if (eq !== -1) {
         options.set(arg.slice(2, eq), arg.slice(eq + 1));
         continue;
       }
-
       const key = arg.slice(2);
       const next = argv[index + 1];
       if (next !== undefined && !next.startsWith("--")) {
         options.set(key, next);
         index += 1;
-      } else {
-        options.set(key, true);
-      }
+      } else options.set(key, true);
       continue;
     }
-
     command.push(arg);
   }
-
   return { command, options };
 }
 
 function requiredOption(parsed: ParsedArgs, key: string): string {
   const value = optionalString(parsed, key);
-  if (!value) {
-    throw new Error(`Missing required option --${key}`);
-  }
+  if (!value) throw new Error(`Missing required option --${key}`);
   return value;
 }
 
@@ -553,36 +361,21 @@ function readSecret(parsed: ParsedArgs, valueKey: string, fileKey: string, envKe
   const file = optionalString(parsed, fileKey);
   const envName = optionalString(parsed, envKey);
   const sources = [direct, file, envName].filter((value) => value !== undefined);
-
-  if (sources.length !== 1) {
-    throw new Error(`Provide exactly one of --${valueKey}, --${fileKey}, or --${envKey}.`);
-  }
-
-  if (direct !== undefined) {
-    return direct;
-  }
-  if (file !== undefined) {
-    return readFileSync(file, "utf8").trim();
-  }
-
+  if (sources.length !== 1) throw new Error(`Provide exactly one of --${valueKey}, --${fileKey}, or --${envKey}.`);
+  if (direct !== undefined) return direct;
+  if (file !== undefined) return readFileSync(file, "utf8").trim();
   const secret = env[envName as string];
-  if (!secret) {
-    throw new Error(`Environment variable ${envName} is empty or missing.`);
-  }
+  if (!secret) throw new Error(`Environment variable ${envName} is empty or missing.`);
   return secret;
 }
 
 function parseProvider(value: string): Provider {
-  if (value !== "github" && value !== "linear") {
-    throw new Error(`Unsupported provider: ${value}`);
-  }
+  if (value !== "github" && value !== "linear") throw new Error(`Unsupported provider: ${value}`);
   return value;
 }
 
 function commandProvider(value: string | undefined): Provider {
-  if (value === "github" || value === "linear") {
-    return value;
-  }
+  if (value === "github" || value === "linear") return value;
   throw new Error("Missing provider subcommand.");
 }
 
@@ -591,35 +384,10 @@ function stableId(prefix: string, ...parts: string[]): string {
   return `${prefix}_${digest}`;
 }
 
-function requiredColumn(row: Record<string, unknown>, key: string): string {
-  const value = row[key];
-  if (typeof value !== "string") {
-    throw new Error(`Expected string column: ${key}`);
-  }
-  return value;
-}
-
-function optionalColumn(row: Record<string, unknown>, key: string): string | undefined {
-  const value = row[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function stripUndefined<T extends Record<string, unknown>>(record: T): T {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T;
-}
-
 function isReportContext(value: unknown): value is ReportContext {
-  return (
-    isRecord(value) &&
-    isRecord(value.organization) &&
-    isRecord(value.scope) &&
-    isRecord(value.period) &&
-    Array.isArray(value.metrics) &&
-    Array.isArray(value.highlights) &&
-    Array.isArray(value.people) &&
-    Array.isArray(value.workItems) &&
-    Array.isArray(value.risks)
-  );
+  return isRecord(value) && isRecord(value.organization) && isRecord(value.scope) && isRecord(value.period) &&
+    Array.isArray(value.metrics) && Array.isArray(value.highlights) && Array.isArray(value.people) &&
+    Array.isArray(value.workItems) && Array.isArray(value.risks);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -628,15 +396,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function usage(): string {
   return `Usage:
-  teamtales init-db --db ./teamtales.sqlite
-  teamtales migrate --db ./teamtales.sqlite
-  teamtales org create --db ./teamtales.sqlite --name "Acme" --owner-email owner@example.com [--id org_acme]
-  teamtales auth set-password --db ./teamtales.sqlite --user-id user_id --password-env TEAMTALES_PASSWORD
-  teamtales integration add-pat --db ./teamtales.sqlite --organization-id org_acme --user-id user_id --provider github --name GitHub --token-env GITHUB_TOKEN
-  teamtales scope add --db ./teamtales.sqlite --organization-id org_acme --user-id user_id --integration-id integration_id --provider github --type github.repository --name owner/repo
-  teamtales sync github --db ./teamtales.sqlite --organization-id org_acme [--scope-id scope_id]
-  teamtales report weekly --db ./teamtales.sqlite --organization-id org_acme --period-start 2026-06-22 --period-end 2026-06-29 [--fixture context.json] [--persist] [--output report.md]
+  teamtales init-db [--db mysql://user:password@host/teamtales]
+  teamtales migrate [--db mysql://user:password@host/teamtales]
+  teamtales org create [--db mysql://...] --name "Acme" --owner-email owner@example.com [--id org_acme]
+  teamtales auth set-password [--db mysql://...] --user-id user_id --password-env TEAMTALES_PASSWORD
+  teamtales integration add-pat [--db mysql://...] --organization-id org_acme --user-id user_id --provider github --name GitHub --token-env GITHUB_TOKEN
+  teamtales scope add [--db mysql://...] --organization-id org_acme --user-id user_id --integration-id integration_id --provider github --type github.repository --name owner/repo
+  teamtales sync github [--db mysql://...] --organization-id org_acme [--scope-id scope_id]
+  teamtales report weekly [--db mysql://...] --organization-id org_acme --period-start 2026-06-22 --period-end 2026-06-29 [--fixture context.json] [--persist] [--output report.md]
 
+MySQL configuration uses --db, DATABASE_URL, or DB_HOST/DB_PORT/DB_USER/DB_USERNAME/DB_PASSWORD/DB_NAME.
 Credential encryption uses --encryption-key or TEAMTALES_CREDENTIAL_KEY.`;
 }
 

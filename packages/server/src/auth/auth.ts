@@ -5,7 +5,12 @@ import {
   scryptSync,
   timingSafeEqual,
 } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { and, eq, isNull, sql } from "drizzle-orm";
+
+import { apiTokens, authSessions, users } from "../db/schema.js";
+import type { AppDatabase, MySqlTransaction } from "../db/mysql.js";
+
+type AuthDatabase = AppDatabase | MySqlTransaction;
 
 const PASSWORD_KEY_LENGTH = 64;
 const DEFAULT_SCRYPT_N = 16_384;
@@ -69,39 +74,36 @@ export interface CreatedApiToken {
   apiToken: ApiTokenRecord;
 }
 
-export function setPassword(
-  database: DatabaseSync,
+export async function setPassword(
+  database: AuthDatabase,
   userId: string,
   password: string,
   options: PasswordOptions = {},
-): void {
+): Promise<void> {
   assertPassword(password);
-  requireAuthenticatableUser(database, userId);
+  await requireAuthenticatableUser(database, userId);
   const n = options.scryptN ?? DEFAULT_SCRYPT_N;
   const r = options.scryptR ?? DEFAULT_SCRYPT_R;
   const p = options.scryptP ?? DEFAULT_SCRYPT_P;
   assertScryptParameters(n, r, p);
   const salt = randomBytes(32);
   const hash = derivePassword(password, salt, n, r, p);
-  const result = database
-    .prepare(
-      `UPDATE users
-       SET password_hash = ?, password_salt = ?, password_scrypt_n = ?,
-           password_scrypt_r = ?, password_scrypt_p = ?, updated_at = ?
-       WHERE id = ?`,
-    )
-    .run(hash.toString("base64url"), salt.toString("base64url"), n, r, p, new Date().toISOString(), userId);
-
-  if (result.changes !== 1) {
-    throw new Error(`User ${userId} not found`);
-  }
+  const result = await database.update(users).set({
+    passwordHash: hash.toString("base64url"),
+    passwordSalt: salt.toString("base64url"),
+    passwordScryptN: n,
+    passwordScryptR: r,
+    passwordScryptP: p,
+    updatedAt: new Date().toISOString(),
+  }).where(eq(users.id, userId));
+  if (affectedRows(result) !== 1) throw new Error(`User ${userId} not found`);
 }
 
-export function authenticatePassword(
-  database: DatabaseSync,
+export async function authenticatePassword(
+  database: AuthDatabase,
   email: string,
   password: string,
-): AuthenticatedPrincipal | undefined {
+): Promise<AuthenticatedPrincipal | undefined> {
   if (Buffer.byteLength(password, "utf8") > 1_024) {
     performDummyPasswordCheck("invalid password");
     return undefined;
@@ -113,29 +115,32 @@ export function authenticatePassword(
     performDummyPasswordCheck(password);
     return undefined;
   }
-  const row = database
-    .prepare(
-      `SELECT id, display_name, primary_email, password_hash, password_salt,
-              password_scrypt_n, password_scrypt_r, password_scrypt_p
-       FROM users WHERE lower(primary_email) = ?`,
-    )
-    .get(normalizedEmail) as Record<string, unknown> | undefined;
+  const [row] = await database.select({
+    id: users.id,
+    displayName: users.displayName,
+    primaryEmail: users.primaryEmail,
+    passwordHash: users.passwordHash,
+    passwordSalt: users.passwordSalt,
+    passwordScryptN: users.passwordScryptN,
+    passwordScryptR: users.passwordScryptR,
+    passwordScryptP: users.passwordScryptP,
+  }).from(users).where(sql`lower(${users.primaryEmail}) = ${normalizedEmail}`).limit(1);
 
   if (!row || !validPasswordRow(row)) {
     performDummyPasswordCheck(password);
     return undefined;
   }
 
-  const n = Number(row.password_scrypt_n);
-  const r = Number(row.password_scrypt_r);
-  const p = Number(row.password_scrypt_p);
+  const n = Number(row.passwordScryptN);
+  const r = Number(row.passwordScryptR);
+  const p = Number(row.passwordScryptP);
   if (!safeScryptParameters(n, r, p)) {
     performDummyPasswordCheck(password);
     return undefined;
   }
 
-  const expected = decodeBase64Url(String(row.password_hash));
-  const salt = decodeBase64Url(String(row.password_salt));
+  const expected = decodeBase64Url(String(row.passwordHash));
+  const salt = decodeBase64Url(String(row.passwordSalt));
   if (expected?.length !== PASSWORD_KEY_LENGTH || !salt) {
     performDummyPasswordCheck(password);
     return undefined;
@@ -149,127 +154,127 @@ export function authenticatePassword(
   return principalFromRow(row, "password", null);
 }
 
-export function createSession(
-  database: DatabaseSync,
+export async function createSession(
+  database: AuthDatabase,
   userId: string,
   options: TokenLifetimeOptions = {},
-): CreatedSession {
+): Promise<CreatedSession> {
   const now = validDate(options.now ?? new Date(), "now");
   const expiresAt = validDate(options.expiresAt ?? new Date(now.getTime() + DEFAULT_SESSION_LIFETIME_MS), "expiresAt");
   assertFutureExpiry(now, expiresAt);
-  requireAuthenticatableUser(database, userId);
+  await requireAuthenticatableUser(database, userId);
 
   const token = `tts_${randomBytes(32).toString("base64url")}`;
   const id = `session_${randomUUID()}`;
-  database
-    .prepare(
-      `INSERT INTO auth_sessions
-         (id, user_id, token_hash, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(id, userId, hashToken(token), expiresAt.toISOString(), now.toISOString(), now.toISOString());
+  await database.insert(authSessions).values({
+    id,
+    userId,
+    tokenHash: hashToken(token),
+    expiresAt: expiresAt.toISOString(),
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+  });
 
   return { token, session: { id, userId, expiresAt, createdAt: now } };
 }
 
-export function resolveSession(
-  database: DatabaseSync,
+export async function resolveSession(
+  database: AuthDatabase,
   token: string,
   options: Pick<TokenLifetimeOptions, "now"> = {},
-): AuthenticatedPrincipal | undefined {
+): Promise<AuthenticatedPrincipal | undefined> {
   const now = validDate(options.now ?? new Date(), "now");
-  const row = database
-    .prepare(
-      `SELECT s.id AS credential_id, s.expires_at, s.revoked_at,
-              u.id, u.display_name, u.primary_email
-       FROM auth_sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = ?`,
-    )
-    .get(hashToken(token)) as Record<string, unknown> | undefined;
+  const [row] = await database.select({
+    credentialId: authSessions.id,
+    expiresAt: authSessions.expiresAt,
+    revokedAt: authSessions.revokedAt,
+    id: users.id,
+    displayName: users.displayName,
+    primaryEmail: users.primaryEmail,
+  }).from(authSessions).innerJoin(users, eq(users.id, authSessions.userId))
+    .where(eq(authSessions.tokenHash, hashToken(token))).limit(1);
 
   if (!activeCredential(row, now)) return undefined;
-  database.prepare("UPDATE auth_sessions SET last_used_at = ?, updated_at = ? WHERE id = ?").run(
-    now.toISOString(),
-    now.toISOString(),
-    String(row.credential_id),
-  );
-  return principalFromRow(row, "session", String(row.credential_id));
+  await database.update(authSessions).set({ lastUsedAt: now.toISOString(), updatedAt: now.toISOString() })
+    .where(eq(authSessions.id, row.credentialId));
+  return principalFromRow(row, "session", row.credentialId);
 }
 
-export function revokeSession(
-  database: DatabaseSync,
+export async function revokeSession(
+  database: AuthDatabase,
   token: string,
   options: Pick<TokenLifetimeOptions, "now"> = {},
-): boolean {
+): Promise<boolean> {
   const now = validDate(options.now ?? new Date(), "now").toISOString();
-  return database
-    .prepare("UPDATE auth_sessions SET revoked_at = ?, updated_at = ? WHERE token_hash = ? AND revoked_at IS NULL")
-    .run(now, now, hashToken(token)).changes === 1;
+  const result = await database.update(authSessions).set({ revokedAt: now, updatedAt: now })
+    .where(and(eq(authSessions.tokenHash, hashToken(token)), isNull(authSessions.revokedAt)));
+  return affectedRows(result) === 1;
 }
 
-export function createApiToken(
-  database: DatabaseSync,
+export async function createApiToken(
+  database: AuthDatabase,
   userId: string,
   options: CreateApiTokenOptions,
-): CreatedApiToken {
+): Promise<CreatedApiToken> {
   const name = options.name.trim();
   if (!name || name.length > 100) throw new Error("API token name must contain 1 to 100 characters");
   const now = validDate(options.now ?? new Date(), "now");
   const expiresAt = validDate(options.expiresAt ?? new Date(now.getTime() + DEFAULT_API_TOKEN_LIFETIME_MS), "expiresAt");
   assertFutureExpiry(now, expiresAt);
-  requireAuthenticatableUser(database, userId);
+  await requireAuthenticatableUser(database, userId);
 
   const prefix = randomBytes(9).toString("base64url");
   const token = `ttapi_${prefix}_${randomBytes(32).toString("base64url")}`;
   const id = `api_token_${randomUUID()}`;
-  database
-    .prepare(
-      `INSERT INTO api_tokens
-         (id, user_id, name, token_prefix, token_hash, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(id, userId, name, prefix, hashToken(token), expiresAt.toISOString(), now.toISOString(), now.toISOString());
+  await database.insert(apiTokens).values({
+    id,
+    userId,
+    name,
+    tokenPrefix: prefix,
+    tokenHash: hashToken(token),
+    expiresAt: expiresAt.toISOString(),
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+  });
 
   return { token, apiToken: { id, userId, name, prefix, expiresAt, createdAt: now } };
 }
 
-export function resolveApiToken(
-  database: DatabaseSync,
+export async function resolveApiToken(
+  database: AuthDatabase,
   token: string,
   options: Pick<TokenLifetimeOptions, "now"> = {},
-): AuthenticatedPrincipal | undefined {
+): Promise<AuthenticatedPrincipal | undefined> {
   if (!/^ttapi_[A-Za-z0-9_-]{12}_[A-Za-z0-9_-]{43}$/.test(token)) return undefined;
   const now = validDate(options.now ?? new Date(), "now");
-  const row = database
-    .prepare(
-      `SELECT t.id AS credential_id, t.expires_at, t.revoked_at,
-              u.id, u.display_name, u.primary_email
-       FROM api_tokens t JOIN users u ON u.id = t.user_id
-       WHERE t.token_hash = ?`,
-    )
-    .get(hashToken(token)) as Record<string, unknown> | undefined;
+  const [row] = await database.select({
+    credentialId: apiTokens.id,
+    expiresAt: apiTokens.expiresAt,
+    revokedAt: apiTokens.revokedAt,
+    id: users.id,
+    displayName: users.displayName,
+    primaryEmail: users.primaryEmail,
+  }).from(apiTokens).innerJoin(users, eq(users.id, apiTokens.userId))
+    .where(eq(apiTokens.tokenHash, hashToken(token))).limit(1);
 
   if (!activeCredential(row, now)) return undefined;
-  database.prepare("UPDATE api_tokens SET last_used_at = ?, updated_at = ? WHERE id = ?").run(
-    now.toISOString(),
-    now.toISOString(),
-    String(row.credential_id),
-  );
-  return principalFromRow(row, "api_token", String(row.credential_id));
+  await database.update(apiTokens).set({ lastUsedAt: now.toISOString(), updatedAt: now.toISOString() })
+    .where(eq(apiTokens.id, row.credentialId));
+  return principalFromRow(row, "api_token", row.credentialId);
 }
 
-export function revokeApiToken(
-  database: DatabaseSync,
+export async function revokeApiToken(
+  database: AuthDatabase,
   tokenOrId: string,
   options: Pick<TokenLifetimeOptions, "now"> = {},
-): boolean {
+): Promise<boolean> {
   const now = validDate(options.now ?? new Date(), "now").toISOString();
   const byToken = /^ttapi_[A-Za-z0-9_-]{12}_[A-Za-z0-9_-]{43}$/.test(tokenOrId);
-  const where = byToken ? "token_hash = ?" : "id = ?";
   const identifier = byToken ? hashToken(tokenOrId) : tokenOrId;
-  return database
-    .prepare(`UPDATE api_tokens SET revoked_at = ?, updated_at = ? WHERE ${where} AND revoked_at IS NULL`)
-    .run(now, now, identifier).changes === 1;
+  const identifierCondition = byToken ? eq(apiTokens.tokenHash, identifier) : eq(apiTokens.id, identifier);
+  const result = await database.update(apiTokens).set({ revokedAt: now, updatedAt: now })
+    .where(and(identifierCondition, isNull(apiTokens.revokedAt)));
+  return affectedRows(result) === 1;
 }
 
 function assertPassword(password: string): void {
@@ -304,10 +309,16 @@ function safeScryptParameters(n: number, r: number, p: number): boolean {
     && Number.isInteger(p) && p >= 1 && p <= 4;
 }
 
-function validPasswordRow(row: Record<string, unknown>): boolean {
-  return typeof row.password_hash === "string" && typeof row.password_salt === "string"
-    && typeof row.password_scrypt_n === "number" && typeof row.password_scrypt_r === "number"
-    && typeof row.password_scrypt_p === "number";
+function validPasswordRow(row: {
+  passwordHash: string | null;
+  passwordSalt: string | null;
+  passwordScryptN: number | null;
+  passwordScryptR: number | null;
+  passwordScryptP: number | null;
+}): boolean {
+  return typeof row.passwordHash === "string" && typeof row.passwordSalt === "string"
+    && typeof row.passwordScryptN === "number" && typeof row.passwordScryptR === "number"
+    && typeof row.passwordScryptP === "number";
 }
 
 function decodeBase64Url(value: string): Buffer | undefined {
@@ -323,35 +334,44 @@ function hashToken(token: string): string {
   return `sha256:${createHash("sha256").update(token, "utf8").digest("hex")}`;
 }
 
-function activeCredential(row: Record<string, unknown> | undefined, now: Date): row is Record<string, unknown> {
-  if (!row || row.revoked_at !== null) return false;
-  const expiresAt = new Date(String(row.expires_at));
+function activeCredential<T extends { revokedAt: string | null; expiresAt: string }>(
+  row: T | undefined,
+  now: Date,
+): row is T {
+  if (!row || row.revokedAt !== null) return false;
+  const expiresAt = new Date(row.expiresAt);
   return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() > now.getTime();
 }
 
 function principalFromRow(
-  row: Record<string, unknown>,
+  row: { id: string; displayName: string; primaryEmail: string | null },
   authMethod: AuthenticationMethod,
   credentialId: string | null,
 ): AuthenticatedPrincipal | undefined {
-  if (typeof row.primary_email !== "string" || !row.primary_email) return undefined;
+  if (!row.primaryEmail) return undefined;
   return {
-    userId: String(row.id),
-    displayName: String(row.display_name),
-    email: row.primary_email,
+    userId: row.id,
+    displayName: row.displayName,
+    email: row.primaryEmail,
     authMethod,
     credentialId,
   };
 }
 
-function requireAuthenticatableUser(database: DatabaseSync, userId: string): void {
-  const user = database.prepare("SELECT primary_email FROM users WHERE id = ?").get(userId) as
-    | { primary_email: string | null }
-    | undefined;
+async function requireAuthenticatableUser(database: AuthDatabase, userId: string): Promise<void> {
+  const [user] = await database.select({ primaryEmail: users.primaryEmail }).from(users)
+    .where(eq(users.id, userId)).limit(1);
   if (!user) {
     throw new Error(`User ${userId} not found`);
   }
-  if (!user.primary_email) throw new Error(`User ${userId} must have a primary email address`);
+  if (!user.primaryEmail) throw new Error(`User ${userId} must have a primary email address`);
+}
+
+function affectedRows(result: unknown): number {
+  if (!Array.isArray(result)) return 0;
+  const header = result[0];
+  if (!header || typeof header !== "object" || !("affectedRows" in header)) return 0;
+  return Number(header.affectedRows);
 }
 
 function validDate(value: Date, name: string): Date {

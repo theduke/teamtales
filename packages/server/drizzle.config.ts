@@ -1,10 +1,10 @@
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
-  dialect: "sqlite",
+  dialect: "mysql",
   schema: "./src/db/schema.ts",
-  out: "./db/drizzle",
+  out: "./drizzle",
   dbCredentials: {
-    url: process.env.TEAMTALES_DB ?? "teamtales.sqlite",
+    url: process.env.DATABASE_URL ?? process.env.TEAMTALES_TEST_DATABASE_URL ?? "mysql://root@127.0.0.1:3306/teamtales",
   },
 });

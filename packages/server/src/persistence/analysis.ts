@@ -1,7 +1,14 @@
-import type { DatabaseSync } from "node:sqlite";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 import type { Highlight, Metric, ReportContext, ReportScopeType } from "../analysis/types.js";
-import { jsonStringify, parseJsonObject, parseJsonValue, withTransaction } from "./sqlite.js";
+import { analysisHighlights, analysisMetrics, analysisReportContexts, analysisRuns } from "../db/schema.js";
+import {
+  jsonStringify,
+  parseJsonObject,
+  parseJsonValue,
+  type PersistenceDatabase,
+  withTransaction,
+} from "./database.js";
 
 export type AnalysisRunStatus = "running" | "completed" | "failed";
 
@@ -63,113 +70,85 @@ export interface SavedAnalysisResult {
   reportContext: AnalysisReportContextRecord;
 }
 
-export function insertAnalysisRun(database: DatabaseSync, run: AnalysisRunRecord): AnalysisRunRecord {
-  database
-    .prepare(
-      `INSERT INTO analysis_runs (
-        id, organization_id, scope_type, scope_id, period_start, period_end,
-        status, started_at, finished_at, error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      run.id,
-      run.organizationId,
-      run.scopeType,
-      run.scopeId,
-      run.periodStart,
-      run.periodEnd,
-      run.status,
-      run.startedAt,
-      run.finishedAt ?? null,
-      run.error ?? null,
-    );
-
+export async function insertAnalysisRun(database: PersistenceDatabase, run: AnalysisRunRecord): Promise<AnalysisRunRecord> {
+  await database.insert(analysisRuns).values({
+    id: run.id,
+    organizationId: run.organizationId,
+    scopeType: run.scopeType,
+    scopeId: run.scopeId,
+    periodStart: run.periodStart,
+    periodEnd: run.periodEnd,
+    status: run.status,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt ?? null,
+    error: run.error ?? null,
+  });
   return requireAnalysisRun(database, run.id);
 }
 
-export function insertAnalysisMetric(database: DatabaseSync, metric: AnalysisMetricRecord): AnalysisMetricRecord {
-  database
-    .prepare(
-      `INSERT INTO analysis_metrics (
-        id, organization_id, analysis_run_id, scope_type, scope_id, period_start, period_end,
-        metric_name, metric_value, dimensions_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      metric.id,
-      metric.organizationId,
-      metric.analysisRunId,
-      metric.scopeType,
-      metric.scopeId,
-      metric.periodStart,
-      metric.periodEnd,
-      metric.name,
-      metric.value,
-      jsonStringify(metric.dimensions ?? {}),
-    );
-
+export async function insertAnalysisMetric(
+  database: PersistenceDatabase,
+  metric: AnalysisMetricRecord,
+): Promise<AnalysisMetricRecord> {
+  await database.insert(analysisMetrics).values({
+    id: metric.id,
+    organizationId: metric.organizationId,
+    analysisRunId: metric.analysisRunId,
+    scopeType: metric.scopeType,
+    scopeId: metric.scopeId,
+    periodStart: metric.periodStart,
+    periodEnd: metric.periodEnd,
+    metricName: metric.name,
+    metricValue: metric.value,
+    dimensionsJson: jsonStringify(metric.dimensions ?? {}),
+  });
   return requireAnalysisMetric(database, metric.id);
 }
 
-export function insertAnalysisHighlight(
-  database: DatabaseSync,
+export async function insertAnalysisHighlight(
+  database: PersistenceDatabase,
   highlight: AnalysisHighlightRecord,
-): AnalysisHighlightRecord {
-  database
-    .prepare(
-      `INSERT INTO analysis_highlights (
-        id, organization_id, analysis_run_id, work_item_id, highlight_type, score,
-        title, reason, source_refs_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      highlight.id,
-      highlight.organizationId,
-      highlight.analysisRunId,
-      highlight.workItemId,
-      highlight.highlightType,
-      highlight.score,
-      highlight.title,
-      jsonStringify(highlight.reason),
-      jsonStringify(highlight.sourceRefs),
-    );
-
+): Promise<AnalysisHighlightRecord> {
+  await database.insert(analysisHighlights).values({
+    id: highlight.id,
+    organizationId: highlight.organizationId,
+    analysisRunId: highlight.analysisRunId,
+    workItemId: highlight.workItemId,
+    highlightType: highlight.highlightType,
+    score: highlight.score,
+    title: highlight.title,
+    reason: jsonStringify(highlight.reason),
+    sourceRefsJson: jsonStringify(highlight.sourceRefs),
+  });
   return requireAnalysisHighlight(database, highlight.id);
 }
 
-export function insertAnalysisReportContext(
-  database: DatabaseSync,
+export async function insertAnalysisReportContext(
+  database: PersistenceDatabase,
   context: AnalysisReportContextRecord,
-): AnalysisReportContextRecord {
-  database
-    .prepare(
-      `INSERT INTO analysis_report_contexts (
-        id, organization_id, analysis_run_id, scope_type, scope_id,
-        period_start, period_end, context_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      context.id,
-      context.organizationId,
-      context.analysisRunId,
-      context.scopeType,
-      context.scopeId,
-      context.periodStart,
-      context.periodEnd,
-      jsonStringify(context.context),
-    );
-
+): Promise<AnalysisReportContextRecord> {
+  await database.insert(analysisReportContexts).values({
+    id: context.id,
+    organizationId: context.organizationId,
+    analysisRunId: context.analysisRunId,
+    scopeType: context.scopeType,
+    scopeId: context.scopeId,
+    periodStart: context.periodStart,
+    periodEnd: context.periodEnd,
+    contextJson: jsonStringify(context.context),
+  });
   return requireAnalysisReportContext(database, context.id);
 }
 
-export function saveCompleteAnalysisResult(
-  database: DatabaseSync,
+export async function saveCompleteAnalysisResult(
+  database: PersistenceDatabase,
   input: SaveCompleteAnalysisResultInput,
-): SavedAnalysisResult {
-  return withTransaction(database, () => {
-    const run = insertAnalysisRun(database, input.run);
-    const metrics = input.metrics.map((metric) =>
-      insertAnalysisMetric(database, {
+): Promise<SavedAnalysisResult> {
+  return withTransaction(database, async (transaction) => {
+    const run = await insertAnalysisRun(transaction, input.run);
+    const metrics: AnalysisMetricRecord[] = [];
+    for (const metric of input.metrics) {
+      metrics.push(await insertAnalysisMetric(transaction, {
         ...metric,
         organizationId: run.organizationId,
         analysisRunId: run.id,
@@ -177,16 +156,17 @@ export function saveCompleteAnalysisResult(
         scopeId: run.scopeId,
         periodStart: run.periodStart,
         periodEnd: run.periodEnd,
-      }),
-    );
-    const highlights = input.highlights.map((highlight) =>
-      insertAnalysisHighlight(database, {
+      }));
+    }
+    const highlights: AnalysisHighlightRecord[] = [];
+    for (const highlight of input.highlights) {
+      highlights.push(await insertAnalysisHighlight(transaction, {
         ...highlight,
         organizationId: run.organizationId,
         analysisRunId: run.id,
-      }),
-    );
-    const reportContext = insertAnalysisReportContext(database, {
+      }));
+    }
+    const reportContext = await insertAnalysisReportContext(transaction, {
       ...input.reportContext,
       organizationId: run.organizationId,
       analysisRunId: run.id,
@@ -195,243 +175,189 @@ export function saveCompleteAnalysisResult(
       periodStart: run.periodStart,
       periodEnd: run.periodEnd,
     });
-
     return { run, metrics, highlights, reportContext };
   });
 }
 
-export function getAnalysisRun(database: DatabaseSync, id: string): AnalysisRunRecord | undefined {
-  const row = database.prepare("SELECT * FROM analysis_runs WHERE id = ?").get(id);
-  return row ? mapAnalysisRun(row as Record<string, unknown>) : undefined;
+export async function getAnalysisRun(database: PersistenceDatabase, id: string): Promise<AnalysisRunRecord | undefined> {
+  const [row] = await database.select().from(analysisRuns).where(eq(analysisRuns.id, id)).limit(1);
+  return row ? mapAnalysisRun(row) : undefined;
 }
 
-export function getAnalysisRunForOrganization(
-  database: DatabaseSync,
+export async function getAnalysisRunForOrganization(
+  database: PersistenceDatabase,
   organizationId: string,
   id: string,
-): AnalysisRunRecord | undefined {
-  const row = database.prepare("SELECT * FROM analysis_runs WHERE organization_id = ? AND id = ?").get(organizationId, id);
-  return row ? mapAnalysisRun(row as Record<string, unknown>) : undefined;
+): Promise<AnalysisRunRecord | undefined> {
+  const [row] = await database.select().from(analysisRuns).where(and(
+    eq(analysisRuns.organizationId, organizationId), eq(analysisRuns.id, id),
+  )).limit(1);
+  return row ? mapAnalysisRun(row) : undefined;
 }
 
-export function requireAnalysisRun(database: DatabaseSync, id: string): AnalysisRunRecord {
-  const run = getAnalysisRun(database, id);
-
-  if (!run) {
-    throw new Error(`Analysis run not found: ${id}`);
-  }
-
+export async function requireAnalysisRun(database: PersistenceDatabase, id: string): Promise<AnalysisRunRecord> {
+  const run = await getAnalysisRun(database, id);
+  if (!run) throw new Error(`Analysis run not found: ${id}`);
   return run;
 }
 
-export function listAnalysisMetrics(database: DatabaseSync, analysisRunId: string): AnalysisMetricRecord[] {
-  return database
-    .prepare("SELECT * FROM analysis_metrics WHERE analysis_run_id = ? ORDER BY id")
-    .all(analysisRunId)
-    .map((row) => mapAnalysisMetric(row as Record<string, unknown>));
+export async function listAnalysisMetrics(
+  database: PersistenceDatabase,
+  analysisRunId: string,
+): Promise<AnalysisMetricRecord[]> {
+  const rows = await database.select().from(analysisMetrics).where(eq(analysisMetrics.analysisRunId, analysisRunId))
+    .orderBy(asc(analysisMetrics.id));
+  return rows.map(mapAnalysisMetric);
 }
 
-export function listAnalysisMetricsForOrganization(
-  database: DatabaseSync,
+export async function listAnalysisMetricsForOrganization(
+  database: PersistenceDatabase,
   organizationId: string,
   analysisRunId: string,
-): AnalysisMetricRecord[] {
-  return database
-    .prepare("SELECT * FROM analysis_metrics WHERE organization_id = ? AND analysis_run_id = ? ORDER BY id")
-    .all(organizationId, analysisRunId)
-    .map((row) => mapAnalysisMetric(row as Record<string, unknown>));
+): Promise<AnalysisMetricRecord[]> {
+  const rows = await database.select().from(analysisMetrics).where(and(
+    eq(analysisMetrics.organizationId, organizationId), eq(analysisMetrics.analysisRunId, analysisRunId),
+  )).orderBy(asc(analysisMetrics.id));
+  return rows.map(mapAnalysisMetric);
 }
 
-export function requireAnalysisMetric(database: DatabaseSync, id: string): AnalysisMetricRecord {
-  const row = database.prepare("SELECT * FROM analysis_metrics WHERE id = ?").get(id);
-
-  if (!row) {
-    throw new Error(`Analysis metric not found: ${id}`);
-  }
-
-  return mapAnalysisMetric(row as Record<string, unknown>);
+export async function requireAnalysisMetric(database: PersistenceDatabase, id: string): Promise<AnalysisMetricRecord> {
+  const [row] = await database.select().from(analysisMetrics).where(eq(analysisMetrics.id, id)).limit(1);
+  if (!row) throw new Error(`Analysis metric not found: ${id}`);
+  return mapAnalysisMetric(row);
 }
 
-export function getAnalysisMetricForOrganization(
-  database: DatabaseSync,
+export async function getAnalysisMetricForOrganization(
+  database: PersistenceDatabase,
   organizationId: string,
   id: string,
-): AnalysisMetricRecord | undefined {
-  const row = database.prepare("SELECT * FROM analysis_metrics WHERE organization_id = ? AND id = ?").get(organizationId, id);
-  return row ? mapAnalysisMetric(row as Record<string, unknown>) : undefined;
+): Promise<AnalysisMetricRecord | undefined> {
+  const [row] = await database.select().from(analysisMetrics).where(and(
+    eq(analysisMetrics.organizationId, organizationId), eq(analysisMetrics.id, id),
+  )).limit(1);
+  return row ? mapAnalysisMetric(row) : undefined;
 }
 
-export function listAnalysisHighlights(database: DatabaseSync, analysisRunId: string): AnalysisHighlightRecord[] {
-  return database
-    .prepare("SELECT * FROM analysis_highlights WHERE analysis_run_id = ? ORDER BY score DESC, id")
-    .all(analysisRunId)
-    .map((row) => mapAnalysisHighlight(row as Record<string, unknown>));
+export async function listAnalysisHighlights(
+  database: PersistenceDatabase,
+  analysisRunId: string,
+): Promise<AnalysisHighlightRecord[]> {
+  const rows = await database.select().from(analysisHighlights).where(eq(analysisHighlights.analysisRunId, analysisRunId))
+    .orderBy(desc(analysisHighlights.score), asc(analysisHighlights.id));
+  return rows.map(mapAnalysisHighlight);
 }
 
-export function listAnalysisHighlightsForOrganization(
-  database: DatabaseSync,
+export async function listAnalysisHighlightsForOrganization(
+  database: PersistenceDatabase,
   organizationId: string,
   analysisRunId: string,
-): AnalysisHighlightRecord[] {
-  return database
-    .prepare("SELECT * FROM analysis_highlights WHERE organization_id = ? AND analysis_run_id = ? ORDER BY score DESC, id")
-    .all(organizationId, analysisRunId)
-    .map((row) => mapAnalysisHighlight(row as Record<string, unknown>));
+): Promise<AnalysisHighlightRecord[]> {
+  const rows = await database.select().from(analysisHighlights).where(and(
+    eq(analysisHighlights.organizationId, organizationId), eq(analysisHighlights.analysisRunId, analysisRunId),
+  )).orderBy(desc(analysisHighlights.score), asc(analysisHighlights.id));
+  return rows.map(mapAnalysisHighlight);
 }
 
-export function requireAnalysisHighlight(database: DatabaseSync, id: string): AnalysisHighlightRecord {
-  const row = database.prepare("SELECT * FROM analysis_highlights WHERE id = ?").get(id);
-
-  if (!row) {
-    throw new Error(`Analysis highlight not found: ${id}`);
-  }
-
-  return mapAnalysisHighlight(row as Record<string, unknown>);
+export async function requireAnalysisHighlight(database: PersistenceDatabase, id: string): Promise<AnalysisHighlightRecord> {
+  const [row] = await database.select().from(analysisHighlights).where(eq(analysisHighlights.id, id)).limit(1);
+  if (!row) throw new Error(`Analysis highlight not found: ${id}`);
+  return mapAnalysisHighlight(row);
 }
 
-export function getAnalysisHighlightForOrganization(
-  database: DatabaseSync,
+export async function getAnalysisHighlightForOrganization(
+  database: PersistenceDatabase,
   organizationId: string,
   id: string,
-): AnalysisHighlightRecord | undefined {
-  const row = database
-    .prepare("SELECT * FROM analysis_highlights WHERE organization_id = ? AND id = ?")
-    .get(organizationId, id);
-  return row ? mapAnalysisHighlight(row as Record<string, unknown>) : undefined;
+): Promise<AnalysisHighlightRecord | undefined> {
+  const [row] = await database.select().from(analysisHighlights).where(and(
+    eq(analysisHighlights.organizationId, organizationId), eq(analysisHighlights.id, id),
+  )).limit(1);
+  return row ? mapAnalysisHighlight(row) : undefined;
 }
 
-export function getAnalysisReportContext(
-  database: DatabaseSync,
+export async function getAnalysisReportContext(
+  database: PersistenceDatabase,
   id: string,
-): AnalysisReportContextRecord | undefined {
-  const row = database.prepare("SELECT * FROM analysis_report_contexts WHERE id = ?").get(id);
-  return row ? mapAnalysisReportContext(row as Record<string, unknown>) : undefined;
+): Promise<AnalysisReportContextRecord | undefined> {
+  const [row] = await database.select().from(analysisReportContexts).where(eq(analysisReportContexts.id, id)).limit(1);
+  return row ? mapAnalysisReportContext(row) : undefined;
 }
 
-export function getAnalysisReportContextForOrganization(
-  database: DatabaseSync,
+export async function getAnalysisReportContextForOrganization(
+  database: PersistenceDatabase,
   organizationId: string,
   id: string,
-): AnalysisReportContextRecord | undefined {
-  const row = database
-    .prepare("SELECT * FROM analysis_report_contexts WHERE organization_id = ? AND id = ?")
-    .get(organizationId, id);
-  return row ? mapAnalysisReportContext(row as Record<string, unknown>) : undefined;
+): Promise<AnalysisReportContextRecord | undefined> {
+  const [row] = await database.select().from(analysisReportContexts).where(and(
+    eq(analysisReportContexts.organizationId, organizationId), eq(analysisReportContexts.id, id),
+  )).limit(1);
+  return row ? mapAnalysisReportContext(row) : undefined;
 }
 
-export function requireAnalysisReportContext(database: DatabaseSync, id: string): AnalysisReportContextRecord {
-  const context = getAnalysisReportContext(database, id);
-
-  if (!context) {
-    throw new Error(`Analysis report context not found: ${id}`);
-  }
-
+export async function requireAnalysisReportContext(
+  database: PersistenceDatabase,
+  id: string,
+): Promise<AnalysisReportContextRecord> {
+  const context = await getAnalysisReportContext(database, id);
+  if (!context) throw new Error(`Analysis report context not found: ${id}`);
   return context;
 }
 
-function mapAnalysisRun(row: Record<string, unknown>): AnalysisRunRecord {
+function mapAnalysisRun(row: typeof analysisRuns.$inferSelect): AnalysisRunRecord {
+  return { ...row, scopeType: row.scopeType as ReportScopeType, status: row.status as AnalysisRunStatus };
+}
+
+function mapAnalysisMetric(row: typeof analysisMetrics.$inferSelect): AnalysisMetricRecord {
   return {
-    id: requiredString(row, "id"),
-    organizationId: requiredString(row, "organization_id"),
-    scopeType: requiredString(row, "scope_type") as ReportScopeType,
-    scopeId: requiredString(row, "scope_id"),
-    periodStart: requiredString(row, "period_start"),
-    periodEnd: requiredString(row, "period_end"),
-    status: requiredString(row, "status") as AnalysisRunStatus,
-    startedAt: requiredString(row, "started_at"),
-    finishedAt: optionalString(row, "finished_at"),
-    error: optionalString(row, "error"),
-    createdAt: requiredString(row, "created_at"),
+    id: row.id,
+    organizationId: row.organizationId,
+    analysisRunId: row.analysisRunId,
+    scopeType: row.scopeType as ReportScopeType,
+    scopeId: row.scopeId,
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    name: row.metricName,
+    value: row.metricValue,
+    dimensions: parseJsonObject(row.dimensionsJson),
+    createdAt: row.createdAt,
   };
 }
 
-function mapAnalysisMetric(row: Record<string, unknown>): AnalysisMetricRecord {
+function mapAnalysisHighlight(row: typeof analysisHighlights.$inferSelect): AnalysisHighlightRecord {
   return {
-    id: requiredString(row, "id"),
-    organizationId: requiredString(row, "organization_id"),
-    analysisRunId: requiredString(row, "analysis_run_id"),
-    scopeType: requiredString(row, "scope_type") as ReportScopeType,
-    scopeId: requiredString(row, "scope_id"),
-    periodStart: requiredString(row, "period_start"),
-    periodEnd: requiredString(row, "period_end"),
-    name: requiredString(row, "metric_name"),
-    value: requiredNumber(row, "metric_value"),
-    dimensions: parseJsonObject(requiredString(row, "dimensions_json")),
-    createdAt: requiredString(row, "created_at"),
-  };
-}
-
-function mapAnalysisHighlight(row: Record<string, unknown>): AnalysisHighlightRecord {
-  return {
-    id: requiredString(row, "id"),
-    organizationId: requiredString(row, "organization_id"),
-    analysisRunId: requiredString(row, "analysis_run_id"),
-    workItemId: optionalString(row, "work_item_id") ?? "",
-    highlightType: requiredString(row, "highlight_type") as Highlight["highlightType"],
-    score: requiredNumber(row, "score"),
-    title: requiredString(row, "title"),
-    reason: parseStringArray(requiredString(row, "reason")),
-    sourceRefs: parseStringArray(requiredString(row, "source_refs_json")),
+    id: row.id,
+    organizationId: row.organizationId,
+    analysisRunId: row.analysisRunId,
+    workItemId: row.workItemId ?? "",
+    highlightType: row.highlightType as Highlight["highlightType"],
+    score: row.score,
+    title: row.title,
+    reason: parseStringArray(row.reason),
+    sourceRefs: parseStringArray(row.sourceRefsJson),
     relatedPeople: [],
     relatedWorkItems: [],
-    createdAt: requiredString(row, "created_at"),
+    createdAt: row.createdAt,
   };
 }
 
-function mapAnalysisReportContext(row: Record<string, unknown>): AnalysisReportContextRecord {
+function mapAnalysisReportContext(row: typeof analysisReportContexts.$inferSelect): AnalysisReportContextRecord {
   return {
-    id: requiredString(row, "id"),
-    organizationId: requiredString(row, "organization_id"),
-    analysisRunId: requiredString(row, "analysis_run_id"),
-    scopeType: requiredString(row, "scope_type") as ReportScopeType,
-    scopeId: requiredString(row, "scope_id"),
-    periodStart: requiredString(row, "period_start"),
-    periodEnd: requiredString(row, "period_end"),
-    context: parseJsonValue(requiredString(row, "context_json")) as ReportContext,
-    createdAt: requiredString(row, "created_at"),
+    id: row.id,
+    organizationId: row.organizationId,
+    analysisRunId: row.analysisRunId,
+    scopeType: row.scopeType as ReportScopeType,
+    scopeId: row.scopeId,
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    context: parseJsonValue(row.contextJson) as ReportContext,
+    createdAt: row.createdAt,
   };
 }
 
 function parseStringArray(json: string): string[] {
   const value = parseJsonValue(json);
-
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw new Error("Expected JSON string array");
   }
-
-  return value;
-}
-
-function requiredString(row: Record<string, unknown>, key: string): string {
-  const value = row[key];
-
-  if (typeof value !== "string") {
-    throw new Error(`Expected string column: ${key}`);
-  }
-
-  return value;
-}
-
-function optionalString(row: Record<string, unknown>, key: string): string | null {
-  const value = row[key];
-
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  if (typeof value !== "string") {
-    throw new Error(`Expected nullable string column: ${key}`);
-  }
-
-  return value;
-}
-
-function requiredNumber(row: Record<string, unknown>, key: string): number {
-  const value = row[key];
-
-  if (typeof value !== "number") {
-    throw new Error(`Expected number column: ${key}`);
-  }
-
   return value;
 }

@@ -1,8 +1,12 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { GenerateReportResponseDto, GenerateWeeklyReportRequestDto, JsonObject, ReportDto, ReportInputDto } from "@teamtales/common/api";
 import type { Highlight, ReportContext } from "@teamtales/common/domain";
 
-import { getAnalysisReportContext, saveCompleteAnalysisResult, saveCompleteReportResult } from "../persistence/index.js";
+import {
+  getAnalysisReportContext,
+  saveCompleteAnalysisResult,
+  saveCompleteReportResult,
+  type PersistenceDatabase,
+} from "../persistence/index.js";
 import { generateWeeklyMarkdownReport } from "../reports/index.js";
 import { stableId } from "./ids.js";
 import { resolveReportContext } from "./report-contexts.js";
@@ -16,10 +20,10 @@ export interface GenerateWeeklyReportServiceInput {
   createdByUserId?: string;
 }
 
-export function generateWeeklyReportService(
-  database: DatabaseSync,
+export async function generateWeeklyReportService(
+  database: PersistenceDatabase,
   input: GenerateWeeklyReportServiceInput,
-): GenerateReportResponseDto & { markdown: string; analysisReportContextId: string } {
+): Promise<GenerateReportResponseDto & { markdown: string; analysisReportContextId: string }> {
   const markdown = generateWeeklyMarkdownReport(input.context, { title: input.title });
   const persist = input.persist ?? false;
   let analysisReportContextId = input.analysisReportContextId;
@@ -37,7 +41,7 @@ export function generateWeeklyReportService(
     );
     analysisReportContextId = stableId("report_context", analysisRunId);
 
-    saveCompleteAnalysisResult(database, {
+    await saveCompleteAnalysisResult(database, {
       run: {
         id: analysisRunId,
         organizationId: input.context.organization.id,
@@ -133,7 +137,7 @@ export function generateWeeklyReportService(
     };
   }
 
-  const saved = saveCompleteReportResult(database, {
+  const saved = await saveCompleteReportResult(database, {
     report: {
       id: report.id,
       organizationId: report.organizationId,
@@ -209,12 +213,12 @@ function inferHighlightType(highlight: ReportContext["highlights"][number]): Hig
   return "completed_work";
 }
 
-export function generateWeeklyReportFromStoredContextService(
-  database: DatabaseSync,
+export async function generateWeeklyReportFromStoredContextService(
+  database: PersistenceDatabase,
   analysisReportContextId: string,
   options: { title?: string; persist?: boolean } = {},
-): GenerateReportResponseDto & { markdown: string; analysisReportContextId: string } {
-  const context = getAnalysisReportContext(database, analysisReportContextId);
+): Promise<GenerateReportResponseDto & { markdown: string; analysisReportContextId: string }> {
+  const context = await getAnalysisReportContext(database, analysisReportContextId);
   if (!context) {
     throw new Error(`Analysis report context not found: ${analysisReportContextId}`);
   }
@@ -227,12 +231,12 @@ export function generateWeeklyReportFromStoredContextService(
   });
 }
 
-export function generateWeeklyReportFromRequestService(
-  database: DatabaseSync,
+export async function generateWeeklyReportFromRequestService(
+  database: PersistenceDatabase,
   request: GenerateWeeklyReportRequestDto,
   options: { createdByUserId?: string } = {},
-): GenerateReportResponseDto & { markdown: string; analysisReportContextId: string } {
-  const resolved = resolveReportContext(database, {
+): Promise<GenerateReportResponseDto & { markdown: string; analysisReportContextId: string }> {
+  const resolved = await resolveReportContext(database, {
     organizationId: request.organizationId,
     organizationName: request.organizationName,
     scopeType: request.scopeType,

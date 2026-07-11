@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import type {
   ActivityEvent,
   AnalysisInput,
@@ -9,9 +8,18 @@ import type {
   ScopeRef,
   WorkItem,
 } from "@teamtales/common/domain";
+import { and, asc, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
 
 import { buildReportContext } from "../analysis/index.js";
-import { parseJsonObject } from "../persistence/sqlite.js";
+import {
+  activityEvents,
+  analysisReportContexts,
+  organizations,
+  people,
+  syncScopes,
+  workItems,
+} from "../db/schema.js";
+import { parseJsonObject, type PersistenceDatabase } from "../persistence/database.js";
 
 export interface ResolveReportContextInput {
   organizationId: string;
@@ -28,212 +36,155 @@ export interface ResolvedReportContext {
   analysisReportContextId?: string;
 }
 
-export function resolveReportContext(database: DatabaseSync, input: ResolveReportContextInput): ResolvedReportContext {
-  const stored = latestReportContext(database, input);
-  if (stored) {
-    return stored;
-  }
+export async function resolveReportContext(
+  database: PersistenceDatabase,
+  input: ResolveReportContextInput,
+): Promise<ResolvedReportContext> {
+  const stored = await latestReportContext(database, input);
+  if (stored) return stored;
 
-  const organization = {
-    id: input.organizationId,
-    name: input.organizationName ?? readOrganizationName(database, input.organizationId) ?? input.organizationId,
-  };
   const scope = resolveScope(input);
-  const events = readActivityEvents(database, input.organizationId, input.periodStart, input.periodEnd, scope);
+  const [storedOrganizationName, events, freshness] = await Promise.all([
+    input.organizationName ? Promise.resolve(input.organizationName) : readOrganizationName(database, input.organizationId),
+    readActivityEvents(database, input.organizationId, input.periodStart, input.periodEnd, scope),
+    databaseFreshness(database, input.organizationId),
+  ]);
   const workItemIds = new Set(events.map((event) => event.workItemId).filter((id): id is string => id !== undefined));
   const personIds = new Set(events.map((event) => event.actorPersonId).filter((id): id is string => id !== undefined));
+  const [selectedWorkItems, selectedPeople] = await Promise.all([
+    readWorkItems(database, input.organizationId, scope.type === "organization" ? undefined : workItemIds),
+    readPeople(database, input.organizationId, scope.type === "organization" ? undefined : personIds),
+  ]);
 
   return {
     context: buildReportContext({
-      organization,
+      organization: { id: input.organizationId, name: storedOrganizationName ?? input.organizationId },
       scope,
-      period: {
-        start: input.periodStart,
-        end: input.periodEnd,
-      },
-      freshness: databaseFreshness(database, input.organizationId),
+      period: { start: input.periodStart, end: input.periodEnd },
+      freshness,
       events,
-      workItems: readWorkItems(database, input.organizationId, scope.type === "organization" ? undefined : workItemIds),
-      people: readPeople(database, input.organizationId, scope.type === "organization" ? undefined : personIds),
+      workItems: selectedWorkItems,
+      people: selectedPeople,
     }),
   };
 }
 
-export function latestReportContext(
-  database: DatabaseSync,
+export async function latestReportContext(
+  database: PersistenceDatabase,
   input: Pick<ResolveReportContextInput, "organizationId"> &
     Partial<Pick<ResolveReportContextInput, "scopeType" | "scopeId" | "periodStart" | "periodEnd">>,
-): ResolvedReportContext | undefined {
-  const clauses: string[] = ["organization_id = ?"];
-  const values: string[] = [input.organizationId];
+): Promise<ResolvedReportContext | undefined> {
+  const clauses: SQL[] = [eq(analysisReportContexts.organizationId, input.organizationId)];
+  if (input.scopeType) clauses.push(eq(analysisReportContexts.scopeType, input.scopeType));
+  if (input.scopeId) clauses.push(eq(analysisReportContexts.scopeId, input.scopeId));
+  if (input.periodStart) clauses.push(eq(analysisReportContexts.periodStart, input.periodStart));
+  if (input.periodEnd) clauses.push(eq(analysisReportContexts.periodEnd, input.periodEnd));
 
-  if (input.scopeType) {
-    clauses.push("scope_type = ?");
-    values.push(input.scopeType);
-  }
-  if (input.scopeId) {
-    clauses.push("scope_id = ?");
-    values.push(input.scopeId);
-  }
-  if (input.periodStart) {
-    clauses.push("period_start = ?");
-    values.push(input.periodStart);
-  }
-  if (input.periodEnd) {
-    clauses.push("period_end = ?");
-    values.push(input.periodEnd);
-  }
+  const [row] = await database
+    .select({ id: analysisReportContexts.id, contextJson: analysisReportContexts.contextJson })
+    .from(analysisReportContexts)
+    .where(and(...clauses))
+    .orderBy(desc(analysisReportContexts.createdAt), desc(analysisReportContexts.id))
+    .limit(1);
+  if (!row) return undefined;
 
-  const row = database
-    .prepare(
-      `SELECT id, context_json
-       FROM analysis_report_contexts
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY created_at DESC, id DESC
-       LIMIT 1`,
-    )
-    .get(...values) as Record<string, unknown> | undefined;
-
-  if (!row || typeof row.id !== "string" || typeof row.context_json !== "string") {
-    return undefined;
-  }
-
-  return {
-    analysisReportContextId: row.id,
-    context: JSON.parse(row.context_json) as ReportContext,
-  };
+  return { analysisReportContextId: row.id, context: JSON.parse(row.contextJson) as ReportContext };
 }
 
-export function readActivityEvents(
-  database: DatabaseSync,
+export async function readActivityEvents(
+  database: PersistenceDatabase,
   organizationId: string,
   periodStart: string,
   periodEnd: string,
   scope?: ScopeRef,
-): ActivityEvent[] {
-  const clauses = ["organization_id = ?", "occurred_at >= ?", "occurred_at <= ?"];
-  const values = [organizationId, periodStart, periodEnd];
+): Promise<ActivityEvent[]> {
+  const clauses: SQL[] = [
+    eq(activityEvents.organizationId, organizationId),
+    gte(activityEvents.occurredAt, periodStart),
+    lte(activityEvents.occurredAt, periodEnd),
+  ];
+  const scopedColumn = scopeEventColumn(scope);
+  if (scope && scopedColumn) clauses.push(eq(scopedColumn, scope.id));
 
-  const scopedColumn = scopeColumn(scope);
-  if (scope !== undefined && scopedColumn !== undefined) {
-    clauses.push(`${scopedColumn} = ?`);
-    values.push(scope.id);
-  }
-
-  return database
-    .prepare(
-      `SELECT * FROM activity_events
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY occurred_at, id`,
-    )
-    .all(...values)
-    .map((row) => {
-      const record = row as Record<string, unknown>;
-      const sourceObjectId = optionalColumn(record, "source_object_id");
-      return stripUndefined({
-        id: requiredColumn(record, "id"),
-        provider: requiredColumn(record, "provider") as Provider,
-        eventType: requiredColumn(record, "event_type"),
-        actorPersonId: optionalColumn(record, "actor_person_id"),
-        workItemId: optionalColumn(record, "work_item_id"),
-        repositoryId: optionalColumn(record, "repository_id"),
-        linearTeamId: optionalColumn(record, "linear_team_id"),
-        linearProjectId: optionalColumn(record, "linear_project_id"),
-        occurredAt: requiredColumn(record, "occurred_at"),
-        title: requiredColumn(record, "title"),
-        body: optionalColumn(record, "body"),
-        url: optionalColumn(record, "url"),
-        sourceRef: sourceObjectId ? `source_object:${sourceObjectId}` : undefined,
-        metadata: parseJsonObject(requiredColumn(record, "metadata_json")),
-      });
-    });
+  const rows = await database.select().from(activityEvents).where(and(...clauses))
+    .orderBy(asc(activityEvents.occurredAt), asc(activityEvents.id));
+  return rows.map((row) => stripUndefined({
+    id: row.id,
+    provider: row.provider as Provider,
+    eventType: row.eventType,
+    actorPersonId: row.actorPersonId ?? undefined,
+    workItemId: row.workItemId ?? undefined,
+    repositoryId: row.repositoryId ?? undefined,
+    linearTeamId: row.linearTeamId ?? undefined,
+    linearProjectId: row.linearProjectId ?? undefined,
+    occurredAt: row.occurredAt,
+    title: row.title,
+    body: row.body ?? undefined,
+    url: row.url ?? undefined,
+    sourceRef: row.sourceObjectId ? `source_object:${row.sourceObjectId}` : undefined,
+    metadata: parseJsonObject(row.metadataJson),
+  }));
 }
 
-export function readWorkItems(database: DatabaseSync, organizationId: string, workItemIds?: ReadonlySet<string>): WorkItem[] {
-  if (workItemIds !== undefined && workItemIds.size === 0) {
-    return [];
-  }
+export async function readWorkItems(
+  database: PersistenceDatabase,
+  organizationId: string,
+  workItemIds?: ReadonlySet<string>,
+): Promise<WorkItem[]> {
+  if (workItemIds?.size === 0) return [];
+  const clauses: SQL[] = [eq(workItems.organizationId, organizationId)];
+  if (workItemIds) clauses.push(inArray(workItems.id, [...workItemIds]));
 
-  const clauses = ["organization_id = ?"];
-  const values = [organizationId];
-  if (workItemIds !== undefined) {
-    clauses.push(`id IN (${placeholders(workItemIds.size)})`);
-    values.push(...workItemIds);
-  }
-
-  return database
-    .prepare(`SELECT * FROM work_items WHERE ${clauses.join(" AND ")} ORDER BY updated_at_source, id`)
-    .all(...values)
-    .map((row) => {
-      const record = row as Record<string, unknown>;
-      return stripUndefined({
-        id: requiredColumn(record, "id"),
-        provider: requiredColumn(record, "provider") as Provider,
-        sourceType: requiredColumn(record, "work_type") as WorkItem["sourceType"],
-        externalId: requiredColumn(record, "external_id"),
-        title: requiredColumn(record, "title"),
-        url: optionalColumn(record, "url"),
-        status: requiredColumn(record, "status") as WorkItem["status"],
-        createdAtSource: optionalColumn(record, "created_at_source"),
-        updatedAtSource: optionalColumn(record, "updated_at_source"),
-        startedAt: optionalColumn(record, "started_at"),
-        completedAt: optionalColumn(record, "completed_at"),
-      });
-    });
+  const rows = await database.select().from(workItems).where(and(...clauses))
+    .orderBy(asc(workItems.updatedAtSource), asc(workItems.id));
+  return rows.map((row) => stripUndefined({
+    id: row.id,
+    provider: row.provider as Provider,
+    sourceType: row.workType as WorkItem["sourceType"],
+    externalId: row.externalId,
+    title: row.title,
+    url: row.url ?? undefined,
+    status: row.status as WorkItem["status"],
+    createdAtSource: row.createdAtSource ?? undefined,
+    updatedAtSource: row.updatedAtSource ?? undefined,
+    startedAt: row.startedAt ?? undefined,
+    completedAt: row.completedAt ?? undefined,
+  }));
 }
 
-export function readPeople(database: DatabaseSync, organizationId: string, personIds?: ReadonlySet<string>): Person[] {
-  if (personIds !== undefined && personIds.size === 0) {
-    return [];
-  }
-
-  const clauses = ["organization_id = ?"];
-  const values = [organizationId];
-  if (personIds !== undefined) {
-    clauses.push(`id IN (${placeholders(personIds.size)})`);
-    values.push(...personIds);
-  }
-
-  return database
-    .prepare(`SELECT id, display_name FROM people WHERE ${clauses.join(" AND ")} ORDER BY display_name, id`)
-    .all(...values)
-    .map((row) => {
-      const record = row as Record<string, unknown>;
-      return {
-        id: requiredColumn(record, "id"),
-        displayName: requiredColumn(record, "display_name"),
-      };
-    });
+export async function readPeople(
+  database: PersistenceDatabase,
+  organizationId: string,
+  personIds?: ReadonlySet<string>,
+): Promise<Person[]> {
+  if (personIds?.size === 0) return [];
+  const clauses: SQL[] = [eq(people.organizationId, organizationId)];
+  if (personIds) clauses.push(inArray(people.id, [...personIds]));
+  const rows = await database.select({ id: people.id, displayName: people.displayName }).from(people)
+    .where(and(...clauses)).orderBy(asc(people.displayName), asc(people.id));
+  return rows;
 }
 
-export function databaseFreshness(database: DatabaseSync, organizationId: string): AnalysisInput["freshness"] {
-  const rows = database
-    .prepare(
-      `SELECT provider, MAX(last_success_at) AS last_success_at
-       FROM sync_scopes
-       WHERE organization_id = ?
-       GROUP BY provider
-       ORDER BY provider`,
-    )
-    .all(organizationId) as Array<Record<string, unknown>>;
+export async function databaseFreshness(
+  database: PersistenceDatabase,
+  organizationId: string,
+): Promise<AnalysisInput["freshness"]> {
+  const rows = await database.select({ provider: syncScopes.provider, lastSuccessAt: syncScopes.lastSuccessAt })
+    .from(syncScopes).where(eq(syncScopes.organizationId, organizationId)).orderBy(asc(syncScopes.provider));
   const freshness: { github?: string; linear?: string; warnings: string[] } = { warnings: [] };
-
   for (const row of rows) {
-    const provider = row.provider;
-    const lastSuccessAt = row.last_success_at;
-    if ((provider === "github" || provider === "linear") && typeof lastSuccessAt === "string") {
-      freshness[provider] = lastSuccessAt;
+    if ((row.provider === "github" || row.provider === "linear") && row.lastSuccessAt &&
+        (!freshness[row.provider] || row.lastSuccessAt > freshness[row.provider]!)) {
+      freshness[row.provider] = row.lastSuccessAt;
     }
   }
-
   return freshness;
 }
 
-function readOrganizationName(database: DatabaseSync, organizationId: string): string | undefined {
-  const row = database.prepare("SELECT name FROM organizations WHERE id = ?").get(organizationId) as
-    | Record<string, unknown>
-    | undefined;
-  return row ? optionalColumn(row, "name") : undefined;
+async function readOrganizationName(database: PersistenceDatabase, organizationId: string): Promise<string | undefined> {
+  const [row] = await database.select({ name: organizations.name }).from(organizations)
+    .where(eq(organizations.id, organizationId)).limit(1);
+  return row?.name;
 }
 
 function resolveScope(input: ResolveReportContextInput): ScopeRef {
@@ -244,37 +195,15 @@ function resolveScope(input: ResolveReportContextInput): ScopeRef {
   };
 }
 
-function scopeColumn(scope: ScopeRef | undefined): string | undefined {
+function scopeEventColumn(scope: ScopeRef | undefined) {
   switch (scope?.type) {
-    case "github_repository":
-      return "repository_id";
-    case "linear_team":
-      return "linear_team_id";
-    case "linear_project":
-      return "linear_project_id";
-    case "person":
-      return "actor_person_id";
+    case "github_repository": return activityEvents.repositoryId;
+    case "linear_team": return activityEvents.linearTeamId;
+    case "linear_project": return activityEvents.linearProjectId;
+    case "person": return activityEvents.actorPersonId;
     case "organization":
-    case undefined:
-      return undefined;
+    case undefined: return undefined;
   }
-}
-
-function placeholders(count: number): string {
-  return Array.from({ length: count }, () => "?").join(", ");
-}
-
-function requiredColumn(row: Record<string, unknown>, key: string): string {
-  const value = row[key];
-  if (typeof value !== "string") {
-    throw new Error(`Expected string column: ${key}`);
-  }
-  return value;
-}
-
-function optionalColumn(row: Record<string, unknown>, key: string): string | undefined {
-  const value = row[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function stripUndefined<T extends Record<string, unknown>>(record: T): T {

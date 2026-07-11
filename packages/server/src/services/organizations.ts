@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AppDatabase } from "../db/mysql.js";
 import type { OrganizationDto } from "@teamtales/common/api";
 
 import { createOrganizationWithOwner } from "../persistence/index.js";
@@ -20,16 +20,16 @@ export interface CreateOrganizationServiceResult {
   ownerMembershipId: string;
 }
 
-export function createOrganizationService(
-  database: DatabaseSync,
+export async function createOrganizationService(
+  database: AppDatabase,
   input: CreateOrganizationServiceInput,
-): CreateOrganizationServiceResult {
+): Promise<CreateOrganizationServiceResult> {
   const id = input.id ?? stableId("org", input.name);
   const ownerName = input.ownerName ?? input.ownerEmail ?? "Local Owner";
   const ownerId = input.ownerId ?? stableId("user", input.ownerEmail ?? ownerName);
   const membershipId = input.membershipId ?? stableId("membership", id, ownerId);
 
-  const created = createOrganizationWithOwner(database, {
+  const created = await createOrganizationWithOwner(database, {
     organization: {
       id,
       name: input.name,

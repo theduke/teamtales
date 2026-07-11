@@ -1,4 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AppDatabase } from "../db/mysql.js";
+import { integrationCredentials, integrations } from "../db/schema.js";
 import type { IntegrationDto } from "@teamtales/common/api";
 import type { Provider } from "@teamtales/common/domain";
 
@@ -26,25 +27,20 @@ export interface AddPersonalAccessTokenIntegrationInput {
   encryptionKey: string | Buffer;
 }
 
-export function addPersonalAccessTokenIntegrationService(
-  database: DatabaseSync,
+export async function addPersonalAccessTokenIntegrationService(
+  database: AppDatabase,
   input: AddPersonalAccessTokenIntegrationInput,
-): IntegrationWithSecretHintDto {
+): Promise<IntegrationWithSecretHintDto> {
   const displayName = input.displayName ?? `${input.provider} PAT`;
   const integrationId = input.id ?? stableId("integration", input.organizationId, input.provider, displayName);
   const credentialId = input.credentialId ?? stableId("credential", integrationId);
 
-  return withTransaction(database, () => {
-    requireOrganization(database, input.organizationId);
-    requireOrganizationRole(database, input.organizationId, input.userId, ["owner", "admin"]);
+  return withTransaction(database, async (transaction) => {
+    await requireOrganization(transaction, input.organizationId);
+    await requireOrganizationRole(transaction, input.organizationId, input.userId, ["owner", "admin"]);
 
     const now = new Date().toISOString();
-    database
-      .prepare(
-        `INSERT INTO integrations (id, organization_id, provider, auth_type, status, display_name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(integrationId, input.organizationId, input.provider, "personal_access_token", "active", displayName, now, now);
+    await transaction.insert(integrations).values({ id: integrationId, organizationId: input.organizationId, provider: input.provider, authType: "personal_access_token", status: "active", displayName, createdAt: now, updatedAt: now });
 
     const credential = createIntegrationCredentialRecord({
       id: credentialId,
@@ -53,21 +49,7 @@ export function addPersonalAccessTokenIntegrationService(
       encryptionKey: input.encryptionKey,
     });
 
-    database
-      .prepare(
-        `INSERT INTO integration_credentials (
-          id, integration_id, encrypted_secret, secret_hint, expires_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        credential.id,
-        credential.integrationId,
-        credential.encryptedSecret,
-        credential.secretHint,
-        credential.expiresAt?.toISOString() ?? null,
-        now,
-        now,
-      );
+    await transaction.insert(integrationCredentials).values({ id: credential.id, integrationId: credential.integrationId, encryptedSecret: credential.encryptedSecret, secretHint: credential.secretHint, expiresAt: credential.expiresAt?.toISOString() ?? null, createdAt: now, updatedAt: now });
 
     return {
       id: integrationId,
