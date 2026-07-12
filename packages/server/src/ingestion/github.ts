@@ -115,10 +115,23 @@ export class GitHubSourceConnector implements SourceConnector {
         `/repos/${repository.path}/pulls/${pullNumber}/reviews`,
         { per_page: "100" },
       )) {
+        if (!reviewTimestamp(review)) {
+          logger.warn(
+            {
+              repository: repository.path,
+              pullNumber,
+              reviewId: review.id,
+              state: stringField(review.state),
+              pullRequestUrl: stringField(review.pull_request_url),
+            },
+            "Skipping GitHub pull request review without a timestamp",
+          );
+          continue;
+        }
         objects.push(factory.create("github.pull_request_review", String(review.id), review));
         reviewHighWatermark = maxDate(
           reviewHighWatermark,
-          dateFromString(review.submitted_at) ?? dateFromString(review.updated_at),
+          reviewTimestamp(review),
         );
       }
 
@@ -464,6 +477,14 @@ function pullRequestNumber(pullRequest: GitHubObject): number {
   }
 
   return number;
+}
+
+function reviewTimestamp(review: GitHubObject): Date | undefined {
+  return (
+    dateFromString(review.submitted_at) ??
+    dateFromString(review.created_at) ??
+    dateFromString(review.updated_at)
+  );
 }
 
 function compactCursorUpdates(updates: readonly ConnectorCursorUpdate[]): ConnectorCursorUpdate[] {

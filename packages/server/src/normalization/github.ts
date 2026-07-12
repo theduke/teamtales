@@ -158,10 +158,11 @@ export function normalizeGitHubPullRequestReview(
   context: NormalizationContext = {},
 ): ActivityEvent {
   const externalId = requiredString(raw, ["id", "node_id"], "GitHub pull request review");
+  const pullRequestUrl = stringField(raw, "pull_request_url");
   const occurredAt = requiredString(
     raw,
     ["submitted_at", "created_at", "updated_at"],
-    "GitHub pull request review",
+    `GitHub pull request review ${externalId}${pullRequestUrl ? ` for ${pullRequestUrl}` : ""}`,
   );
   const title = reviewTitle(raw);
 
@@ -173,7 +174,7 @@ export function normalizeGitHubPullRequestReview(
     sourceRef: sourceRef("github.pull_request_review", externalId, context.sourceObjectId),
     metadata: {
       state: stringField(raw, "state") ?? "unknown",
-      pullRequestUrl: stringField(raw, "pull_request_url"),
+      pullRequestUrl,
     },
   });
 }

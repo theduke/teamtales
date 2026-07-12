@@ -83,4 +83,15 @@ describe("GitHub normalization", () => {
     assert.equal(event.actorPersonId, "github:user:carol");
     assert.equal(event.title, "Approved pull request");
   });
+
+  it("identifies the review and pull request when a malformed review is normalized", () => {
+    assert.throws(
+      () =>
+        normalizeGitHubPullRequestReview({
+          id: 99,
+          pull_request_url: "https://api.github.com/repos/acme/widgets/pulls/7",
+        }),
+      /GitHub pull request review 99 for https:\/\/api\.github\.com\/repos\/acme\/widgets\/pulls\/7: missing submitted_at or created_at or updated_at/,
+    );
+  });
 });

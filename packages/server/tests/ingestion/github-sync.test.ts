@@ -93,6 +93,28 @@ describe("GitHubSourceConnector", () => {
     );
   });
 
+  it("skips pending reviews that GitHub has not timestamped", async () => {
+    const fetch = mockGitHubFetch({
+      "GET /repos/acme/widgets": jsonResponse(repo()),
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=asc&per_page=100":
+        jsonResponse([pullSummary(7)]),
+      "GET /repos/acme/widgets/pulls/7": jsonResponse(pullDetail(7)),
+      "GET /repos/acme/widgets/pulls/7/reviews?per_page=100": jsonResponse([
+        { id: 90, state: "PENDING", pull_request_url: "https://api.github.test/repos/acme/widgets/pulls/7" },
+      ]),
+      "GET /repos/acme/widgets/pulls/7/comments?per_page=100": jsonResponse([]),
+      "GET /repos/acme/widgets/issues/7/comments?per_page=100": jsonResponse([]),
+    });
+    const connector = new GitHubSourceConnector({ fetch, apiBaseUrl: "https://api.github.test" });
+
+    const result = await connector.fetchSourceObjects(context());
+
+    assert.deepEqual(
+      result.objects.map((object) => `${object.objectType}:${object.externalId}`),
+      ["github.repository:100", "github.pull_request:700"],
+    );
+  });
+
   it("expands an all-repositories organization scope into repository syncs", async () => {
     const fetch = mockGitHubFetch({
       "GET /orgs/acme/repos?type=all&per_page=100": jsonResponse([
