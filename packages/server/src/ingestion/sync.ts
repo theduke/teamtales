@@ -16,7 +16,7 @@ export type SyncRunType =
   | "repair_sync"
   | "reconciliation_sync";
 
-export type SyncRunStatus = "pending" | "running" | "succeeded" | "failed" | "canceled";
+export type SyncRunStatus = "queued" | "pending" | "running" | "succeeded" | "completed" | "completed_with_errors" | "failed" | "blocked" | "canceled";
 
 export type SyncRunItemAction = "inserted" | "updated" | "unchanged" | "deleted" | "inaccessible" | "skipped" | "failed";
 
@@ -30,6 +30,7 @@ export interface SyncScope {
   scopeType: SyncScopeType;
   externalId: string;
   externalName: string;
+  providerResourceId?: string;
   parentScopeId?: string;
   selectionMode: "all" | "selected" | "individual";
   configJson: JsonValue;
@@ -45,6 +46,7 @@ export interface SyncCursor {
   organizationId: string;
   integrationId: string;
   syncScopeId: string;
+  providerResourceId?: string;
   provider: Provider;
   objectType: string;
   cursorKind: CursorKind;

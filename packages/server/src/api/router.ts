@@ -11,6 +11,7 @@ import {
   createSyncScopeHandler,
   createWeeklyReportHandler,
   dashboardHandler,
+  getSyncRunHandler,
   getReportHandler,
   healthHandler,
   listApiTokensHandler,
@@ -19,11 +20,13 @@ import {
   listOrganizationsHandler,
   listReportsHandler,
   listSyncScopesHandler,
+  listSyncRunResourcesHandler,
   loginHandler,
   logoutHandler,
   meHandler,
   revokeApiTokenHandler,
   triggerSyncHandler,
+  organizationSyncStatusHandler,
   setSyncScopeSelectionHandler,
 } from "./handlers.js";
 import { HttpError } from "./http.js";
@@ -62,12 +65,15 @@ const routes: Route[] = [
   route("GET", "/api/integrations/:integrationId/resources", listIntegrationResourcesHandler),
   route("PUT", "/api/integrations/:integrationId/sync-scopes", setSyncScopeSelectionHandler),
   route("GET", "/api/organizations/:organizationId/sync-scopes", listSyncScopesHandler),
+  route("GET", "/api/organizations/:organizationId/sync-status", organizationSyncStatusHandler),
   route("POST", "/api/sync-scopes", createSyncScopeHandler),
   route("GET", "/api/organizations/:organizationId/reports", listReportsHandler),
   route("GET", "/api/reports/:reportId", getReportHandler),
   route("POST", "/api/reports/weekly", createWeeklyReportHandler),
   route("GET", "/api/dashboard", dashboardHandler),
   route("POST", "/api/sync/:provider", triggerSyncHandler),
+  route("GET", "/api/sync-runs/:syncRunId", getSyncRunHandler),
+  route("GET", "/api/sync-runs/:syncRunId/resources", listSyncRunResourcesHandler),
 ];
 
 export async function dispatchRoute(context: ApiContext, url: URL): Promise<HandlerResult> {

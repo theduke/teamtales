@@ -27,7 +27,10 @@ import {
   addSyncScopeService,
   createOrganizationService,
   generateWeeklyReportFromRequestService,
-  runProviderSyncService,
+  enqueueProviderSyncService,
+  listSyncRunResourceProgress,
+  readOrganizationSyncStatus,
+  readSyncRunProgress,
   setGitHubScopeSelectionService,
   setLinearScopeSelectionService,
 } from "../services/index.js";
@@ -355,7 +358,7 @@ export async function triggerSyncHandler(input: HandlerInput): Promise<{ status:
     throw new HttpError(500, "credential_key_missing", "Credential encryption key is not configured.");
   }
 
-  const result = await runProviderSyncService(input.context.database, {
+  const result = await enqueueProviderSyncService(input.context.database, {
     provider,
     organizationId,
     integrationId: optionalString(body, "integrationId"),
@@ -363,7 +366,30 @@ export async function triggerSyncHandler(input: HandlerInput): Promise<{ status:
     encryptionKey,
   });
 
-  return { status: result.status === "failed" ? 500 : 200, data: result as unknown as JsonObject };
+  return { status: result.status === "failed" ? 500 : 202, data: result as unknown as JsonObject };
+}
+
+export async function getSyncRunHandler(input: HandlerInput): Promise<HandlerResult> {
+  const result = await readSyncRunProgress(input.context.database, input.params.syncRunId ?? "");
+  if (!result) throw new HttpError(404, "not_found", "Sync run not found.");
+  await requireMembership(input, result.run.organizationId);
+  return { status: 200, data: result as unknown as JsonObject, headers: { "cache-control": "no-store" } };
+}
+
+export async function listSyncRunResourcesHandler(input: HandlerInput): Promise<HandlerResult> {
+  const run = await readSyncRunProgress(input.context.database, input.params.syncRunId ?? "");
+  if (!run) throw new HttpError(404, "not_found", "Sync run not found.");
+  await requireMembership(input, run.run.organizationId);
+  const cursor = input.url.searchParams.get("cursor") ?? undefined;
+  const result = await listSyncRunResourceProgress(input.context.database, run.run.id, cursor);
+  return { status: 200, data: result as unknown as JsonObject, headers: { "cache-control": "no-store" } };
+}
+
+export async function organizationSyncStatusHandler(input: HandlerInput): Promise<HandlerResult> {
+  const organizationId = input.params.organizationId ?? "";
+  await requireMembership(input, organizationId);
+  const result = await readOrganizationSyncStatus(input.context.database, organizationId);
+  return { status: 200, data: result as unknown as JsonObject, headers: { "cache-control": "no-store" } };
 }
 
 function parseProvider(value: string): Provider {

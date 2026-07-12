@@ -295,6 +295,70 @@ export type TriggerSyncResponseDto = {
   message?: string;
 };
 
+/** Known sync states are suggested while allowing forward-compatible server states. */
+export type SyncRunStatusDto = "queued" | "running" | "completed" | "failed" | "cancelled" | (string & {});
+
+export type SyncRunCountersDto = {
+  objectsFetched: number;
+  objectsInserted: number;
+  objectsUpdated: number;
+  objectsUnchanged: number;
+  objectsFailed: number;
+  activityEventsEmitted: number;
+};
+
+export type SyncRunDto = SyncRunCountersDto & {
+  id: string;
+  organizationId: string;
+  integrationId: string;
+  syncScopeId?: string;
+  providerResourceId?: string;
+  parentSyncRunId?: string;
+  provider: Provider;
+  runType: string;
+  runKind: string;
+  status: SyncRunStatusDto;
+  queuedAt?: string;
+  startedAt: string;
+  finishedAt?: string;
+  leaseExpiresAt?: string;
+  nextAttemptAt?: string;
+  attempt: number;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SyncRunStatusCountsDto = Record<string, number>;
+
+export type SyncRunProgressDto = {
+  run: SyncRunDto;
+  childRunCounts: SyncRunStatusCountsDto;
+};
+
+export type SyncRunResourceProgressDto = {
+  resource?: {
+    id: string;
+    provider: Provider;
+    resourceType: string;
+    externalId: string;
+    displayName: string;
+    externalUrl?: string;
+    syncStatus: string;
+    lastSyncStartedAt?: string;
+    lastSyncSucceededAt?: string;
+    lastSyncFailedAt?: string;
+    lastSyncError?: string;
+  };
+  run: SyncRunDto;
+};
+
+export type OrganizationSyncStatusDto = {
+  organizationId: string;
+  activeRuns: SyncRunDto[];
+  resourceStatusCounts: Record<string, number>;
+};
+
 export type TriggerSyncNotImplementedError = {
   ok: false;
   error: {
@@ -338,6 +402,9 @@ export interface TeamtalesApiClient {
   getReport(reportId: string, organizationId: string): Promise<ReportDetailDto>;
   generateWeeklyReport(request: GenerateWeeklyReportRequestDto): Promise<GenerateReportResponseDto>;
   triggerSync(provider: Provider, request?: TriggerSyncRequestDto): Promise<TriggerSyncResponseDto>;
+  getSyncRun(syncRunId: string): Promise<SyncRunProgressDto>;
+  listSyncRunResources(syncRunId: string, cursor?: string): Promise<PageDto<SyncRunResourceProgressDto>>;
+  getOrganizationSyncStatus(organizationId: string): Promise<OrganizationSyncStatusDto>;
 }
 
 export type TeamTalesApiClient = TeamtalesApiClient;

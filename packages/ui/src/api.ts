@@ -20,6 +20,9 @@ import type {
   SetSyncScopeSelectionResponseDto,
   TriggerSyncRequestDto,
   TriggerSyncResponseDto,
+  OrganizationSyncStatusDto,
+  SyncRunProgressDto,
+  SyncRunResourceProgressDto,
 } from "@teamtales/common/api";
 import type { Provider } from "@teamtales/common/domain";
 
@@ -117,6 +120,19 @@ class BrowserTeamtalesApiClient {
 
   triggerSync(provider: Provider, requestBody: TriggerSyncRequestDto = {}): Promise<TriggerSyncResponseDto> {
     return request<TriggerSyncResponseDto>(`/api/sync/${encodeURIComponent(provider)}`, jsonPost(requestBody));
+  }
+
+  getSyncRun(syncRunId: string): Promise<SyncRunProgressDto> {
+    return request<SyncRunProgressDto>(`/api/sync-runs/${encodeURIComponent(syncRunId)}`);
+  }
+
+  listSyncRunResources(syncRunId: string, cursor?: string): Promise<PageDto<SyncRunResourceProgressDto>> {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+    return request<PageDto<SyncRunResourceProgressDto>>(`/api/sync-runs/${encodeURIComponent(syncRunId)}/resources${query}`);
+  }
+
+  getOrganizationSyncStatus(organizationId: string): Promise<OrganizationSyncStatusDto> {
+    return request<OrganizationSyncStatusDto>(`/api/organizations/${encodeURIComponent(organizationId)}/sync-status`);
   }
 
   getCurrentUser(): Promise<AuthSession> {

@@ -5,3 +5,4 @@ export * from "./report-contexts.js";
 export * from "./reports.js";
 export * from "./sync-scopes.js";
 export * from "./sync-runs.js";
+export * from "./sync-progress.js";

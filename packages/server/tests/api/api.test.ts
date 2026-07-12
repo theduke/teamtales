@@ -9,8 +9,9 @@ import type { ReportContext } from "@teamtales/common/domain";
 import { createApiServer } from "../../src/api/server.js";
 import { createApiToken } from "../../src/auth/index.js";
 import type { AppDatabase } from "../../src/db/index.js";
-import { activityEvents, integrationCredentials, integrations, organizationMemberships, organizations, people, sourceObjects, syncScopes, users, workItems } from "../../src/db/schema.js";
+import { activityEvents, integrationCredentials, integrations, organizationMemberships, organizations, people, providerResources, sourceObjects, syncScopes, users, workItems } from "../../src/db/schema.js";
 import { saveCompleteAnalysisResult } from "../../src/persistence/index.js";
+import { processQueuedProviderSyncBatch } from "../../src/services/sync-runs.js";
 import { mysqlTestOptions, openTestDatabase } from "../helpers/mysql.js";
 
 const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -65,24 +66,32 @@ describe("TeamTales API", mysqlTestOptions, () => {
 
   it("adds a PAT integration without returning plaintext", async () => {
     const token = "github_pat_secret_1234567890";
-    const response = await apiFetch<Record<string, unknown>>(app.url, "/api/integrations/pat", {
-      method: "POST",
-      body: {
-        organizationId: "org_api",
-        userId: "user_api_owner",
-        provider: "github",
-        displayName: "API GitHub",
-        token,
-      },
-    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => String(input).startsWith(app.url)
+      ? originalFetch(input, init)
+      : jsonResponse({ id: 1, login: "octocat" });
+    try {
+      const response = await apiFetch<Record<string, unknown>>(app.url, "/api/integrations/pat", {
+        method: "POST",
+        body: {
+          organizationId: "org_api",
+          userId: "user_api_owner",
+          provider: "github",
+          displayName: "API GitHub",
+          token,
+        },
+      });
 
-    assert.equal(response.status, 201);
-    assert.equal(response.body.ok, true);
-    assert.equal(JSON.stringify(response.body).includes(token), false);
-    assert.equal(response.body.ok && response.body.data.secretHint, "gith...7890");
+      assert.equal(response.status, 201);
+      assert.equal(response.body.ok, true);
+      assert.equal(JSON.stringify(response.body).includes(token), false);
+      assert.equal(response.body.ok && response.body.data.secretHint, "gith...7890");
 
-    const [row] = await app.database.db.select({ encryptedSecret: integrationCredentials.encryptedSecret }).from(integrationCredentials).where(eq(integrationCredentials.integrationId, response.body.ok ? String(response.body.data.id) : ""));
-    assert.equal(row?.encryptedSecret.includes(token), false);
+      const [row] = await app.database.db.select({ encryptedSecret: integrationCredentials.encryptedSecret }).from(integrationCredentials).where(eq(integrationCredentials.integrationId, response.body.ok ? String(response.body.data.id) : ""));
+      assert.equal(row?.encryptedSecret.includes(token), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("creates, discovers, and modifies GitHub relational scopes", async () => {
@@ -109,6 +118,9 @@ describe("TeamTales API", mysqlTestOptions, () => {
       let rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId));
       const organization = rows.find(row => row.scopeType === "github.organization"); const child = rows.find(row => row.externalId === "101"); const standalone = rows.find(row => row.externalId === "102");
       assert.equal(organization?.selectionMode, "selected"); assert.equal(child?.parentScopeId, organization?.id); assert.equal(standalone?.parentScopeId, null); assert.equal(standalone?.selectionMode, "individual"); assert.equal(rows.every(row => row.configJson === "{}"), true);
+      const resources = await app.database.db.select().from(providerResources).where(eq(providerResources.integrationId, integrationId));
+      const organizationResource = resources.find(resource => resource.resourceType === "github.organization"); const repositoryResource = resources.find(resource => resource.externalId === "101");
+      assert.equal(resources.length, 3); assert.equal(organization?.providerResourceId, organizationResource?.id); assert.equal(child?.providerResourceId, repositoryResource?.id); assert.equal(repositoryResource?.parentResourceId, organizationResource?.id);
       const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { organizations: [{ organizationId: "10", mode: "all" }], repositoryIds: [] } } });
       assert.equal(modified.status, 200);
       rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId));
@@ -133,6 +145,8 @@ describe("TeamTales API", mysqlTestOptions, () => {
       assert.equal(saved.status, 200);
       let rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId)); const workspace = rows.find(row => row.scopeType === "linear.workspace");
       assert.equal(workspace?.selectionMode, "selected"); assert.equal(rows.find(row => row.externalId === "team_1")?.parentScopeId, workspace?.id);
+      const resources = await app.database.db.select().from(providerResources).where(eq(providerResources.integrationId, integrationId)); const workspaceResource = resources.find(resource => resource.resourceType === "linear.workspace"); const teamResource = resources.find(resource => resource.externalId === "team_1");
+      assert.equal(resources.length, 3); assert.equal(workspace?.providerResourceId, workspaceResource?.id); assert.equal(teamResource?.parentResourceId, workspaceResource?.id);
       const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { mode: "all" } } });
       assert.equal(modified.status, 200);
       rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId)); assert.equal(rows.find(row => row.scopeType === "linear.workspace")?.selectionMode, "all"); assert.equal(rows.find(row => row.externalId === "team_1")?.enabled, 0);
@@ -140,13 +154,14 @@ describe("TeamTales API", mysqlTestOptions, () => {
   });
 
   it("adds and lists a sync scope", async () => {
-    const [integration] = await app.database.db.select({ id: integrations.id }).from(integrations).where(and(eq(integrations.organizationId, "org_api"), eq(integrations.provider, "github")));
+    const integrationsForOrg = await app.database.db.select({ id: integrations.id, displayName: integrations.displayName }).from(integrations).where(and(eq(integrations.organizationId, "org_api"), eq(integrations.provider, "github")));
+    const integration = integrationsForOrg.find(value => value.displayName === "Scoped GitHub");
     const created = await apiFetch<Record<string, unknown>>(app.url, "/api/sync-scopes", {
       method: "POST",
       body: {
         organizationId: "org_api",
         userId: "user_api_owner",
-        integrationId: integration.id,
+        integrationId: integration!.id,
         provider: "github",
         scopeType: "github.repository",
         externalName: "acme/widgets",
@@ -286,7 +301,7 @@ describe("TeamTales API", mysqlTestOptions, () => {
           : headers && !Array.isArray(headers)
             ? ((headers as Record<string, string>).authorization ?? (headers as Record<string, string>).Authorization)
             : undefined;
-      assert.equal(authorization, "Bearer github_pat_secret_1234567890");
+      assert.equal(authorization, "Bearer github_scoped_token");
       const parsed = new URL(url);
       if (parsed.pathname === "/repos/acme/widgets") {
         return jsonResponse({ id: 101, name: "widgets", full_name: "acme/widgets", html_url: "https://github.com/acme/widgets" });
@@ -304,9 +319,16 @@ describe("TeamTales API", mysqlTestOptions, () => {
         { method: "POST", body: { organizationId: "org_api" } },
       );
 
-      assert.equal(response.status, 200);
-      assert.equal(response.body.ok && response.body.data.status, "completed");
-      assert.equal(response.body.ok && response.body.data.counters.objectsFetched, 1);
+      assert.equal(response.status, 202);
+      assert.equal(response.body.ok && response.body.data.status, "queued");
+      const syncRunId = response.body.ok ? response.body.data.syncRunId : undefined;
+      assert.ok(syncRunId);
+      const queued = await apiFetch<{ run: { status: string }; childRunCounts: Record<string, number> }>(app.url, `/api/sync-runs/${syncRunId}`);
+      assert.equal(queued.status, 200);
+      assert.equal(queued.body.ok && queued.body.data.run.status, "queued");
+      await processQueuedProviderSyncBatch(app.database.db, key, { limit: 10 });
+      const completed = await apiFetch<{ run: { status: string } }>(app.url, `/api/sync-runs/${syncRunId}`);
+      assert.equal(completed.body.ok && completed.body.data.run.status, "completed");
       assert.equal(
         (
           await app.database.db.select({ count: count() }).from(sourceObjects).where(and(eq(sourceObjects.organizationId, "org_api"), eq(sourceObjects.objectType, "github.repository")))

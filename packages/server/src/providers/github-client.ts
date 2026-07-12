@@ -6,7 +6,12 @@ export type GitHubObject = { [key: string]: JsonValue };
 export class GitHubRestClient {
   requestsMade = 0;
 
-  constructor(private readonly fetchImpl: FetchLike, private readonly apiBaseUrl: string, private readonly token: string) {}
+  constructor(
+    private readonly fetchImpl: FetchLike,
+    private readonly apiBaseUrl: string,
+    private readonly token: string,
+    private readonly requestTimeoutMs = 30_000,
+  ) {}
 
   async getObject(path: string, query: Record<string, string> = {}): Promise<GitHubObject> {
     const value = await this.getJson(path, query);
@@ -36,7 +41,22 @@ export class GitHubRestClient {
 
   private async request(url: string): Promise<Response> {
     this.requestsMade += 1;
-    const response = await this.fetchImpl(url, { headers: { accept: "application/vnd.github+json", authorization: `Bearer ${this.token}`, "user-agent": "teamtales-github-sync", "x-github-api-version": "2022-11-28" } });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        headers: { accept: "application/vnd.github+json", authorization: `Bearer ${this.token}`, "user-agent": "teamtales-github-sync", "x-github-api-version": "2022-11-28" },
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`GitHub API request timed out after ${this.requestTimeoutMs}ms: ${new URL(url).pathname}`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
     if (response.ok) return response;
     throw await githubApiError(response);
   }

@@ -1,6 +1,7 @@
 import type { JsonValue } from "./json.js";
 import type { ConnectorCursorUpdate, ConnectorExecutionContext, ConnectorFetchResult, SourceConnector } from "./providers.js";
 import type { GitHubSourceObjectType, IncomingSourceObject } from "./source-object.js";
+import { logger } from "../api/logger.js";
 import { GitHubRestClient } from "../providers/github-client.js";
 
 export const githubMvpObjectTypes = [
@@ -140,7 +141,15 @@ export class GitHubSourceConnector implements SourceConnector {
   }
 
   private async fetchOrganizationSourceObjects(context: ConnectorExecutionContext): Promise<ConnectorFetchResult> {
+    const syncLog = logger.child({
+      provider: "github",
+      organizationId: context.organizationId,
+      integrationId: context.integrationId,
+      syncScopeId: context.scope.id,
+      syncRunId: context.run.id,
+    });
     if (context.scope.selectionMode === "selected") {
+      syncLog.debug("Skipping organization scope because its selected repository child scopes sync independently");
       return {
         objects: [],
         cursorUpdates: [],
@@ -161,6 +170,7 @@ export class GitHubSourceConnector implements SourceConnector {
     const client = new GitHubRestClient(this.fetchImpl, this.apiBaseUrl, token);
     const results: ConnectorFetchResult[] = [];
 
+    syncLog.debug({ organization }, "Listing GitHub organization repositories");
     for await (const repository of client.paginateObjects(`/orgs/${encodeURIComponent(organization)}/repos`, {
       type: "all",
       per_page: "100",
@@ -170,6 +180,7 @@ export class GitHubSourceConnector implements SourceConnector {
         throw new Error("GitHub organization repository response is missing full_name");
       }
 
+      syncLog.debug({ organization, repository: fullName, repositoriesDiscovered: results.length + 1 }, "Syncing GitHub repository from organization scope");
       results.push(await this.fetchSourceObjects({
         ...context,
         scope: {
@@ -182,6 +193,8 @@ export class GitHubSourceConnector implements SourceConnector {
         },
       }));
     }
+
+    syncLog.info({ organization, repositoriesDiscovered: results.length }, "Finished listing GitHub organization repositories");
 
     return {
       objects: results.flatMap((result) => result.objects),

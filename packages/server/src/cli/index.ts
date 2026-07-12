@@ -22,8 +22,9 @@ import {
   addSyncScopeService,
   createOrganizationService,
   generateWeeklyReportService,
+  enqueueProviderSyncService,
+  processQueuedProviderSyncBatch,
   resolveReportContext,
-  runProviderSyncService,
 } from "../services/index.js";
 
 export interface CliIo {
@@ -83,6 +84,9 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
         case "sync linear":
           result = await runProviderSync(opened.db, commandProvider(parsed.command[1]), parsed, env);
           break;
+        case "sync worker":
+          result = await runSyncWorker(opened.db, parsed, env);
+          break;
         case "report weekly":
           result = await generateWeeklyReport(opened.db, parsed);
           break;
@@ -110,6 +114,7 @@ const supportedCommands = new Set([
   "scope add",
   "sync github",
   "sync linear",
+  "sync worker",
   "report weekly",
 ]);
 
@@ -219,13 +224,19 @@ async function addSyncScope(database: AppDatabase, parsed: ParsedArgs): Promise<
 async function runProviderSync(database: AppDatabase, provider: Provider, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
   const encryptionKey = optionalString(parsed, "encryption-key") ?? env.TEAMTALES_CREDENTIAL_KEY;
   if (!encryptionKey) throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
-  return runProviderSyncService(database, {
+  return enqueueProviderSyncService(database, {
     provider,
     organizationId: optionalString(parsed, "organization-id"),
     integrationId: optionalString(parsed, "integration-id"),
     syncScopeId: optionalString(parsed, "scope-id") ?? optionalString(parsed, "sync-scope-id"),
     encryptionKey,
   });
+}
+
+async function runSyncWorker(database: AppDatabase, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+  const encryptionKey = optionalString(parsed, "encryption-key") ?? env.TEAMTALES_CREDENTIAL_KEY;
+  if (!encryptionKey) throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
+  return { processed: await processQueuedProviderSyncBatch(database, encryptionKey, { limit: Number(optionalString(parsed, "limit") ?? "10") }) };
 }
 
 async function generateWeeklyReport(database: AppDatabase, parsed: ParsedArgs): Promise<Record<string, unknown>> {
@@ -415,6 +426,7 @@ function usage(): string {
   teamtales integration add-pat [--db mysql://...] --organization-id org_acme --user-id user_id --provider github --name GitHub --token-env GITHUB_TOKEN
   teamtales scope add [--db mysql://...] --organization-id org_acme --user-id user_id --integration-id integration_id --provider github --type github.repository --name owner/repo
   teamtales sync github [--db mysql://...] --organization-id org_acme [--scope-id scope_id]
+  teamtales sync worker [--db mysql://...] [--limit 10]
   teamtales report weekly [--db mysql://...] --organization-id org_acme --period-start 2026-06-22 --period-end 2026-06-29 [--fixture context.json] [--persist] [--output report.md]
 
 MySQL configuration uses --db, DATABASE_URL, or DB_HOST/DB_PORT/DB_USER/DB_USERNAME/DB_PASSWORD/DB_NAME.
