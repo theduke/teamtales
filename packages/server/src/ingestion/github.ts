@@ -36,6 +36,10 @@ type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 type GitHubObject = { [key: string]: JsonValue };
 
+// GitHub's timestamps and pagination can race at the cursor boundary. Re-fetching a short
+// overlap is safe because source-object writes are content-hash idempotent.
+const pullRequestCursorOverlapMs = 2 * 60_000;
+
 export class GitHubSourceConnector implements SourceConnector {
   readonly provider = "github";
   readonly supportedObjectTypes = githubMvpObjectTypes;
@@ -78,6 +82,9 @@ export class GitHubSourceConnector implements SourceConnector {
     );
 
     const pullRequestCursor = latestCursor(context, "github.pull_request");
+    const pullRequestSince = pullRequestCursor
+      ? new Date(pullRequestCursor.getTime() - pullRequestCursorOverlapMs)
+      : undefined;
     let pullRequestHighWatermark = pullRequestCursor;
     let reviewHighWatermark: Date | undefined;
     let reviewCommentHighWatermark: Date | undefined;
@@ -89,22 +96,18 @@ export class GitHubSourceConnector implements SourceConnector {
       {
         state: "all",
         sort: "updated",
-        direction: "asc",
+        direction: "desc",
         per_page: "100",
       },
     )) {
       const summaryUpdatedAt = dateFromString(pullRequestSummary.updated_at);
-      if (pullRequestCursor && summaryUpdatedAt && summaryUpdatedAt <= pullRequestCursor) {
-        continue;
-      }
+      if (pullRequestSince && summaryUpdatedAt && summaryUpdatedAt < pullRequestSince) break;
 
       const pullNumber = pullRequestNumber(pullRequestSummary);
       const pullRequest = await client.getObject(`/repos/${repository.path}/pulls/${pullNumber}`);
       const pullUpdatedAt = dateFromString(pullRequest.updated_at) ?? summaryUpdatedAt;
 
-      if (pullRequestCursor && pullUpdatedAt && pullUpdatedAt <= pullRequestCursor) {
-        continue;
-      }
+      if (pullRequestSince && pullUpdatedAt && pullUpdatedAt < pullRequestSince) continue;
 
       objects.push(
         factory.create("github.pull_request", String(pullRequest.id ?? pullNumber), pullRequest),
@@ -115,7 +118,8 @@ export class GitHubSourceConnector implements SourceConnector {
         `/repos/${repository.path}/pulls/${pullNumber}/reviews`,
         { per_page: "100" },
       )) {
-        if (!reviewTimestamp(review)) {
+        const timestamp = reviewTimestamp(review);
+        if (!timestamp) {
           logger.warn(
             {
               repository: repository.path,
@@ -129,10 +133,7 @@ export class GitHubSourceConnector implements SourceConnector {
           continue;
         }
         objects.push(factory.create("github.pull_request_review", String(review.id), review));
-        reviewHighWatermark = maxDate(
-          reviewHighWatermark,
-          reviewTimestamp(review),
-        );
+        reviewHighWatermark = maxDate(reviewHighWatermark, timestamp);
       }
 
       for await (const reviewComment of client.paginateObjects(

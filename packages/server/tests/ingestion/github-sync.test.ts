@@ -11,7 +11,7 @@ describe("GitHubSourceConnector", () => {
   it("fetches repository pull request objects and related review activity", async () => {
     const fetch = mockGitHubFetch({
       "GET /repos/acme/widgets": jsonResponse(repo()),
-      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=asc&per_page=100":
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100":
         jsonResponse([pullSummary(7)]),
       "GET /repos/acme/widgets/pulls/7": jsonResponse(pullDetail(7)),
       "GET /repos/acme/widgets/pulls/7/reviews?per_page=100": jsonResponse([review(90)]),
@@ -52,10 +52,10 @@ describe("GitHubSourceConnector", () => {
   it("uses updated_at cursors to skip old pull requests before fetching details", async () => {
     const fetch = mockGitHubFetch({
       "GET /repos/acme/widgets": jsonResponse(repo()),
-      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=asc&per_page=100":
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100":
         jsonResponse([
-          pullSummary(6, "2026-06-28T09:00:00.000Z"),
           pullSummary(7, "2026-06-29T09:00:00.000Z"),
+          pullSummary(6, "2026-06-28T09:00:00.000Z"),
         ]),
       "GET /repos/acme/widgets/pulls/7": jsonResponse(pullDetail(7)),
       "GET /repos/acme/widgets/pulls/7/reviews?per_page=100": jsonResponse([]),
@@ -93,10 +93,61 @@ describe("GitHubSourceConnector", () => {
     );
   });
 
+  it("walks newest-first and stops after the cursor safety overlap", async () => {
+    const fetch = mockGitHubFetch({
+      "GET /repos/acme/widgets": jsonResponse(repo()),
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100":
+        jsonResponse([pullSummary(7, "2026-06-29T09:01:00.000Z")], {
+          link: '<https://api.github.test/repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100&page=2>; rel="next"',
+        }),
+      "GET /repos/acme/widgets/pulls/7": jsonResponse(pullDetail(7)),
+      "GET /repos/acme/widgets/pulls/7/reviews?per_page=100": jsonResponse([]),
+      "GET /repos/acme/widgets/pulls/7/comments?per_page=100": jsonResponse([]),
+      "GET /repos/acme/widgets/issues/7/comments?per_page=100": jsonResponse([]),
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100&page=2":
+        jsonResponse([pullSummary(6, "2026-06-29T08:57:00.000Z")], {
+          link: '<https://api.github.test/repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100&page=3>; rel="next"',
+        }),
+    });
+    const connector = new GitHubSourceConnector({ fetch, apiBaseUrl: "https://api.github.test" });
+
+    const result = await connector.fetchSourceObjects(
+      context({
+        cursors: [
+          {
+            id: "cursor_1",
+            organizationId: "org_1",
+            integrationId: "int_1",
+            syncScopeId: "scope_1",
+            provider: "github",
+            objectType: "github.pull_request",
+            cursorKind: "updated_at",
+            highWatermark: new Date("2026-06-29T09:00:00.000Z"),
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      }),
+    );
+
+    assert.deepEqual(
+      result.objects.map((object) => `${object.objectType}:${object.externalId}`),
+      ["github.repository:100", "github.pull_request:700"],
+    );
+    assert.equal(
+      fetch.calls.some((call) => call.key.includes("page=3")),
+      false,
+    );
+    assert.equal(
+      fetch.calls.some((call) => call.path === "/repos/acme/widgets/pulls/6"),
+      false,
+    );
+  });
+
   it("skips pending reviews that GitHub has not timestamped", async () => {
     const fetch = mockGitHubFetch({
       "GET /repos/acme/widgets": jsonResponse(repo()),
-      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=asc&per_page=100":
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100":
         jsonResponse([pullSummary(7)]),
       "GET /repos/acme/widgets/pulls/7": jsonResponse(pullDetail(7)),
       "GET /repos/acme/widgets/pulls/7/reviews?per_page=100": jsonResponse([
@@ -122,7 +173,7 @@ describe("GitHubSourceConnector", () => {
         { ...repo(), id: 101, full_name: "acme/gadgets", name: "gadgets" },
       ]),
       "GET /repos/acme/widgets": jsonResponse(repo()),
-      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=asc&per_page=100":
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100":
         jsonResponse([]),
       "GET /repos/acme/gadgets": jsonResponse({
         ...repo(),
@@ -130,7 +181,7 @@ describe("GitHubSourceConnector", () => {
         full_name: "acme/gadgets",
         name: "gadgets",
       }),
-      "GET /repos/acme/gadgets/pulls?state=all&sort=updated&direction=asc&per_page=100":
+      "GET /repos/acme/gadgets/pulls?state=all&sort=updated&direction=desc&per_page=100":
         jsonResponse([]),
     });
     const connector = new GitHubSourceConnector({ fetch, apiBaseUrl: "https://api.github.test" });
@@ -161,11 +212,11 @@ describe("GitHubSourceConnector", () => {
   it("follows pagination links and optionally fetches commits", async () => {
     const fetch = mockGitHubFetch({
       "GET /repos/acme/widgets": jsonResponse(repo()),
-      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=asc&per_page=100":
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100":
         jsonResponse([pullSummary(7)], {
-          link: '<https://api.github.test/repos/acme/widgets/pulls?state=all&sort=updated&direction=asc&per_page=100&page=2>; rel="next"',
+          link: '<https://api.github.test/repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100&page=2>; rel="next"',
         }),
-      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=asc&per_page=100&page=2":
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=desc&per_page=100&page=2":
         jsonResponse([pullSummary(8)]),
       "GET /repos/acme/widgets/pulls/7": jsonResponse(pullDetail(7)),
       "GET /repos/acme/widgets/pulls/7/reviews?per_page=100": jsonResponse([]),
