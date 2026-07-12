@@ -11,9 +11,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "vp exec tsx watch src/api/dev-server.ts",
-    "dev:api": "vp exec tsx watch src/api/dev-server.ts",
-    "api:dev": "vp exec tsx watch src/api/dev-server.ts",
+    "dev": "vp exec tsx watch --env-file=../../.env.development src/api/dev-server.ts",
+    "dev:api": "vp exec tsx watch --env-file=../../.env.development src/api/dev-server.ts",
+    "api:dev": "vp exec tsx watch --env-file=../../.env.development src/api/dev-server.ts",
     "cli": "vp exec tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
     "schema:check": "drizzle-kit check --config drizzle.config.ts",

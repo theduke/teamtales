@@ -9,7 +9,6 @@
   "scripts": {
     "cli": "vp run @teamtales/server#cli",
     "dev": "vp run -r --parallel dev",
-    "dev:local": "sh -c 'set -a; . ./.env.dev; set +a; DATABASE_URL=mysql://teamtales:password@127.0.0.1:3306/teamtales TEAMTALES_PUBLIC_ORIGIN=http://127.0.0.1:9101 TEAMTALES_API_PORT=9100 vp run -r --parallel dev'",
     "dev:server": "vp run @teamtales/server#dev",
     "dev:ui": "vp run @teamtales/ui#dev",
     "dev:all": "vp run -r --parallel dev",
