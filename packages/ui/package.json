@@ -9,6 +9,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mantine/core": "^9.4.1",
+    "@mantine/hooks": "^9.4.1",
+    "@mantine/notifications": "^9.4.1",
+    "@tabler/icons-react": "^3.44.0",
     "@teamtales/common": "file:../common",
     "@vitejs/plugin-react": "^5.1.1",
     "vite": "^7.3.0",
