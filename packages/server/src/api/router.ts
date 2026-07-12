@@ -15,6 +15,7 @@ import {
   healthHandler,
   listApiTokensHandler,
   listIntegrationsHandler,
+  listIntegrationResourcesHandler,
   listOrganizationsHandler,
   listReportsHandler,
   listSyncScopesHandler,
@@ -23,6 +24,7 @@ import {
   meHandler,
   revokeApiTokenHandler,
   triggerSyncHandler,
+  setSyncScopeSelectionHandler,
 } from "./handlers.js";
 import { HttpError } from "./http.js";
 import { resolveApiToken, resolveSession } from "../auth/index.js";
@@ -57,6 +59,8 @@ const routes: Route[] = [
   route("POST", "/api/organizations", createOrganizationHandler, true),
   route("GET", "/api/organizations/:organizationId/integrations", listIntegrationsHandler),
   route("POST", "/api/integrations/pat", createPatIntegrationHandler),
+  route("GET", "/api/integrations/:integrationId/resources", listIntegrationResourcesHandler),
+  route("PUT", "/api/integrations/:integrationId/sync-scopes", setSyncScopeSelectionHandler),
   route("GET", "/api/organizations/:organizationId/sync-scopes", listSyncScopesHandler),
   route("POST", "/api/sync-scopes", createSyncScopeHandler),
   route("GET", "/api/organizations/:organizationId/reports", listReportsHandler),

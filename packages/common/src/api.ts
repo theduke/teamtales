@@ -238,6 +238,18 @@ export type AddSyncScopeRequestDto = {
   enabled?: boolean;
 };
 
+export type DiscoveredResourceDto = {
+  scopeType: Extract<SyncScopeDto["scopeType"], "github.repository" | "linear.workspace" | "linear.team" | "linear.project">;
+  externalId: string;
+  externalName: string;
+  group?: string;
+  description?: string;
+  config?: JsonObject;
+};
+export type ListIntegrationResourcesResponseDto = { provider: Provider; resources: DiscoveredResourceDto[] };
+export type SetSyncScopeSelectionRequestDto = { organizationId: string; selections: DiscoveredResourceDto[] };
+export type SetSyncScopeSelectionResponseDto = { items: SyncScopeDto[] };
+
 export type GenerateWeeklyReportRequestDto = {
   organizationId: string;
   organizationName?: string;

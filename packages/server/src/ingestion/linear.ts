@@ -2,6 +2,7 @@ import type { JsonValue } from "./json.js";
 import type { ConnectorExecutionContext, ConnectorFetchResult, SourceConnector } from "./providers.js";
 import type { IncomingSourceObject, LinearSourceObjectType } from "./source-object.js";
 import type { SyncCursor } from "./sync.js";
+import { fetchConnection, LinearGraphqlClient } from "../providers/linear-client.js";
 
 const linearGraphqlEndpoint = "https://api.linear.app/graphql";
 const pageSize = 100;
@@ -157,7 +158,7 @@ export class LinearSourceConnector implements SourceConnector {
   }
 }
 
-class LinearGraphqlClient {
+class LegacyLinearGraphqlClient {
   constructor(private readonly personalAccessToken: string) {
     if (personalAccessToken.trim().length === 0) {
       throw new Error("Linear personal access token is required");
@@ -202,8 +203,8 @@ class LinearGraphqlClient {
   }
 }
 
-async function fetchConnection<TNode extends JsonValueObject>(
-  client: LinearGraphqlClient,
+async function legacyFetchConnection<TNode extends JsonValueObject>(
+  client: LegacyLinearGraphqlClient,
   connectionName: LinearConnectionName,
   query: string,
   variables: JsonValueObject = {},

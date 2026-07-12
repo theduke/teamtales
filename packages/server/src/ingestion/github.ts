@@ -1,6 +1,7 @@
 import type { JsonValue } from "./json.js";
 import type { ConnectorCursorUpdate, ConnectorExecutionContext, ConnectorFetchResult, SourceConnector } from "./providers.js";
 import type { GitHubSourceObjectType, IncomingSourceObject } from "./source-object.js";
+import { GitHubRestClient } from "../providers/github-client.js";
 
 export const githubMvpObjectTypes = [
   "github.repository",
@@ -135,7 +136,7 @@ export class GitHubSourceConnector implements SourceConnector {
   }
 }
 
-class GitHubRestClient {
+class LegacyGitHubRestClient {
   requestsMade = 0;
 
   constructor(

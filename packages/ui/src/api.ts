@@ -6,6 +6,7 @@ import type {
   CreateOrganizationRequestDto,
   CreateOrganizationResponseDto,
   DashboardDto,
+  DiscoveredResourceDto,
   GenerateReportResponseDto,
   GenerateWeeklyReportRequestDto,
   IntegrationSummaryDto,
@@ -14,6 +15,9 @@ import type {
   ReportDetailDto,
   ReportSummaryDto,
   SyncScopeDto,
+  ListIntegrationResourcesResponseDto,
+  SetSyncScopeSelectionRequestDto,
+  SetSyncScopeSelectionResponseDto,
   TriggerSyncRequestDto,
   TriggerSyncResponseDto,
 } from "@teamtales/common/api";
@@ -77,6 +81,14 @@ class BrowserTeamtalesApiClient {
 
   addPatIntegration(requestBody: BrowserAddPatIntegrationRequest): Promise<AddPatIntegrationResponseDto> {
     return request<AddPatIntegrationResponseDto>("/api/integrations/pat", jsonPost(requestBody));
+  }
+
+  listIntegrationResources(integrationId: string, organizationId: string): Promise<ListIntegrationResourcesResponseDto> {
+    return request<ListIntegrationResourcesResponseDto>(`/api/integrations/${encodeURIComponent(integrationId)}/resources?organizationId=${encodeURIComponent(organizationId)}`);
+  }
+
+  setSyncScopeSelection(integrationId: string, requestBody: SetSyncScopeSelectionRequestDto): Promise<SetSyncScopeSelectionResponseDto> {
+    return request<SetSyncScopeSelectionResponseDto>(`/api/integrations/${encodeURIComponent(integrationId)}/sync-scopes`, jsonPut(requestBody));
   }
 
   listSyncScopes(organizationId: string): Promise<PageDto<SyncScopeDto>> {
@@ -146,3 +158,5 @@ function jsonPost(body: unknown): RequestInit {
     body: JSON.stringify(body),
   };
 }
+
+function jsonPut(body: unknown): RequestInit { return { method: "PUT", body: JSON.stringify(body) }; }

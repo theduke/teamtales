@@ -2,7 +2,7 @@ import type { JsonObject, JsonValue, SyncScopeDto } from "@teamtales/common/api"
 import type { Provider, ReportScopeType } from "@teamtales/common/domain";
 import type { AuthPrincipal } from "../auth/index.js";
 import { and, count, eq, isNull } from "drizzle-orm";
-import { apiTokens, organizationMemberships, users } from "../db/schema.js";
+import { apiTokens, integrationCredentials, integrations, organizationMemberships, users } from "../db/schema.js";
 
 import type { ApiContext, RouteParams } from "./router.js";
 import {
@@ -28,7 +28,10 @@ import {
   createOrganizationService,
   generateWeeklyReportFromRequestService,
   runProviderSyncService,
+  setSyncScopeSelectionService,
 } from "../services/index.js";
+import { discoverProviderResources, verifyProviderToken } from "../providers/discovery.js";
+import { decryptCredentialSecret } from "../security/credentials.js";
 import {
   authenticatePassword,
   createApiToken,
@@ -195,14 +198,18 @@ export async function createPatIntegrationHandler(input: HandlerInput): Promise<
     throw new HttpError(500, "credential_key_missing", "Credential encryption key is not configured.");
   }
 
+  const provider = parseProvider(requiredString(body, "provider"));
+  const token = requiredString(body, "token");
+  let verified;
+  try { verified = await verifyProviderToken(provider, token); } catch (error) { throw new HttpError(400, "invalid_token", error instanceof Error ? error.message : "Invalid provider token."); }
   const result = await addPersonalAccessTokenIntegrationService(input.context.database, {
     id: optionalString(body, "id"),
     credentialId: optionalString(body, "credentialId"),
     organizationId,
     userId: principal.userId,
-    provider: parseProvider(requiredString(body, "provider")),
-    displayName: optionalString(body, "displayName") ?? optionalString(body, "name"),
-    token: requiredString(body, "token"),
+    provider,
+    displayName: optionalString(body, "displayName") ?? optionalString(body, "name") ?? verified.displayName,
+    token,
     encryptionKey,
   });
 
@@ -210,6 +217,28 @@ export async function createPatIntegrationHandler(input: HandlerInput): Promise<
     status: 201,
     data: result,
   };
+}
+
+export async function listIntegrationResourcesHandler(input: HandlerInput): Promise<HandlerResult> {
+  const organizationId = input.url.searchParams.get("organizationId");
+  if (!organizationId) throw new HttpError(400, "invalid_request", "Missing required query parameter: organizationId.");
+  await requireMembership(input, organizationId);
+  const [integration] = await input.context.database.select().from(integrations).where(and(eq(integrations.id, input.params.integrationId ?? ""), eq(integrations.organizationId, organizationId))).limit(1);
+  if (!integration) throw new HttpError(404, "not_found", "Integration not found.");
+  const [credential] = await input.context.database.select().from(integrationCredentials).where(eq(integrationCredentials.integrationId, integration.id)).limit(1);
+  if (!credential) throw new HttpError(404, "not_found", "Integration credential not found.");
+  const key = input.context.config.credentialEncryptionKey;
+  if (!key) throw new HttpError(500, "credential_key_missing", "Credential encryption key is not configured.");
+  return { status: 200, data: { provider: integration.provider, resources: await discoverProviderResources(integration.provider as Provider, decryptCredentialSecret(credential.encryptedSecret, key)) } };
+}
+
+export async function setSyncScopeSelectionHandler(input: HandlerInput): Promise<HandlerResult> {
+  const body = assertRecord(await readJsonBody(input.context.request)); const organizationId = requiredString(body, "organizationId"); const principal = await requireMembership(input, organizationId, ["owner", "admin"]);
+  if (!Array.isArray(body.selections)) throw new HttpError(400, "invalid_request", "selections must be an array.");
+  const [integration] = await input.context.database.select().from(integrations).where(and(eq(integrations.id, input.params.integrationId ?? ""), eq(integrations.organizationId, organizationId))).limit(1);
+  if (!integration) throw new HttpError(404, "not_found", "Integration not found.");
+  const selections = body.selections.map(selection => { const value = assertRecord(selection); return { scopeType: requiredString(value, "scopeType") as Extract<SyncScopeDto["scopeType"], "github.repository" | "linear.workspace" | "linear.team" | "linear.project">, externalId: requiredString(value, "externalId"), externalName: requiredString(value, "externalName"), ...(optionalJsonObject(value, "config") ? { config: optionalJsonObject(value, "config") } : {}) }; });
+  return { status: 200, data: { items: await setSyncScopeSelectionService(input.context.database, { organizationId, userId: principal.userId, integrationId: integration.id, provider: integration.provider as Provider, selections }) } };
 }
 
 export async function listSyncScopesHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {

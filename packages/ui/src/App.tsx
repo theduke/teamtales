@@ -6,31 +6,23 @@ import type {
   GenerateWeeklyReportRequestDto,
   JsonObject,
   ReportDetailDto,
-  SyncScopeDto,
 } from "@teamtales/common/api";
 import type { Provider, ReportScopeType } from "@teamtales/common/domain";
 
 import type {
   AuthSession,
   BrowserAddPatIntegrationRequest,
-  BrowserAddSyncScopeRequest,
   BrowserCreateOrganizationRequest,
 } from "./api";
 import { ApiClientError, apiClient } from "./api";
+import { ProvidersSection } from "./ProvidersSection";
 
-const sections = ["Dashboard", "Setup", "Sync", "Reports", "Data"] as const;
+const sections = ["Dashboard", "Providers", "Sync", "Reports", "Data"] as const;
 type Section = (typeof sections)[number];
 
 type Notice = { tone: "success" | "error" | "info"; text: string };
 
 const providerOptions: Provider[] = ["github", "linear"];
-const syncScopeTypes: SyncScopeDto["scopeType"][] = [
-  "github.repository",
-  "github.organization",
-  "linear.workspace",
-  "linear.team",
-  "linear.project",
-];
 const reportScopeTypes: ReportScopeType[] = [
   "organization",
   "person",
@@ -343,19 +335,7 @@ export function App(): ReactElement {
 
       <main>
         {section === "Dashboard" ? <DashboardSection dashboard={dashboard} /> : null}
-        {section === "Setup" ? (
-          <SetupSection
-            dashboard={dashboard}
-            selectedOrganizationId={selectedOrganizationId}
-            onCreatedOrganization={(organizationId) => {
-              setSelectedOrganizationId(organizationId);
-              void refresh();
-            }}
-            onChanged={() => void refresh()}
-            onError={handleError}
-            onNotice={showNotice}
-          />
-        ) : null}
+        {section === "Providers" ? <ProvidersSection dashboard={dashboard} organizationId={selectedOrganizationId} onChanged={() => void refresh()} onError={handleError} onNotice={showNotice} /> : null}
         {section === "Sync" ? (
           <SyncSection
             dashboard={dashboard}
@@ -741,48 +721,11 @@ function SyncSection({
 }): ReactElement {
   const integrations = dashboard?.integrations ?? [];
   const syncScopes = dashboard?.syncScopes ?? [];
-  const [scopeForm, setScopeForm] = useState({
-    integrationId: "",
-    provider: "github" as Provider,
-    scopeType: "github.repository" as SyncScopeDto["scopeType"],
-    externalId: "",
-    externalName: "",
-    config: "{}",
-    enabled: true,
-  });
   const [triggerForm, setTriggerForm] = useState({
     provider: "github" as Provider,
     integrationId: "",
     syncScopeId: "",
   });
-
-  async function addSyncScope(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    try {
-      const parsedConfig = parseJsonObject(scopeForm.config);
-      const request: BrowserAddSyncScopeRequest = {
-        organizationId: selectedOrganizationId,
-        integrationId: scopeForm.integrationId,
-        provider: scopeForm.provider,
-        scopeType: scopeForm.scopeType,
-        externalId: optionalText(scopeForm.externalId),
-        externalName: scopeForm.externalName.trim(),
-        config: parsedConfig,
-        enabled: scopeForm.enabled,
-      };
-      const scope = await apiClient.addSyncScope(request);
-      setScopeForm((current) => ({
-        ...current,
-        externalId: "",
-        externalName: "",
-        config: "{}",
-      }));
-      onChanged();
-      onNotice({ tone: "success", text: `Added sync scope ${scope.externalName}.` });
-    } catch (error) {
-      onError(error);
-    }
-  }
 
   async function triggerSync(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -808,99 +751,6 @@ function SyncSection({
 
   return (
     <div className="grid two">
-      <section className="panel">
-        <PanelTitle title="Sync Scope" />
-        <form className="form-grid" onSubmit={(event) => void addSyncScope(event)}>
-          <ReadOnlyField label="Organization" value={selectedOrganizationId || "None"} />
-          <label>
-            Integration
-            <select
-              value={scopeForm.integrationId}
-              required
-              onChange={(event) => {
-                const integration = integrations.find((item) => item.id === event.target.value);
-                setScopeForm((current) => ({
-                  ...current,
-                  integrationId: event.target.value,
-                  provider: integration?.provider ?? current.provider,
-                }));
-              }}
-            >
-              <option value="">Select</option>
-              {integrations.map((integration) => (
-                <option key={integration.id} value={integration.id}>
-                  {integration.provider} / {integration.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Provider
-            <select
-              value={scopeForm.provider}
-              onChange={(event) =>
-                setScopeForm((current) => ({ ...current, provider: event.target.value as Provider }))
-              }
-            >
-              {providerOptions.map((provider) => (
-                <option key={provider} value={provider}>
-                  {provider}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Scope type
-            <select
-              value={scopeForm.scopeType}
-              onChange={(event) =>
-                setScopeForm((current) => ({
-                  ...current,
-                  scopeType: event.target.value as SyncScopeDto["scopeType"],
-                }))
-              }
-            >
-              {syncScopeTypes.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-          </label>
-          <TextField
-            label="External ID"
-            value={scopeForm.externalId}
-            onChange={(externalId) => setScopeForm((current) => ({ ...current, externalId }))}
-          />
-          <TextField
-            label="External name"
-            value={scopeForm.externalName}
-            required
-            onChange={(externalName) => setScopeForm((current) => ({ ...current, externalName }))}
-          />
-          <label className="span-2">
-            Config JSON
-            <textarea
-              value={scopeForm.config}
-              rows={4}
-              spellCheck={false}
-              onChange={(event) => setScopeForm((current) => ({ ...current, config: event.target.value }))}
-            />
-          </label>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={scopeForm.enabled}
-              onChange={(event) => setScopeForm((current) => ({ ...current, enabled: event.target.checked }))}
-            />
-            Enabled
-          </label>
-          <button type="submit" disabled={!selectedOrganizationId}>
-            Add scope
-          </button>
-        </form>
-      </section>
-
       <section className="panel">
         <PanelTitle title="Trigger Sync" />
         <EmptyState text="Choose a provider and scope to run a manual sync." />
