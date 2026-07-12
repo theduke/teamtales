@@ -14,7 +14,7 @@ import {
   type ReportScopeType,
   type WorkItem,
 } from "../index.js";
-import { setPassword } from "../auth/index.js";
+import { resetUserPassword, setPassword } from "../auth/index.js";
 import { openDatabase, type AppDatabase } from "../db/index.js";
 import { parseJsonObject } from "../persistence/database.js";
 import {
@@ -46,14 +46,14 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
 
   try {
     const parsed = parseArgs(argv);
-    const [command, subcommand] = parsed.command;
+    const [command] = parsed.command;
 
     if (!command || command === "help" || getBoolean(parsed, "help")) {
       out(usage());
       return { exitCode: 0 };
     }
 
-    const commandName = `${command}${subcommand ? ` ${subcommand}` : ""}`;
+    const commandName = parsed.command.join(" ");
     if (!supportedCommands.has(commandName)) throw new Error(`Unknown command: ${parsed.command.join(" ")}`);
 
     const opened = await openCliDatabase(parsed, env);
@@ -70,6 +70,9 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
         case "auth set-password":
           result = await setUserPassword(opened.db, parsed, env);
           break;
+        case "ops iam reset-user-password":
+          result = await resetUserPasswordForOperations(opened.db, parsed, env);
+          break;
         case "integration add-pat":
           result = await addPersonalAccessTokenIntegration(opened.db, parsed, env);
           break;
@@ -78,7 +81,7 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
           break;
         case "sync github":
         case "sync linear":
-          result = await runProviderSync(opened.db, commandProvider(subcommand), parsed, env);
+          result = await runProviderSync(opened.db, commandProvider(parsed.command[1]), parsed, env);
           break;
         case "report weekly":
           result = await generateWeeklyReport(opened.db, parsed);
@@ -102,6 +105,7 @@ const supportedCommands = new Set([
   "migrate",
   "org create",
   "auth set-password",
+  "ops iam reset-user-password",
   "integration add-pat",
   "scope add",
   "sync github",
@@ -139,6 +143,13 @@ async function setUserPassword(database: AppDatabase, parsed: ParsedArgs, env: N
   const userId = requiredOption(parsed, "user-id");
   const password = readSecret(parsed, "password", "password-file", "password-env", env);
   await setPassword(database, userId, password);
+  return { userId, passwordUpdated: true };
+}
+
+async function resetUserPasswordForOperations(database: AppDatabase, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+  const user = requiredOption(parsed, "user");
+  const password = readSecret(parsed, "password", "password-file", "password-env", env);
+  const userId = await resetUserPassword(database, user, password);
   return { userId, passwordUpdated: true };
 }
 
@@ -400,6 +411,7 @@ function usage(): string {
   teamtales migrate [--db mysql://user:password@host/teamtales]
   teamtales org create [--db mysql://...] --name "Acme" --owner-email owner@example.com [--id org_acme]
   teamtales auth set-password [--db mysql://...] --user-id user_id --password-env TEAMTALES_PASSWORD
+  teamtales ops iam reset-user-password [--db mysql://...] --user user_id_or_email --password-env TEAMTALES_PASSWORD
   teamtales integration add-pat [--db mysql://...] --organization-id org_acme --user-id user_id --provider github --name GitHub --token-env GITHUB_TOKEN
   teamtales scope add [--db mysql://...] --organization-id org_acme --user-id user_id --integration-id integration_id --provider github --type github.repository --name owner/repo
   teamtales sync github [--db mysql://...] --organization-id org_acme [--scope-id scope_id]

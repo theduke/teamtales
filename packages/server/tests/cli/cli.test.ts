@@ -39,6 +39,23 @@ describe("teamtales CLI with MySQL", mysqlTestOptions, () => {
     } catch (error) { const opened = await openTestDatabase(); await opened.db.delete(organizations).where(eq(organizations.id, organizationId)); await opened.close(); throw error; }
   });
 
+  it("resets a user password by ID or primary email through the operations command", async () => {
+    const suffix = uniqueId("cli"), organizationId = `org_${suffix}`, userId = `user_${suffix}`, email = `${suffix}@example.test`;
+    try {
+      assert.equal((await runCli(["org", "create", "--id", organizationId, "--name", "Acme", "--owner-id", userId, "--owner-email", email], capture().io, env())).exitCode, 0);
+      const byId = capture();
+      assert.equal((await runCli(["ops", "iam", "reset-user-password", "--user", userId, "--password-env", "TEST_PASSWORD"], byId.io, env({ TEST_PASSWORD: "initial password value" }))).exitCode, 0);
+      assert.equal(JSON.parse(byId.stdout[0] ?? "{}").userId, userId);
+      const byEmail = capture();
+      assert.equal((await runCli(["ops", "iam", "reset-user-password", "--user", email.toUpperCase(), "--password-env", "TEST_PASSWORD"], byEmail.io, env({ TEST_PASSWORD: "correct horse battery staple" }))).exitCode, 0);
+      assert.equal(JSON.parse(byEmail.stdout[0] ?? "{}").userId, userId);
+      assert.equal(`${byId.stdout.join("\n")}\n${byEmail.stdout.join("\n")}`.includes("correct horse battery staple"), false);
+      const opened = await openTestDatabase();
+      try { assert.equal((await authenticatePassword(opened.db, email, "correct horse battery staple"))?.userId, userId); }
+      finally { await opened.db.delete(organizations).where(eq(organizations.id, organizationId)); await opened.close(); }
+    } catch (error) { const opened = await openTestDatabase(); await opened.db.delete(organizations).where(eq(organizations.id, organizationId)); await opened.close(); throw error; }
+  });
+
   it("adds an encrypted PAT and compatible sync scope", async () => {
     const suffix = uniqueId("cli"), organizationId = `org_${suffix}`, userId = `user_${suffix}`, integrationId = `integration_${suffix}`, credentialId = `credential_${suffix}`;
     try {

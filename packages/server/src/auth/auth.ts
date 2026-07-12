@@ -99,6 +99,28 @@ export async function setPassword(
   if (affectedRows(result) !== 1) throw new Error(`User ${userId} not found`);
 }
 
+/** Resets a password after resolving a user by its ID or primary email address. */
+export async function resetUserPassword(
+  database: AuthDatabase,
+  userIdOrEmail: string,
+  password: string,
+  options: PasswordOptions = {},
+): Promise<string> {
+  const [userById] = await database.select({ id: users.id }).from(users)
+    .where(eq(users.id, userIdOrEmail)).limit(1);
+  if (userById) {
+    await setPassword(database, userById.id, password, options);
+    return userById.id;
+  }
+
+  const normalizedEmail = normalizeEmail(userIdOrEmail);
+  const [userByEmail] = await database.select({ id: users.id }).from(users)
+    .where(sql`lower(${users.primaryEmail}) = ${normalizedEmail}`).limit(1);
+  if (!userByEmail) throw new Error(`User ${userIdOrEmail} not found`);
+  await setPassword(database, userByEmail.id, password, options);
+  return userByEmail.id;
+}
+
 export async function authenticatePassword(
   database: AuthDatabase,
   email: string,
