@@ -46,6 +46,10 @@ export interface SyncScope {
   scopeType: SyncScopeType;
   externalId: string;
   externalName: string;
+  githubOrganizationId?: string;
+  githubRepositoryId?: string;
+  linearWorkspaceId?: string;
+  linearTeamId?: string;
   providerResourceId?: string;
   parentScopeId?: string;
   selectionMode: "all" | "selected" | "individual";
@@ -62,6 +66,10 @@ export interface SyncCursor {
   organizationId: string;
   integrationId: string;
   syncScopeId: string;
+  githubOrganizationId?: string;
+  githubRepositoryId?: string;
+  linearWorkspaceId?: string;
+  linearTeamId?: string;
   providerResourceId?: string;
   provider: Provider;
   objectType: string;

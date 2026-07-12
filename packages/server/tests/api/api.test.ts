@@ -13,6 +13,8 @@ import {
   activityEvents,
   integrationCredentials,
   integrations,
+  linearTeams,
+  linearWorkspaces,
   organizationMemberships,
   organizations,
   people,
@@ -288,17 +290,24 @@ describe("TeamTales API", mysqlTestOptions, () => {
       const workspace = rows.find((row) => row.scopeType === "linear.workspace");
       assert.equal(workspace?.selectionMode, "selected");
       assert.equal(rows.find((row) => row.externalId === "team_1")?.parentScopeId, workspace?.id);
-      const resources = await app.database.db
-        .select()
-        .from(providerResources)
-        .where(eq(providerResources.integrationId, integrationId));
-      const workspaceResource = resources.find(
-        (resource) => resource.resourceType === "linear.workspace",
-      );
-      const teamResource = resources.find((resource) => resource.externalId === "team_1");
-      assert.equal(resources.length, 3);
-      assert.equal(workspace?.providerResourceId, workspaceResource?.id);
-      assert.equal(teamResource?.parentResourceId, workspaceResource?.id);
+      const [workspaces, teams, genericResources] = await Promise.all([
+        app.database.db
+          .select()
+          .from(linearWorkspaces)
+          .where(eq(linearWorkspaces.integrationId, integrationId)),
+        app.database.db.select().from(linearTeams).where(eq(linearTeams.integrationId, integrationId)),
+        app.database.db
+          .select()
+          .from(providerResources)
+          .where(eq(providerResources.integrationId, integrationId)),
+      ]);
+      const workspaceResource = workspaces.find((resource) => resource.externalId === "workspace_1");
+      const teamResource = teams.find((resource) => resource.externalId === "team_1");
+      assert.equal(workspaces.length, 1);
+      assert.equal(teams.length, 2);
+      assert.equal(genericResources.length, 0);
+      assert.equal(workspace?.linearWorkspaceId, workspaceResource?.id);
+      assert.equal(teamResource?.linearWorkspaceId, workspaceResource?.id);
       const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, {
         method: "PUT",
         body: { organizationId: "org_api", selection: { mode: "all" } },

@@ -22,6 +22,7 @@ import {
   addSyncScopeService,
   createOrganizationService,
   generateWeeklyReportService,
+  migrateGitHubResources,
   enqueueProviderSyncService,
   processQueuedProviderSyncBatch,
   resolveReportContext,
@@ -65,7 +66,7 @@ export async function runCli(
     const opened = await openCliDatabase(
       parsed,
       env,
-      commandName === "init-db" || commandName === "migrate",
+      commandName === "init-db" || commandName === "migrate" || commandName === "migrate github-resources",
     );
     try {
       let result: Record<string, unknown>;
@@ -73,6 +74,9 @@ export async function runCli(
         case "init-db":
         case "migrate":
           result = migrateDatabase(parsed, env);
+          break;
+        case "migrate github-resources":
+          result = await migrateGitHubResources(opened.db);
           break;
         case "org create":
           result = await createOrganization(opened.db, parsed);
@@ -121,6 +125,7 @@ export async function runCli(
 const supportedCommands = new Set([
   "init-db",
   "migrate",
+  "migrate github-resources",
   "org create",
   "auth set-password",
   "ops iam reset-user-password",
@@ -527,6 +532,7 @@ function usage(): string {
   return `Usage:
   teamtales init-db [--db mysql://user:password@host/teamtales]
   teamtales migrate [--db mysql://user:password@host/teamtales]
+  teamtales migrate github-resources [--db mysql://user:password@host/teamtales]
   teamtales org create [--db mysql://...] --name "Acme" --owner-email owner@example.com [--id org_acme]
   teamtales auth set-password [--db mysql://...] --user-id user_id --password-env TEAMTALES_PASSWORD
   teamtales ops iam reset-user-password [--db mysql://...] --user user_id_or_email --password-env TEAMTALES_PASSWORD

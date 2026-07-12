@@ -1,5 +1,12 @@
 import type { AppDatabase } from "../db/mysql.js";
-import { providerResources, syncScopes } from "../db/schema.js";
+import {
+  githubOrganizations,
+  githubRepositories,
+  linearTeams,
+  linearWorkspaces,
+  providerResources,
+  syncScopes,
+} from "../db/schema.js";
 import { and, eq } from "drizzle-orm";
 import type {
   GitHubDiscoveryDto,
@@ -14,6 +21,8 @@ import {
   requireOrganizationRole,
 } from "../persistence/index.js";
 import { stableId } from "./ids.js";
+import { upsertGitHubOrganization, upsertGitHubRepository } from "./github-resources.js";
+import { upsertLinearTeam, upsertLinearWorkspace } from "./linear-resources.js";
 
 export interface AddSyncScopeServiceInput {
   id?: string;
@@ -57,23 +66,66 @@ export async function addSyncScopeService(
     createdAt: now,
     updatedAt: now,
   });
-  const resources = await database
-    .select()
-    .from(providerResources)
-    .where(
-      and(
-        eq(providerResources.integrationId, input.integrationId),
-        eq(providerResources.resourceType, input.scopeType),
-      ),
+  if (input.provider === "github") {
+    const table = input.scopeType === "github.organization" ? githubOrganizations : githubRepositories;
+    const resources = await database
+      .select()
+      .from(table)
+      .where(eq(table.integrationId, input.integrationId));
+    const resource = resources.find(
+      (value) => value.externalId === input.externalId || value.displayName === input.externalName,
     );
-  const resource = resources.find(
-    (value) => value.externalId === input.externalId || value.displayName === input.externalName,
-  );
-  if (resource)
-    await database
-      .update(syncScopes)
-      .set({ providerResourceId: resource.id, updatedAt: now })
-      .where(eq(syncScopes.id, id));
+    if (resource)
+      await database
+        .update(syncScopes)
+        .set({
+          ...(input.scopeType === "github.organization"
+            ? { githubOrganizationId: resource.id }
+            : { githubRepositoryId: resource.id }),
+          updatedAt: now,
+        })
+        .where(eq(syncScopes.id, id));
+  } else if (
+    input.provider === "linear" &&
+    (input.scopeType === "linear.workspace" || input.scopeType === "linear.team")
+  ) {
+    const table = input.scopeType === "linear.workspace" ? linearWorkspaces : linearTeams;
+    const resources = await database
+      .select()
+      .from(table)
+      .where(eq(table.integrationId, input.integrationId));
+    const resource = resources.find(
+      (value) => value.externalId === input.externalId || value.displayName === input.externalName,
+    );
+    if (resource)
+      await database
+        .update(syncScopes)
+        .set({
+          ...(input.scopeType === "linear.workspace"
+            ? { linearWorkspaceId: resource.id }
+            : { linearTeamId: resource.id }),
+          updatedAt: now,
+        })
+        .where(eq(syncScopes.id, id));
+  } else {
+    const resources = await database
+      .select()
+      .from(providerResources)
+      .where(
+        and(
+          eq(providerResources.integrationId, input.integrationId),
+          eq(providerResources.resourceType, input.scopeType),
+        ),
+      );
+    const resource = resources.find(
+      (value) => value.externalId === input.externalId || value.displayName === input.externalName,
+    );
+    if (resource)
+      await database
+        .update(syncScopes)
+        .set({ providerResourceId: resource.id, updatedAt: now })
+        .where(eq(syncScopes.id, id));
+  }
   return toDto({
     id,
     ...input,
@@ -195,7 +247,7 @@ export async function setGitHubScopeSelectionService(
         scopeType: "github.organization",
         externalId: org.id,
         externalName: org.login,
-        providerResourceId: organizationResources.get(org.id),
+        githubOrganizationId: organizationResources.get(org.id),
         parentScopeId: null,
         selectionMode: item.mode,
         configJson: "{}",
@@ -216,7 +268,7 @@ export async function setGitHubScopeSelectionService(
             scopeType: "github.repository",
             externalId: repo.id,
             externalName: repo.fullName,
-            providerResourceId: repositoryResources.get(repo.id),
+            githubRepositoryId: repositoryResources.get(repo.id),
             parentScopeId: id,
             selectionMode: "individual",
             configJson: "{}",
@@ -238,7 +290,7 @@ export async function setGitHubScopeSelectionService(
         scopeType: "github.repository",
         externalId: repo.id,
         externalName: repo.fullName,
-        providerResourceId: repositoryResources.get(repo.id),
+        githubRepositoryId: repositoryResources.get(repo.id),
         parentScopeId: null,
         selectionMode: "individual",
         configJson: "{}",
@@ -303,7 +355,7 @@ export async function setLinearScopeSelectionService(
       scopeType: "linear.workspace",
       externalId: input.discovery.workspace.id,
       externalName: input.discovery.workspace.name,
-      providerResourceId: workspaceResourceId,
+      linearWorkspaceId: workspaceResourceId,
       parentScopeId: null,
       selectionMode: input.selection.mode,
       configJson: "{}",
@@ -323,7 +375,7 @@ export async function setLinearScopeSelectionService(
         scopeType: "linear.team",
         externalId: team.id,
         externalName: team.name,
-        providerResourceId: teamResources.get(team.id),
+        linearTeamId: teamResources.get(team.id),
         parentScopeId: workspaceId,
         selectionMode: "individual",
         configJson: "{}",
@@ -386,6 +438,52 @@ async function upsertProviderResource(
     now: string;
   },
 ): Promise<string> {
+  if (input.provider === "github") {
+    const metadataJson = JSON.stringify(value.metadata ?? {});
+    if (value.resourceType === "github.organization")
+      return upsertGitHubOrganization(tx, {
+        organizationId: input.organizationId,
+        integrationId: input.integrationId,
+        externalId: value.externalId,
+        displayName: value.displayName,
+        metadataJson,
+        now: value.now,
+      });
+    if (value.resourceType === "github.repository")
+      return upsertGitHubRepository(tx, {
+        organizationId: input.organizationId,
+        integrationId: input.integrationId,
+        externalId: value.externalId,
+        externalParentId: value.externalParentId,
+        githubOrganizationId: value.parentResourceId,
+        displayName: value.displayName,
+        metadataJson,
+        now: value.now,
+      });
+  }
+  if (input.provider === "linear") {
+    const metadataJson = JSON.stringify(value.metadata ?? {});
+    if (value.resourceType === "linear.workspace")
+      return upsertLinearWorkspace(tx, {
+        organizationId: input.organizationId,
+        integrationId: input.integrationId,
+        externalId: value.externalId,
+        displayName: value.displayName,
+        metadataJson,
+        now: value.now,
+      });
+    if (value.resourceType === "linear.team")
+      return upsertLinearTeam(tx, {
+        organizationId: input.organizationId,
+        integrationId: input.integrationId,
+        externalId: value.externalId,
+        externalParentId: value.externalParentId,
+        linearWorkspaceId: value.parentResourceId,
+        displayName: value.displayName,
+        metadataJson,
+        now: value.now,
+      });
+  }
   const existing = await tx
     .select({ id: providerResources.id })
     .from(providerResources)

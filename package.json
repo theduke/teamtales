@@ -8,6 +8,7 @@
   "type": "module",
   "scripts": {
     "cli": "vp run @teamtales/server#cli",
+    "migrate:github-resources": "npm run cli -- migrate github-resources",
     "dev": "vp run -r --parallel dev",
     "dev:server": "vp run @teamtales/server#dev",
     "dev:ui": "vp run @teamtales/ui#dev",

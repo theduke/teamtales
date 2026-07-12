@@ -7,3 +7,5 @@ export * from "./sync-scopes.js";
 export * from "./sync-runs.js";
 export * from "./sync-worker.js";
 export * from "./sync-progress.js";
+export * from "./github-resources.js";
+export * from "./linear-resources.js";

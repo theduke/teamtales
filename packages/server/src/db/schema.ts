@@ -145,6 +145,111 @@ export const providerResources = mysqlTable(
     ),
   ],
 );
+// GitHub inventory is intentionally separate from generic provider resources. IDs
+// are copied from legacy rows during migration so existing stable IDs are retained.
+const githubResourceFields = {
+  id: id().primaryKey(),
+  organizationId: id("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  integrationId: id("integration_id")
+    .notNull()
+    .references(() => integrations.id, { onDelete: "cascade" }),
+  externalId: value("external_id").notNull(),
+  externalParentId: value("external_parent_id"),
+  displayName: value("display_name").notNull(),
+  externalUrl: text("external_url"),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  discoveryState: value("discovery_state").notNull().default("active"),
+  discoveredAt: instant("discovered_at").notNull(),
+  lastSeenAt: instant("last_seen_at").notNull(),
+  syncStatus: value("sync_status").notNull().default("idle"),
+  currentSyncRunId: id("current_sync_run_id"),
+  lastSyncStartedAt: instant("last_sync_started_at"),
+  lastSyncSucceededAt: instant("last_sync_succeeded_at"),
+  lastSyncFailedAt: instant("last_sync_failed_at"),
+  lastSyncError: text("last_sync_error"),
+  nextAttemptAt: instant("next_attempt_at"),
+  consecutiveFailureCount: int("consecutive_failure_count").notNull().default(0),
+  ...timestamps,
+};
+export const githubOrganizations = mysqlTable(
+  "github_organizations",
+  githubResourceFields,
+  (t) => [
+    uniqueIndex("github_organizations_integration_external_uq").on(t.integrationId, t.externalId),
+    index("github_organizations_status_idx").on(t.organizationId, t.integrationId, t.syncStatus),
+  ],
+);
+export const githubRepositories = mysqlTable(
+  "github_repositories",
+  {
+    ...githubResourceFields,
+    githubOrganizationId: id("github_organization_id").references(() => githubOrganizations.id, {
+      onDelete: "set null",
+    }),
+  },
+  (t) => [
+    uniqueIndex("github_repositories_integration_external_uq").on(t.integrationId, t.externalId),
+    index("github_repositories_organization_idx").on(
+      t.integrationId,
+      t.githubOrganizationId,
+      t.discoveryState,
+    ),
+    index("github_repositories_status_idx").on(t.organizationId, t.integrationId, t.syncStatus),
+  ],
+);
+// Linear inventory is separate from generic provider resources. New rows use
+// the legacy provider-resource stable-ID formula, so any future mapping stays
+// stable without requiring a backfill command.
+const linearResourceFields = {
+  id: id().primaryKey(),
+  organizationId: id("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  integrationId: id("integration_id")
+    .notNull()
+    .references(() => integrations.id, { onDelete: "cascade" }),
+  externalId: value("external_id").notNull(),
+  externalParentId: value("external_parent_id"),
+  displayName: value("display_name").notNull(),
+  externalUrl: text("external_url"),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  discoveryState: value("discovery_state").notNull().default("active"),
+  discoveredAt: instant("discovered_at").notNull(),
+  lastSeenAt: instant("last_seen_at").notNull(),
+  syncStatus: value("sync_status").notNull().default("idle"),
+  currentSyncRunId: id("current_sync_run_id"),
+  lastSyncStartedAt: instant("last_sync_started_at"),
+  lastSyncSucceededAt: instant("last_sync_succeeded_at"),
+  lastSyncFailedAt: instant("last_sync_failed_at"),
+  lastSyncError: text("last_sync_error"),
+  nextAttemptAt: instant("next_attempt_at"),
+  consecutiveFailureCount: int("consecutive_failure_count").notNull().default(0),
+  ...timestamps,
+};
+export const linearWorkspaces = mysqlTable(
+  "linear_workspaces",
+  linearResourceFields,
+  (t) => [
+    uniqueIndex("linear_workspaces_integration_external_uq").on(t.integrationId, t.externalId),
+    index("linear_workspaces_status_idx").on(t.organizationId, t.integrationId, t.syncStatus),
+  ],
+);
+export const linearTeams = mysqlTable(
+  "linear_teams",
+  {
+    ...linearResourceFields,
+    linearWorkspaceId: id("linear_workspace_id").references(() => linearWorkspaces.id, {
+      onDelete: "set null",
+    }),
+  },
+  (t) => [
+    uniqueIndex("linear_teams_integration_external_uq").on(t.integrationId, t.externalId),
+    index("linear_teams_workspace_idx").on(t.integrationId, t.linearWorkspaceId, t.discoveryState),
+    index("linear_teams_status_idx").on(t.organizationId, t.integrationId, t.syncStatus),
+  ],
+);
 export const syncScopes = mysqlTable(
   "sync_scopes",
   {
@@ -160,6 +265,18 @@ export const syncScopes = mysqlTable(
     externalId: value("external_id"),
     externalName: value("external_name").notNull(),
     providerResourceId: id("provider_resource_id").references(() => providerResources.id, {
+      onDelete: "set null",
+    }),
+    githubOrganizationId: id("github_organization_id").references(() => githubOrganizations.id, {
+      onDelete: "set null",
+    }),
+    githubRepositoryId: id("github_repository_id").references(() => githubRepositories.id, {
+      onDelete: "set null",
+    }),
+    linearWorkspaceId: id("linear_workspace_id").references(() => linearWorkspaces.id, {
+      onDelete: "set null",
+    }),
+    linearTeamId: id("linear_team_id").references(() => linearTeams.id, {
       onDelete: "set null",
     }),
     parentScopeId: id("parent_scope_id").references((): AnyMySqlColumn => syncScopes.id, {
@@ -182,6 +299,10 @@ export const syncScopes = mysqlTable(
     index("idx_sync_scopes_hierarchy").on(t.integrationId, t.parentScopeId, t.enabled),
     index("idx_sync_scopes_integration").on(t.integrationId, t.provider, t.scopeType, t.enabled),
     index("sync_scopes_resource_idx").on(t.providerResourceId),
+    index("sync_scopes_github_organization_idx").on(t.githubOrganizationId),
+    index("sync_scopes_github_repository_idx").on(t.githubRepositoryId),
+    index("sync_scopes_linear_workspace_idx").on(t.linearWorkspaceId),
+    index("sync_scopes_linear_team_idx").on(t.linearTeamId),
   ],
 );
 export const syncCursors = mysqlTable(
@@ -194,6 +315,18 @@ export const syncCursors = mysqlTable(
       .notNull()
       .references(() => syncScopes.id, { onDelete: "cascade" }),
     providerResourceId: id("provider_resource_id").references(() => providerResources.id, {
+      onDelete: "cascade",
+    }),
+    githubOrganizationId: id("github_organization_id").references(() => githubOrganizations.id, {
+      onDelete: "cascade",
+    }),
+    githubRepositoryId: id("github_repository_id").references(() => githubRepositories.id, {
+      onDelete: "cascade",
+    }),
+    linearWorkspaceId: id("linear_workspace_id").references(() => linearWorkspaces.id, {
+      onDelete: "cascade",
+    }),
+    linearTeamId: id("linear_team_id").references(() => linearTeams.id, {
       onDelete: "cascade",
     }),
     provider: value("provider").notNull(),
@@ -212,6 +345,16 @@ export const syncCursors = mysqlTable(
       t.objectType,
       t.cursorKind,
     ),
+    uniqueIndex("sync_cursors_github_repository_object_kind_uq").on(
+      t.githubRepositoryId,
+      t.objectType,
+      t.cursorKind,
+    ),
+    uniqueIndex("sync_cursors_linear_team_object_kind_uq").on(
+      t.linearTeamId,
+      t.objectType,
+      t.cursorKind,
+    ),
   ],
 );
 export const syncRuns = mysqlTable(
@@ -222,6 +365,18 @@ export const syncRuns = mysqlTable(
     integrationId: id("integration_id").notNull(),
     syncScopeId: id("sync_scope_id"),
     providerResourceId: id("provider_resource_id").references(() => providerResources.id, {
+      onDelete: "set null",
+    }),
+    githubOrganizationId: id("github_organization_id").references(() => githubOrganizations.id, {
+      onDelete: "set null",
+    }),
+    githubRepositoryId: id("github_repository_id").references(() => githubRepositories.id, {
+      onDelete: "set null",
+    }),
+    linearWorkspaceId: id("linear_workspace_id").references(() => linearWorkspaces.id, {
+      onDelete: "set null",
+    }),
+    linearTeamId: id("linear_team_id").references(() => linearTeams.id, {
       onDelete: "set null",
     }),
     parentSyncRunId: id("parent_sync_run_id").references((): AnyMySqlColumn => syncRuns.id, {
@@ -255,6 +410,22 @@ export const syncRuns = mysqlTable(
   (t) => [
     index("sync_runs_parent_status_idx").on(t.parentSyncRunId, t.status, t.createdAt),
     index("sync_runs_resource_status_idx").on(t.providerResourceId, t.status, t.nextAttemptAt),
+    index("sync_runs_github_organization_status_idx").on(
+      t.githubOrganizationId,
+      t.status,
+      t.nextAttemptAt,
+    ),
+    index("sync_runs_github_repository_status_idx").on(
+      t.githubRepositoryId,
+      t.status,
+      t.nextAttemptAt,
+    ),
+    index("sync_runs_linear_workspace_status_idx").on(
+      t.linearWorkspaceId,
+      t.status,
+      t.nextAttemptAt,
+    ),
+    index("sync_runs_linear_team_status_idx").on(t.linearTeamId, t.status, t.nextAttemptAt),
     index("sync_runs_queue_idx").on(t.status, t.nextAttemptAt, t.queuedAt),
   ],
 );
@@ -604,6 +775,10 @@ export const schema = {
   integrations,
   integrationCredentials,
   providerResources,
+  githubOrganizations,
+  githubRepositories,
+  linearWorkspaces,
+  linearTeams,
   syncScopes,
   syncCursors,
   syncRuns,

@@ -6,7 +6,17 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { runCli } from "../../src/cli/index.js";
 import { authenticatePassword } from "../../src/auth/index.js";
-import { integrationCredentials, organizations } from "../../src/db/schema.js";
+import {
+  githubOrganizations,
+  githubRepositories,
+  integrationCredentials,
+  integrations,
+  organizations,
+  providerResources,
+  syncCursors,
+  syncRuns,
+  syncScopes,
+} from "../../src/db/schema.js";
 import { decryptCredentialSecret } from "../../src/security/index.js";
 import { mysqlTestOptions, openTestDatabase, testDatabaseUrl, uniqueId } from "../helpers/mysql.js";
 
@@ -34,6 +44,156 @@ describe("teamtales CLI with MySQL", mysqlTestOptions, () => {
     const result = await runCli(["migrate"], io.io, env());
     assert.equal(result.exitCode, 0);
     assert.equal(JSON.parse(io.stdout[0] ?? "{}").migrated, true);
+  });
+
+  it("migrates GitHub resources transactionally and is idempotent", async () => {
+    const suffix = uniqueId("github_resource_migration");
+    const organizationId = `org_${suffix}`;
+    const integrationId = `integration_${suffix}`;
+    const githubOrganizationId = `provider_resource_org_${suffix}`;
+    const githubRepositoryId = `provider_resource_repo_${suffix}`;
+    const scopeId = `scope_${suffix}`;
+    const cursorId = `cursor_${suffix}`;
+    const runId = `run_${suffix}`;
+    const now = new Date().toISOString();
+    const opened = await openTestDatabase();
+    try {
+      await opened.db.insert(organizations).values({
+        id: organizationId,
+        name: "Migration test",
+        slug: organizationId,
+      });
+      await opened.db.insert(integrations).values({
+        id: integrationId,
+        organizationId,
+        provider: "github",
+        authType: "personal_access_token",
+        status: "active",
+        displayName: "GitHub",
+      });
+      await opened.db.insert(providerResources).values([
+        {
+          id: githubOrganizationId,
+          organizationId,
+          integrationId,
+          provider: "github",
+          resourceType: "github.organization",
+          externalId: "42",
+          displayName: "acme",
+          metadataJson: '{"name":"Acme"}',
+          discoveredAt: now,
+          lastSeenAt: now,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: githubRepositoryId,
+          organizationId,
+          integrationId,
+          provider: "github",
+          resourceType: "github.repository",
+          externalId: "99",
+          externalParentId: "42",
+          parentResourceId: githubOrganizationId,
+          displayName: "acme/widgets",
+          metadataJson: '{"archived":false}',
+          discoveredAt: now,
+          lastSeenAt: now,
+          syncStatus: "failed",
+          lastSyncError: "previous failure",
+          consecutiveFailureCount: 2,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+      await opened.db.insert(syncScopes).values({
+        id: scopeId,
+        organizationId,
+        integrationId,
+        provider: "github",
+        scopeType: "github.repository",
+        externalId: "99",
+        externalName: "acme/widgets",
+        providerResourceId: githubRepositoryId,
+        configJson: "{}",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await opened.db.insert(syncCursors).values({
+        id: cursorId,
+        organizationId,
+        integrationId,
+        syncScopeId: scopeId,
+        providerResourceId: githubRepositoryId,
+        provider: "github",
+        objectType: "github.pull_request",
+        cursorKind: "updated_at",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await opened.db.insert(syncRuns).values({
+        id: runId,
+        organizationId,
+        integrationId,
+        syncScopeId: scopeId,
+        providerResourceId: githubRepositoryId,
+        provider: "github",
+        runType: "manual_resync",
+        status: "completed",
+        startedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const io = capture();
+      assert.equal((await runCli(["migrate", "github-resources"], io.io, env())).exitCode, 0);
+      assert.deepEqual(JSON.parse(io.stdout[0] ?? "{}"), {
+        organizations: 1,
+        repositories: 1,
+        legacyRowsRemoved: 2,
+      });
+      const [migratedOrganization] = await opened.db
+        .select()
+        .from(githubOrganizations)
+        .where(eq(githubOrganizations.id, githubOrganizationId));
+      const [migratedRepository] = await opened.db
+        .select()
+        .from(githubRepositories)
+        .where(eq(githubRepositories.id, githubRepositoryId));
+      assert.equal(migratedOrganization?.metadataJson, '{"name":"Acme"}');
+      assert.equal(migratedRepository?.githubOrganizationId, githubOrganizationId);
+      assert.equal(migratedRepository?.lastSyncError, "previous failure");
+      const [scope] = await opened.db.select().from(syncScopes).where(eq(syncScopes.id, scopeId));
+      const [cursor] = await opened.db.select().from(syncCursors).where(eq(syncCursors.id, cursorId));
+      const [run] = await opened.db.select().from(syncRuns).where(eq(syncRuns.id, runId));
+      assert.equal(scope?.githubRepositoryId, githubRepositoryId);
+      assert.equal(cursor?.githubRepositoryId, githubRepositoryId);
+      assert.equal(run?.githubRepositoryId, githubRepositoryId);
+      assert.equal(scope?.providerResourceId, null);
+      assert.equal(cursor?.providerResourceId, null);
+      assert.equal(run?.providerResourceId, null);
+      assert.equal(
+        (
+          await opened.db
+            .select({ id: providerResources.id })
+            .from(providerResources)
+            .where(eq(providerResources.integrationId, integrationId))
+        ).length,
+        0,
+      );
+      const repeated = capture();
+      assert.equal(
+        (await runCli(["migrate", "github-resources"], repeated.io, env())).exitCode,
+        0,
+      );
+      assert.deepEqual(JSON.parse(repeated.stdout[0] ?? "{}"), {
+        organizations: 0,
+        repositories: 0,
+        legacyRowsRemoved: 0,
+      });
+    } finally {
+      await opened.db.delete(organizations).where(eq(organizations.id, organizationId));
+      await opened.close();
+    }
   });
 
   it("persists organization metadata, membership, and password", async () => {
