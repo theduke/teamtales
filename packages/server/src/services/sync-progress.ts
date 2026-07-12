@@ -11,7 +11,8 @@ import type { Provider } from "@teamtales/common/domain";
 import type { AppDatabase } from "../db/mysql.js";
 import { providerResources, syncRuns } from "../db/schema.js";
 
-const pageSize = 50;
+const defaultPageSize = 50;
+const maxPageSize = 1_000;
 
 export async function readSyncRunProgress(
   database: AppDatabase,
@@ -34,7 +35,9 @@ export async function listSyncRunResourceProgress(
   database: AppDatabase,
   syncRunId: string,
   cursor?: string,
+  limit = defaultPageSize,
 ): Promise<PageDto<SyncRunResourceProgressDto>> {
+  const pageSize = Math.min(Math.max(Math.floor(limit), 1), maxPageSize);
   const conditions = [eq(syncRuns.parentSyncRunId, syncRunId)];
   if (cursor) conditions.push(gt(syncRuns.id, cursor));
   const rows = await database
