@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { openDatabase } from "../db/index.js";
 import { createApiConfig } from "./config.js";
 import { createApiServer } from "./server.js";
+import { logger } from "./logger.js";
 
 export async function startDevServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const config = createApiConfig(env);
@@ -11,7 +12,7 @@ export async function startDevServer(env: NodeJS.ProcessEnv = process.env): Prom
   const server = createApiServer({ config, database: database.db });
 
   server.listen(config.port, config.host, () => {
-    process.stdout.write(`TeamTales API listening on http://${config.host}:${config.port}\n`);
+    logger.info(`TeamTales API listening on http://${config.host}:${config.port}`);
   });
 
   const shutdown = (): void => {
