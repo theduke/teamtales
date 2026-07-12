@@ -26,7 +26,8 @@
   "dependencies": {
     "@teamtales/common": "file:../common",
     "drizzle-orm": "^1.0.0-beta.16-c2458b2",
-    "mysql2": "^3.14.4"
+    "mysql2": "^3.14.4",
+    "pino": "^9.14.0"
   },
   "devDependencies": {
     "drizzle-kit": "^1.0.0-beta.16-2ffd1a5",

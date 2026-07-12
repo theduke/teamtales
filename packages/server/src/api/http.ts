@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ApiResponseDto, JsonObject, JsonValue } from "@teamtales/common/api";
 import { redactText } from "../security/credentials.js";
+import { logger } from "./logger.js";
 
 const maxJsonBytes = 1_048_576;
 
@@ -67,8 +68,8 @@ export function writeError(response: ServerResponse, error: unknown): void {
   const details = error instanceof HttpError ? error.details : undefined;
 
   if (status >= 500 && code === "internal_error") {
-    const message = error instanceof Error ? redactText(error.stack ?? error.message) : redactText(String(error));
-    console.error(`Unhandled API error: ${message}`);
+    const errorMessage = error instanceof Error ? redactText(error.stack ?? error.message) : redactText(String(error));
+    logger.error({ error: { message: errorMessage }, status, code }, "Unhandled API error");
   }
 
   writeJson(response, status, {
