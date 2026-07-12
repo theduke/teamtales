@@ -151,16 +151,19 @@ export function App(): ReactElement {
   }, [handleError, loadDashboard, loadOrganizations, selectedOrganizationId]);
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const initialize = async (): Promise<void> => {
       setLoading(true);
       try {
         await apiClient.getHealth();
         if (!cancelled) setHealth("ok");
         const session = await apiClient.getCurrentUser();
-        if (!cancelled) {
-          setAuth(session);
-          if (session.authenticated) {
-            const page = await apiClient.listOrganizations();
+        if (cancelled) return;
+
+        setAuth(session);
+        if (session.authenticated) {
+          const page = await apiClient.listOrganizations();
+          if (!cancelled) {
             setOrganizations(page.items);
             setSelectedOrganizationId(page.items[0]?.id ?? "");
           }
@@ -168,16 +171,20 @@ export function App(): ReactElement {
       } catch (error) {
         if (!cancelled) {
           setHealth("error");
-          handleError(error);
+          // Keep the current location and session state while the API is restarting.
+          // A failed request does not prove that the session has expired.
+          retryTimer = setTimeout(() => void initialize(), 1_000);
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    };
+    void initialize();
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [handleError]);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     if (!selectedOrganizationId) {
@@ -274,7 +281,18 @@ export function App(): ReactElement {
       setLoading(false);
     }
   }
-  if (!auth || !auth.authenticated)
+  if (!auth)
+    return (
+      <Center mih="100vh">
+        <Stack align="center" gap="xs">
+          <Text fw={600}>Restoring your session…</Text>
+          <Text size="sm" c="dimmed">
+            {health === "error" ? "Waiting for the API to restart." : "Checking authentication."}
+          </Text>
+        </Stack>
+      </Center>
+    );
+  if (!auth.authenticated)
     return (
       <Routes>
         <Route
