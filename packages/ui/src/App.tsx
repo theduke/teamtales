@@ -17,6 +17,7 @@ import {
   NativeSelect,
   Paper,
   PasswordInput,
+  Progress,
   SimpleGrid,
   Stack,
   Table as MantineTable,
@@ -43,7 +44,10 @@ import {
 import type {
   DashboardDto,
   GenerateWeeklyReportRequestDto,
+  OrganizationSyncStatusDto,
   ReportDetailDto,
+  SyncRunProgressDto,
+  SyncRunResourceProgressDto,
 } from "@teamtales/common/api";
 import type { Provider, ReportScopeType } from "@teamtales/common/domain";
 import type {
@@ -810,11 +814,16 @@ function SyncSection({
     integrationId: "",
     syncScopeId: "",
   });
+  const [progressRefresh, setProgressRefresh] = useState(0);
   const integrations = dashboard?.integrations ?? [],
     scopes = dashboard?.syncScopes ?? [];
   return (
     <Stack>
       <PageTitle title="Sync" subtitle="Run a manual sync and review the active resource scopes." />
+      <ActiveSyncProgress
+        organizationId={selectedOrganizationId}
+        refreshSignal={progressRefresh}
+      />
       <SimpleGrid cols={{ base: 1, md: 2 }}>
         <Panel title="Trigger sync">
           <Alert color="blue" variant="light" mb="md">
@@ -829,15 +838,16 @@ function SyncSection({
                   integrationId: optionalText(form.integrationId),
                   syncScopeId: optionalText(form.syncScopeId),
                 })
-                .then((result) =>
+                .then((result) => {
+                  setProgressRefresh((current) => current + 1);
                   onNotice({
                     tone: "info",
                     text:
                       result.status === "not_implemented"
                         ? "Sync execution is not available for this provider."
                         : (result.message ?? `Sync status: ${result.status}.`),
-                  }),
-                )
+                  });
+                })
                 .catch((error) =>
                   error instanceof ApiClientError && error.code === "sync_not_implemented"
                     ? onNotice({
@@ -903,6 +913,188 @@ function SyncSection({
         </Panel>
       </SimpleGrid>
     </Stack>
+  );
+}
+
+type ActiveSyncRun = {
+  progress: SyncRunProgressDto;
+  resources: SyncRunResourceProgressDto[];
+};
+
+function ActiveSyncProgress({
+  organizationId,
+  refreshSignal,
+}: {
+  organizationId: string;
+  refreshSignal: number;
+}): ReactElement {
+  const [status, setStatus] = useState<OrganizationSyncStatusDto>();
+  const [runs, setRuns] = useState<ActiveSyncRun[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    if (!organizationId) {
+      setStatus(undefined);
+      setRuns([]);
+      return;
+    }
+    const load = async () => {
+      setLoading(true);
+      try {
+        const nextStatus = await apiClient.getOrganizationSyncStatus(organizationId);
+        const nextRuns = await Promise.all(
+          nextStatus.activeRuns.map(async (run) => {
+            const [progress, resources] = await Promise.all([
+              apiClient.getSyncRun(run.id),
+              apiClient.listSyncRunResources(run.id),
+            ]);
+            return { progress, resources: resources.items };
+          }),
+        );
+        if (cancelled) return;
+        setStatus(nextStatus);
+        setRuns(nextRuns);
+        setError(undefined);
+        timer = window.setTimeout(load, nextStatus.activeRuns.length > 0 ? 3_000 : 15_000);
+      } catch (reason) {
+        if (cancelled) return;
+        setError(reason instanceof Error ? reason.message : "Could not load sync progress.");
+        timer = window.setTimeout(load, 10_000);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [organizationId, refreshSignal]);
+
+  const resourceCounts = Object.entries(status?.resourceStatusCounts ?? {});
+  return (
+    <Panel title="Sync activity">
+      <Stack gap="md">
+        <Group justify="space-between" align="center">
+          <Group gap="xs">
+            <Badge color={runs.length > 0 ? "blue" : "gray"} variant="light">
+              {runs.length > 0 ? `${runs.length} active` : "No active syncs"}
+            </Badge>
+            {loading && (
+              <Text size="xs" c="dimmed">
+                Updating…
+              </Text>
+            )}
+          </Group>
+          {resourceCounts.length > 0 && (
+            <Group gap={6}>
+              {resourceCounts.map(([state, count]) => (
+                <Badge key={state} size="sm" color={syncStatusColor(state)} variant="outline">
+                  {count} {state}
+                </Badge>
+              ))}
+            </Group>
+          )}
+        </Group>
+        {error && (
+          <Alert color="red" variant="light" title="Progress temporarily unavailable">
+            {error}
+          </Alert>
+        )}
+        {runs.map(({ progress, resources }) => (
+          <SyncRunProgressCard key={progress.run.id} progress={progress} resources={resources} />
+        ))}
+        {!error && !loading && runs.length === 0 && (
+          <Text size="sm" c="dimmed">
+            Queued and running syncs will appear here automatically.
+          </Text>
+        )}
+      </Stack>
+    </Panel>
+  );
+}
+
+function SyncRunProgressCard({
+  progress,
+  resources,
+}: {
+  progress: SyncRunProgressDto;
+  resources: SyncRunResourceProgressDto[];
+}): ReactElement {
+  const { run, childRunCounts } = progress;
+  const total = Object.values(childRunCounts).reduce((sum, count) => sum + count, 0);
+  const complete = (childRunCounts.completed ?? 0) + (childRunCounts.failed ?? 0) + (childRunCounts.cancelled ?? 0);
+  const percent = total === 0 ? 0 : Math.round((complete / total) * 100);
+  const counters = resources.length
+    ? resources.reduce(
+        (sum, item) => ({
+          fetched: sum.fetched + item.run.objectsFetched,
+          changed: sum.changed + item.run.objectsInserted + item.run.objectsUpdated,
+          failed: sum.failed + item.run.objectsFailed,
+        }),
+        { fetched: 0, changed: 0, failed: 0 },
+      )
+    : {
+        fetched: run.objectsFetched,
+        changed: run.objectsInserted + run.objectsUpdated,
+        failed: run.objectsFailed,
+      };
+  return (
+    <Card withBorder radius="sm" padding="md" bg="var(--mantine-color-gray-0)">
+      <Stack gap="sm">
+        <Group justify="space-between" align="flex-start">
+          <Box>
+            <Group gap="xs">
+              <Text fw={600} tt="capitalize">
+                {run.provider} sync
+              </Text>
+              <Badge color={syncStatusColor(run.status)} variant="light">
+                {run.status}
+              </Badge>
+            </Group>
+            <Text size="xs" c="dimmed" mt={3}>
+              Started {formatDateTime(run.startedAt)} · attempt {run.attempt}
+            </Text>
+          </Box>
+          <Text size="sm" fw={600} c="dimmed">
+            {total > 0 ? `${complete}/${total} resources` : "Preparing resources"}
+          </Text>
+        </Group>
+        <Progress value={percent} color={run.status === "queued" ? "gray" : "blue"} animated={run.status === "running"} />
+        <Text size="xs" c="dimmed">
+          {counters.fetched} fetched · {counters.changed} changed · {counters.failed} failed
+        </Text>
+        {resources.length > 0 && (
+          <Stack gap={4}>
+            {resources.map(({ resource, run: resourceRun }) => (
+              <Group key={resourceRun.id} justify="space-between" gap="sm" wrap="nowrap">
+                <Box style={{ minWidth: 0 }}>
+                  <Text size="sm" truncate="end">
+                    {resource?.displayName ?? "Sync resource"}
+                  </Text>
+                  {resourceRun.error && (
+                    <Text size="xs" c="red" truncate="end">
+                      {resourceRun.error}
+                    </Text>
+                  )}
+                </Box>
+                <Badge size="sm" color={syncStatusColor(resourceRun.status)} variant="light">
+                  {resourceRun.status}
+                </Badge>
+              </Group>
+            ))}
+            {resources.length < total && (
+              <Text size="xs" c="dimmed">
+                Showing {resources.length} of {total} resources
+              </Text>
+            )}
+          </Stack>
+        )}
+      </Stack>
+    </Card>
   );
 }
 
@@ -1194,6 +1386,26 @@ function formatDateTime(value: string | undefined) {
   if (!value) return "";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+function syncStatusColor(status: string) {
+  switch (status) {
+    case "running":
+      return "blue";
+    case "completed":
+    case "succeeded":
+      return "teal";
+    case "completed_with_errors":
+    case "blocked":
+      return "orange";
+    case "failed":
+    case "error":
+      return "red";
+    case "queued":
+    case "pending":
+      return "yellow";
+    default:
+      return "gray";
+  }
 }
 function getDefaultPeriod() {
   const end = new Date(),
