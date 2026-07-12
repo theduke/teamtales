@@ -5,17 +5,29 @@ import { openDatabase } from "../db/index.js";
 import { createApiConfig } from "./config.js";
 import { createApiServer } from "./server.js";
 import { logger } from "./logger.js";
+import { startProviderSyncWorker } from "../services/sync-worker.js";
 
 export async function startDevServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const config = createApiConfig(env);
   const database = await openDatabase({ env });
   const server = createApiServer({ config, database: database.db });
+  const worker =
+    config.syncWorkerEnabled && config.credentialEncryptionKey
+      ? startProviderSyncWorker({
+          database: database.db,
+          encryptionKey: config.credentialEncryptionKey,
+          batchSize: config.syncWorkerBatchSize,
+        })
+      : undefined;
+  if (config.syncWorkerEnabled && !config.credentialEncryptionKey)
+    logger.warn("Provider sync worker is enabled but TEAMTALES_CREDENTIAL_KEY is not configured.");
 
   server.listen(config.port, config.host, () => {
     logger.info(`TeamTales API listening on http://${config.host}:${config.port}`);
   });
 
   const shutdown = (): void => {
+    worker?.stop();
     server.close(() => {
       void database.close().finally(() => process.exit(0));
     });

@@ -48,6 +48,7 @@ import type {
   ReportDetailDto,
   SyncRunProgressDto,
   SyncRunResourceProgressDto,
+  SyncRunDto,
 } from "@teamtales/common/api";
 import type { Provider, ReportScopeType } from "@teamtales/common/domain";
 import type {
@@ -815,14 +816,23 @@ function SyncSection({
     syncScopeId: "",
   });
   const [progressRefresh, setProgressRefresh] = useState(0);
+  const [activeRuns, setActiveRuns] = useState<SyncRunDto[]>([]);
+  const [triggering, setTriggering] = useState(false);
   const integrations = dashboard?.integrations ?? [],
     scopes = dashboard?.syncScopes ?? [];
+  const hasConflictingRun = activeRuns.some(
+    (run) =>
+      run.provider === form.provider &&
+      (!form.integrationId || run.integrationId === form.integrationId) &&
+      (!form.syncScopeId || run.syncScopeId === form.syncScopeId),
+  );
   return (
     <Stack>
       <PageTitle title="Sync" subtitle="Run a manual sync and review the active resource scopes." />
       <ActiveSyncProgress
         organizationId={selectedOrganizationId}
         refreshSignal={progressRefresh}
+        onActiveRunsChange={setActiveRuns}
       />
       <SimpleGrid cols={{ base: 1, md: 2 }}>
         <Panel title="Trigger sync">
@@ -832,6 +842,7 @@ function SyncSection({
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              setTriggering(true);
               void apiClient
                 .triggerSync(form.provider, {
                   organizationId: selectedOrganizationId || undefined,
@@ -855,7 +866,8 @@ function SyncSection({
                         text: "Sync execution is not available for this provider.",
                       })
                     : onError(error),
-                );
+                )
+                .finally(() => setTriggering(false));
             }}
           >
             <Stack>
@@ -888,8 +900,12 @@ function SyncSection({
                   ...scopes.map((x) => ({ value: x.id, label: x.externalName })),
                 ]}
               />
-              <Button type="submit" disabled={!selectedOrganizationId}>
-                Run sync
+              <Button
+                type="submit"
+                loading={triggering}
+                disabled={!selectedOrganizationId || hasConflictingRun}
+              >
+                {hasConflictingRun ? "Sync already active" : "Run sync"}
               </Button>
             </Stack>
           </form>
@@ -924,14 +940,18 @@ type ActiveSyncRun = {
 function ActiveSyncProgress({
   organizationId,
   refreshSignal,
+  onActiveRunsChange,
 }: {
   organizationId: string;
   refreshSignal: number;
+  onActiveRunsChange: (runs: SyncRunDto[]) => void;
 }): ReactElement {
   const [status, setStatus] = useState<OrganizationSyncStatusDto>();
   const [runs, setRuns] = useState<ActiveSyncRun[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [cancellingRunId, setCancellingRunId] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
@@ -939,6 +959,7 @@ function ActiveSyncProgress({
     if (!organizationId) {
       setStatus(undefined);
       setRuns([]);
+      onActiveRunsChange([]);
       return;
     }
     const load = async () => {
@@ -957,6 +978,7 @@ function ActiveSyncProgress({
         if (cancelled) return;
         setStatus(nextStatus);
         setRuns(nextRuns);
+        onActiveRunsChange(nextStatus.activeRuns);
         setError(undefined);
         timer = window.setTimeout(load, nextStatus.activeRuns.length > 0 ? 3_000 : 15_000);
       } catch (reason) {
@@ -972,7 +994,18 @@ function ActiveSyncProgress({
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [organizationId, refreshSignal]);
+  }, [onActiveRunsChange, organizationId, refreshSignal, refreshNonce]);
+
+  const cancelRun = (syncRunId: string) => {
+    setCancellingRunId(syncRunId);
+    void apiClient
+      .cancelSyncRun(syncRunId)
+      .then(() => setRefreshNonce((value) => value + 1))
+      .catch((reason) =>
+        setError(reason instanceof Error ? reason.message : "Could not cancel the sync."),
+      )
+      .finally(() => setCancellingRunId(undefined));
+  };
 
   const resourceCounts = Object.entries(status?.resourceStatusCounts ?? {});
   return (
@@ -1005,7 +1038,13 @@ function ActiveSyncProgress({
           </Alert>
         )}
         {runs.map(({ progress, resources }) => (
-          <SyncRunProgressCard key={progress.run.id} progress={progress} resources={resources} />
+          <SyncRunProgressCard
+            key={progress.run.id}
+            progress={progress}
+            resources={resources}
+            cancelling={cancellingRunId === progress.run.id}
+            onCancel={() => cancelRun(progress.run.id)}
+          />
         ))}
         {!error && !loading && runs.length === 0 && (
           <Text size="sm" c="dimmed">
@@ -1020,13 +1059,20 @@ function ActiveSyncProgress({
 function SyncRunProgressCard({
   progress,
   resources,
+  cancelling,
+  onCancel,
 }: {
   progress: SyncRunProgressDto;
   resources: SyncRunResourceProgressDto[];
+  cancelling: boolean;
+  onCancel: () => void;
 }): ReactElement {
   const { run, childRunCounts } = progress;
   const total = Object.values(childRunCounts).reduce((sum, count) => sum + count, 0);
-  const complete = (childRunCounts.completed ?? 0) + (childRunCounts.failed ?? 0) + (childRunCounts.cancelled ?? 0);
+  const complete =
+    (childRunCounts.completed ?? 0) +
+    (childRunCounts.failed ?? 0) +
+    (childRunCounts.cancelled ?? 0);
   const percent = total === 0 ? 0 : Math.round((complete / total) * 100);
   const counters = resources.length
     ? resources.reduce(
@@ -1063,7 +1109,22 @@ function SyncRunProgressCard({
             {total > 0 ? `${complete}/${total} resources` : "Preparing resources"}
           </Text>
         </Group>
-        <Progress value={percent} color={run.status === "queued" ? "gray" : "blue"} animated={run.status === "running"} />
+        <Group justify="flex-end">
+          <Button
+            size="compact-xs"
+            color="red"
+            variant="light"
+            loading={cancelling}
+            onClick={onCancel}
+          >
+            Abort sync
+          </Button>
+        </Group>
+        <Progress
+          value={percent}
+          color={run.status === "queued" ? "gray" : "blue"}
+          animated={run.status === "running"}
+        />
         <Text size="xs" c="dimmed">
           {counters.fetched} fetched · {counters.changed} changed · {counters.failed} failed
         </Text>

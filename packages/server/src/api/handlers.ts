@@ -31,6 +31,7 @@ import {
 import {
   addPersonalAccessTokenIntegrationService,
   addSyncScopeService,
+  cancelProviderSyncRunService,
   createOrganizationService,
   generateWeeklyReportFromRequestService,
   enqueueProviderSyncService,
@@ -601,6 +602,14 @@ export async function getSyncRunHandler(input: HandlerInput): Promise<HandlerRes
     data: result as unknown as JsonObject,
     headers: { "cache-control": "no-store" },
   };
+}
+
+export async function cancelSyncRunHandler(input: HandlerInput): Promise<HandlerResult> {
+  const run = await readSyncRunProgress(input.context.database, input.params.syncRunId ?? "");
+  if (!run) throw new HttpError(404, "not_found", "Sync run not found.");
+  await requireMembership(input, run.run.organizationId);
+  const result = await cancelProviderSyncRunService(input.context.database, run.run.id);
+  return { status: 200, data: result };
 }
 
 export async function listSyncRunResourcesHandler(input: HandlerInput): Promise<HandlerResult> {

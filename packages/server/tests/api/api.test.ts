@@ -486,6 +486,17 @@ describe("TeamTales API", mysqlTestOptions, () => {
             : undefined;
       assert.equal(authorization, "Bearer github_scoped_token");
       const parsed = new URL(url);
+      if (parsed.pathname === "/orgs/acme/repos") {
+        return jsonResponse([
+          {
+            id: 101,
+            full_name: "acme/widgets",
+            owner: { id: 10, login: "acme", type: "Organization" },
+            archived: false,
+            fork: false,
+          },
+        ]);
+      }
       if (parsed.pathname === "/repos/acme/widgets") {
         return jsonResponse({
           id: 101,
@@ -501,26 +512,64 @@ describe("TeamTales API", mysqlTestOptions, () => {
     };
 
     try {
+      const [organizationScope] = await app.database.db
+        .select()
+        .from(syncScopes)
+        .where(and(eq(syncScopes.scopeType, "github.organization"), eq(syncScopes.enabled, 1)))
+        .limit(1);
+      assert.ok(organizationScope);
       const response = await apiFetch<{
         status: string;
         counters: { objectsFetched: number };
         syncRunId: string;
-      }>(app.url, "/api/sync/github", { method: "POST", body: { organizationId: "org_api" } });
+      }>(app.url, "/api/sync/github", {
+        method: "POST",
+        body: { organizationId: "org_api", syncScopeId: organizationScope.id },
+      });
 
       assert.equal(response.status, 202);
       assert.equal(response.body.ok && response.body.data.status, "queued");
       const syncRunId = response.body.ok ? response.body.data.syncRunId : undefined;
       assert.ok(syncRunId);
+      const duplicate = await apiFetch<{ syncRunId?: string; status: string }>(
+        app.url,
+        "/api/sync/github",
+        { method: "POST", body: { organizationId: "org_api", syncScopeId: organizationScope.id } },
+      );
+      assert.equal(duplicate.status, 202);
+      assert.equal(duplicate.body.ok && duplicate.body.data.syncRunId, syncRunId);
+      const cancelled = await apiFetch<{ status: string; cancelledResourceRuns: number }>(
+        app.url,
+        `/api/sync-runs/${syncRunId}/cancel`,
+        { method: "POST" },
+      );
+      assert.equal(cancelled.status, 200);
+      assert.equal(cancelled.body.ok && cancelled.body.data.status, "cancelled");
+      const cancelledStatus = await apiFetch<{ run: { status: string } }>(
+        app.url,
+        `/api/sync-runs/${syncRunId}`,
+      );
+      assert.equal(cancelledStatus.body.ok && cancelledStatus.body.data.run.status, "cancelled");
+      const retried = await apiFetch<{ syncRunId?: string; status: string }>(
+        app.url,
+        "/api/sync/github",
+        { method: "POST", body: { organizationId: "org_api", syncScopeId: organizationScope.id } },
+      );
+      assert.equal(retried.status, 202);
+      const retriedSyncRunId = retried.body.ok ? retried.body.data.syncRunId : undefined;
+      assert.ok(retriedSyncRunId);
+      assert.notEqual(retriedSyncRunId, syncRunId);
       const queued = await apiFetch<{
         run: { status: string };
         childRunCounts: Record<string, number>;
-      }>(app.url, `/api/sync-runs/${syncRunId}`);
+      }>(app.url, `/api/sync-runs/${retriedSyncRunId}`);
       assert.equal(queued.status, 200);
       assert.equal(queued.body.ok && queued.body.data.run.status, "queued");
       await processQueuedProviderSyncBatch(app.database.db, key, { limit: 10 });
+      await processQueuedProviderSyncBatch(app.database.db, key, { limit: 10 });
       const completed = await apiFetch<{ run: { status: string } }>(
         app.url,
-        `/api/sync-runs/${syncRunId}`,
+        `/api/sync-runs/${retriedSyncRunId}`,
       );
       assert.equal(completed.body.ok && completed.body.data.run.status, "completed");
       assert.equal(

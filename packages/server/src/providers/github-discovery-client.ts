@@ -104,4 +104,25 @@ export class GitHubRestDiscoveryClient implements GitHubDiscoveryClient {
       };
     }
   }
+
+  /** Enumerates an organization directly, including repositories absent from `/user/repos`. */
+  async *listOrganizationRepositories(organizationLogin: string): AsyncIterable<GitHubRepository> {
+    for await (const raw of this.client.paginateObjects(
+      `/orgs/${encodeURIComponent(organizationLogin)}/repos`,
+      { per_page: "100", type: "all", sort: "full_name" },
+    )) {
+      const value = githubRepositorySchema.parse(raw);
+      yield {
+        id: value.id,
+        fullName: value.full_name,
+        ownerId: value.owner.id,
+        ownerLogin: value.owner.login,
+        ownerType: value.owner.type,
+        ...(value.visibility ? { visibility: value.visibility } : {}),
+        archived: value.archived,
+        fork: value.fork,
+        ...(value.description ? { description: value.description } : {}),
+      };
+    }
+  }
 }

@@ -3,6 +3,16 @@ import type { JsonValue } from "../ingestion/json.js";
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 export type GitHubObject = { [key: string]: JsonValue };
 
+export class GitHubRateLimitError extends Error {
+  constructor(
+    message: string,
+    readonly retryAt?: Date,
+  ) {
+    super(message);
+    this.name = "GitHubRateLimitError";
+  }
+}
+
 export class GitHubRestClient {
   requestsMade = 0;
 
@@ -100,10 +110,13 @@ export async function githubApiError(response: Response): Promise<Error> {
   } catch {
     /* retain status */
   }
-  const prefix =
-    response.status === 403 && remaining === "0"
-      ? `GitHub API rate limit exceeded${reset ? ` until ${new Date(Number(reset) * 1000).toISOString()}` : ""}`
-      : `GitHub API request failed with ${response.status} ${response.statusText}`;
+  const resetSeconds = Number(reset);
+  const retryAt = Number.isFinite(resetSeconds) ? new Date(resetSeconds * 1000) : undefined;
+  if (response.status === 403 && remaining === "0") {
+    const prefix = `GitHub API rate limit exceeded${retryAt ? ` until ${retryAt.toISOString()}` : ""}`;
+    return new GitHubRateLimitError(message ? `${prefix}: ${message}` : prefix, retryAt);
+  }
+  const prefix = `GitHub API request failed with ${response.status} ${response.statusText}`;
   return new Error(message ? `${prefix}: ${message}` : prefix);
 }
 

@@ -20,6 +20,7 @@ import type {
   SetSyncScopeSelectionResponseDto,
   TriggerSyncRequestDto,
   TriggerSyncResponseDto,
+  CancelSyncRunResponseDto,
   OrganizationSyncStatusDto,
   SyncRunProgressDto,
   SyncRunResourceProgressDto,
@@ -146,6 +147,13 @@ class BrowserTeamtalesApiClient {
     return request<TriggerSyncResponseDto>(
       `/api/sync/${encodeURIComponent(provider)}`,
       jsonPost(requestBody),
+    );
+  }
+
+  cancelSyncRun(syncRunId: string): Promise<CancelSyncRunResponseDto> {
+    return request<CancelSyncRunResponseDto>(
+      `/api/sync-runs/${encodeURIComponent(syncRunId)}/cancel`,
+      jsonPost({}),
     );
   }
 

@@ -338,9 +338,15 @@ export type TriggerSyncRequestDto = {
 
 export type TriggerSyncResponseDto = {
   provider: Provider;
-  status: "queued" | "running" | "completed" | "failed" | "not_implemented";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "not_implemented";
   syncRunId?: string;
   message?: string;
+};
+
+export type CancelSyncRunResponseDto = {
+  syncRunId: string;
+  status: "cancelled";
+  cancelledResourceRuns: number;
 };
 
 /** Known sync states are suggested while allowing forward-compatible server states. */
@@ -456,6 +462,7 @@ export interface TeamtalesApiClient {
   getReport(reportId: string, organizationId: string): Promise<ReportDetailDto>;
   generateWeeklyReport(request: GenerateWeeklyReportRequestDto): Promise<GenerateReportResponseDto>;
   triggerSync(provider: Provider, request?: TriggerSyncRequestDto): Promise<TriggerSyncResponseDto>;
+  cancelSyncRun(syncRunId: string): Promise<CancelSyncRunResponseDto>;
   getSyncRun(syncRunId: string): Promise<SyncRunProgressDto>;
   listSyncRunResources(
     syncRunId: string,

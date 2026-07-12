@@ -6,6 +6,7 @@ import type { ApiConfig } from "./config.js";
 import type { Handler, HandlerResult } from "./handlers.js";
 import {
   createApiTokenHandler,
+  cancelSyncRunHandler,
   createOrganizationHandler,
   createPatIntegrationHandler,
   createSyncScopeHandler,
@@ -73,6 +74,7 @@ const routes: Route[] = [
   route("GET", "/api/dashboard", dashboardHandler),
   route("POST", "/api/sync/:provider", triggerSyncHandler),
   route("GET", "/api/sync-runs/:syncRunId", getSyncRunHandler),
+  route("POST", "/api/sync-runs/:syncRunId/cancel", cancelSyncRunHandler),
   route("GET", "/api/sync-runs/:syncRunId/resources", listSyncRunResourcesHandler),
 ];
 

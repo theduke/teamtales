@@ -13,6 +13,7 @@ npm run dev
 ```
 
 The API runs on port 9100 by default and Vite proxies `/api` to it from port 9101. Database migrations run automatically when the API starts.
+The API process also starts the MySQL-backed sync worker in development; set `TEAMTALES_SYNC_WORKER=false` to disable it.
 `npm run dev` starts Vite in its default development mode, which loads `.env.development`. The API is a separate Node process and loads the same file through Node's `--env-file` option; values already present in the environment take precedence. `.env.development` includes `TEAMTALES_CREDENTIAL_KEY` for local development only.
 Use the displayed `http://127.0.0.1:9101` URL so authenticated writes match the configured CSRF origin.
 
@@ -34,6 +35,7 @@ wasmer deploy --build-remote
 ```
 
 Set `TEAMTALES_CREDENTIAL_KEY` as a deployment secret before storing integration credentials. In production, also set `TEAMTALES_PUBLIC_ORIGIN` and `TEAMTALES_COOKIE_SECURE=true`.
+The embedded sync worker is disabled by default in production; run a dedicated server process with `TEAMTALES_SYNC_WORKER=true` when it should process queued syncs.
 
 ## Checks
 
