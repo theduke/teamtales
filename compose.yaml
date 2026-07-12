@@ -1,0 +1,21 @@
+services:
+  mysql:
+    image: mysql:8.4
+    command: ["--bind-address=0.0.0.0"]
+    network_mode: host
+    environment:
+      MYSQL_DATABASE: teamtales
+      MYSQL_USER: teamtales
+      MYSQL_PASSWORD: password
+      MYSQL_ROOT_PASSWORD: root-password
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uteamtales", "-ppassword"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  mysql-data:
