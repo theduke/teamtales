@@ -199,7 +199,10 @@ export async function createPatIntegrationHandler(input: HandlerInput): Promise<
   }
 
   const provider = parseProvider(requiredString(body, "provider"));
-  const token = requiredString(body, "token");
+  const token = requiredString(body, "token").trim();
+  if (!token) {
+    throw new HttpError(400, "invalid_token", "Provider token must not be empty.");
+  }
   let verified;
   try { verified = await verifyProviderToken(provider, token); } catch (error) { throw new HttpError(400, "invalid_token", error instanceof Error ? error.message : "Invalid provider token."); }
   const result = await addPersonalAccessTokenIntegrationService(input.context.database, {

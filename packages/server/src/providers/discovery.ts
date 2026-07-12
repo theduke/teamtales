@@ -6,24 +6,28 @@ import { fetchConnection, LinearGraphqlClient, type FetchLike as LinearFetchLike
 type FetchLike = GitHubFetchLike & LinearFetchLike;
 export class ProviderTokenError extends Error { readonly code = "invalid_token"; }
 export async function verifyProviderToken(provider: Provider, token: string, fetchImpl: FetchLike = globalThis.fetch.bind(globalThis)): Promise<{ displayName: string }> {
+  const normalizedToken = token.trim();
+  if (!normalizedToken) throw new ProviderTokenError("Provider token must not be empty.");
   try {
     if (provider === "github") {
-      const user = await new GitHubRestClient(fetchImpl, "https://api.github.com", token).getObject("/user");
+      const user = await new GitHubRestClient(fetchImpl, "https://api.github.com", normalizedToken).getObject("/user");
       const login = text(user.login); if (!login) throw new Error("GitHub user response did not include a login.");
       return { displayName: login };
     }
-    const data = await new LinearGraphqlClient(token, fetchImpl).query<{ organization?: JsonValueObject | null }>(workspaceAndViewerQuery);
+    const data = await new LinearGraphqlClient(normalizedToken, fetchImpl).query<{ organization?: JsonValueObject | null }>(workspaceAndViewerQuery);
     const name = text(data.organization?.name); if (!name) throw new Error("Linear organization response did not include a name.");
     return { displayName: name };
   } catch (error) { throw new ProviderTokenError(error instanceof Error ? error.message : "Invalid provider token."); }
 }
 export async function discoverProviderResources(provider: Provider, token: string, fetchImpl: FetchLike = globalThis.fetch.bind(globalThis)): Promise<DiscoveredResourceDto[]> {
+  const normalizedToken = token.trim();
+  if (!normalizedToken) throw new ProviderTokenError("Provider token must not be empty.");
   if (provider === "github") {
-    const client = new GitHubRestClient(fetchImpl, "https://api.github.com", token); const resources: DiscoveredResourceDto[] = [];
+    const client = new GitHubRestClient(fetchImpl, "https://api.github.com", normalizedToken); const resources: DiscoveredResourceDto[] = [];
     await Promise.all([collect(client.paginateObjects("/user/orgs", { per_page: "100" })), (async () => { for await (const repo of client.paginateObjects("/user/repos", { affiliation: "owner,collaborator,organization_member", per_page: "100", sort: "full_name" })) { const id = text(repo.id); const name = text(repo.full_name); const owner = object(repo.owner); if (id && name) resources.push({ scopeType: "github.repository", externalId: id, externalName: name, group: text(owner?.login), description: text(repo.description), config: {} }); } })()]);
     return resources.sort((a, b) => a.externalName.localeCompare(b.externalName));
   }
-  const client = new LinearGraphqlClient(token, fetchImpl); const workspace = await client.query<{ organization?: JsonValueObject | null }>(workspaceAndViewerQuery);
+  const client = new LinearGraphqlClient(normalizedToken, fetchImpl); const workspace = await client.query<{ organization?: JsonValueObject | null }>(workspaceAndViewerQuery);
   const resources: DiscoveredResourceDto[] = []; const organization = workspace.organization;
   if (organization && text(organization.id) && text(organization.name)) resources.push({ scopeType: "linear.workspace", externalId: text(organization.id)!, externalName: text(organization.name)!, group: "Workspace", config: {} });
   const [teams, projects] = await Promise.all([fetchConnection(client, "teams", teamsQuery), fetchConnection(client, "projects", projectsQuery)]);
