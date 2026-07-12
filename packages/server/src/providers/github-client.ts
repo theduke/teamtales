@@ -36,8 +36,7 @@ export class GitHubRestClient {
   ): AsyncGenerator<GitHubObject> {
     let url: string | undefined = this.buildUrl(path, query);
     while (url) {
-      const response = await this.request(url);
-      const value = await response.json();
+      const { link, value } = await this.requestJson(url);
       if (!Array.isArray(value))
         throw new Error(`GitHub API returned a non-array response for ${path}`);
       for (const item of value) {
@@ -45,23 +44,23 @@ export class GitHubRestClient {
           throw new Error(`GitHub API returned a non-object item for ${path}`);
         yield item;
       }
-      url = nextLink(response.headers.get("link"));
+      url = nextLink(link);
     }
   }
 
   private async getJson(path: string, query: Record<string, string>): Promise<JsonValue> {
-    const value = await (await this.request(this.buildUrl(path, query))).json();
+    const { value } = await this.requestJson(this.buildUrl(path, query));
     if (!isJsonValue(value)) throw new Error(`GitHub API returned a non-JSON response for ${path}`);
     return value;
   }
 
-  private async request(url: string): Promise<Response> {
+  /** The deadline covers both receiving headers and consuming the response body. */
+  private async requestJson(url: string): Promise<{ link: string | null; value: unknown }> {
     this.requestsMade += 1;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-    let response: Response;
     try {
-      response = await this.fetchImpl(url, {
+      const response = await this.fetchImpl(url, {
         headers: {
           accept: "application/vnd.github+json",
           authorization: `Bearer ${this.token}`,
@@ -70,6 +69,8 @@ export class GitHubRestClient {
         },
         signal: controller.signal,
       });
+      if (!response.ok) throw await githubApiError(response);
+      return { link: response.headers.get("link"), value: await response.json() };
     } catch (error) {
       if (controller.signal.aborted) {
         throw new Error(
@@ -80,8 +81,6 @@ export class GitHubRestClient {
     } finally {
       clearTimeout(timeout);
     }
-    if (response.ok) return response;
-    throw await githubApiError(response);
   }
 
   private buildUrl(path: string, query: Record<string, string>): string {
