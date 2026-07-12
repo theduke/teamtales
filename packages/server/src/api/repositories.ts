@@ -1,11 +1,14 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, like, or } from "drizzle-orm";
 import type {
   DashboardDto,
   IntegrationDto,
   JsonObject,
+  JsonValue,
   OrganizationDto,
   ReportDetailDto,
   ReportSummaryDto,
+  SourceObjectDto,
+  SourceObjectSummaryDto,
   SyncScopeDto,
 } from "@teamtales/common/api";
 import type { Metric, Provider, ReportContext } from "@teamtales/common/domain";
@@ -17,6 +20,7 @@ import {
   organizationMemberships,
   organizations,
   reports,
+  sourceObjects,
   syncScopes,
 } from "../db/schema.js";
 
@@ -96,6 +100,58 @@ export async function listReports(
     .where(eq(reports.organizationId, organizationId))
     .orderBy(desc(reports.periodEnd), desc(reports.createdAt), asc(reports.id));
   return rows.map(toReportSummary);
+}
+
+export async function listSourceObjects(
+  db: DbExecutor,
+  organizationId: string,
+  options: { objectType?: string; search?: string; offset?: number; limit?: number } = {},
+): Promise<{ items: SourceObjectSummaryDto[]; nextCursor?: string; types: string[] }> {
+  const conditions = [eq(sourceObjects.organizationId, organizationId)];
+  if (options.objectType) conditions.push(eq(sourceObjects.objectType, options.objectType));
+  if (options.search) {
+    const pattern = `%${options.search}%`;
+    const searchCondition = or(
+      like(sourceObjects.externalId, pattern),
+      like(sourceObjects.rawJson, pattern),
+    );
+    if (searchCondition) conditions.push(searchCondition);
+  }
+  const limit = options.limit ?? 50;
+  const offset = options.offset ?? 0;
+  const rows = await db
+    .select()
+    .from(sourceObjects)
+    .where(and(...conditions))
+    .orderBy(desc(sourceObjects.lastSeenAt), asc(sourceObjects.id))
+    .limit(limit + 1)
+    .offset(offset);
+  const typeRows = await db
+    .selectDistinct({ objectType: sourceObjects.objectType })
+    .from(sourceObjects)
+    .where(eq(sourceObjects.organizationId, organizationId))
+    .orderBy(asc(sourceObjects.objectType));
+  const page = rows.slice(0, limit);
+  return {
+    items: page.map(toSourceObjectSummary),
+    ...(rows.length > limit ? { nextCursor: String(offset + limit) } : {}),
+    types: typeRows.map((row) => row.objectType),
+  };
+}
+
+export async function getSourceObjectDto(
+  db: DbExecutor,
+  organizationId: string,
+  id: string,
+): Promise<SourceObjectDto | undefined> {
+  const [row] = await db
+    .select()
+    .from(sourceObjects)
+    .where(and(eq(sourceObjects.organizationId, organizationId), eq(sourceObjects.id, id)))
+    .limit(1);
+  return row
+    ? { ...toSourceObjectSummary(row), raw: JSON.parse(row.rawJson) as JsonValue }
+    : undefined;
 }
 
 export async function getReportDto(
@@ -214,5 +270,25 @@ function toReportDetail(row: ReportRow): ReportDetailDto {
     ...toReportSummary(row),
     bodyMarkdown: row.bodyMarkdown,
     structured: JSON.parse(row.structuredJson) as JsonObject,
+  };
+}
+
+function toSourceObjectSummary(row: typeof sourceObjects.$inferSelect): SourceObjectSummaryDto {
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    integrationId: row.integrationId,
+    ...(row.syncScopeId ? { syncScopeId: row.syncScopeId } : {}),
+    provider: row.provider as Provider,
+    objectType: row.objectType,
+    externalId: row.externalId,
+    ...(row.externalUrl ? { externalUrl: row.externalUrl } : {}),
+    ...(row.externalCreatedAt ? { externalCreatedAt: row.externalCreatedAt } : {}),
+    ...(row.externalUpdatedAt ? { externalUpdatedAt: row.externalUpdatedAt } : {}),
+    ...(row.externalDeletedAt ? { externalDeletedAt: row.externalDeletedAt } : {}),
+    firstSeenAt: row.firstSeenAt,
+    lastSeenAt: row.lastSeenAt,
+    lastChangedAt: row.lastChangedAt,
+    sourceState: row.sourceState,
   };
 }

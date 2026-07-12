@@ -586,6 +586,32 @@ describe("TeamTales API", mysqlTestOptions, () => {
         )[0]?.count,
         1,
       );
+      const [sourceObject] = await app.database.db
+        .select()
+        .from(sourceObjects)
+        .where(eq(sourceObjects.organizationId, "org_api"))
+        .limit(1);
+      assert.ok(sourceObject);
+      const items = await apiFetch<{ items: Array<{ id: string; objectType: string }> }>(
+        app.url,
+        "/api/organizations/org_api/source-objects?type=github.repository&search=widgets",
+      );
+      assert.equal(items.status, 200);
+      assert.equal(
+        items.body.ok && items.body.data.items.some((item) => item.id === sourceObject.id),
+        true,
+      );
+      assert.equal(
+        items.body.ok &&
+          items.body.data.items.every((item) => item.objectType === "github.repository"),
+        true,
+      );
+      const detail = await apiFetch<{ id: string; raw: { full_name: string } }>(
+        app.url,
+        `/api/source-objects/${sourceObject.id}?organizationId=org_api`,
+      );
+      assert.equal(detail.status, 200);
+      assert.equal(detail.body.ok && detail.body.data.raw.full_name, "acme/widgets");
     } finally {
       globalThis.fetch = originalFetch;
     }

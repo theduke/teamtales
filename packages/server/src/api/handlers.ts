@@ -26,7 +26,9 @@ import {
   listIntegrations,
   listOrganizations,
   listReports,
+  listSourceObjects,
   listSyncScopes,
+  getSourceObjectDto,
 } from "./repositories.js";
 import {
   addPersonalAccessTokenIntegrationService,
@@ -449,6 +451,41 @@ export async function listSyncScopesHandler(
   };
 }
 
+export async function listSourceObjectsHandler(input: HandlerInput): Promise<HandlerResult> {
+  const organizationId = input.params.organizationId ?? "";
+  await requireMembership(input, organizationId);
+  const cursor = input.url.searchParams.get("cursor");
+  const offset = cursor ? Number(cursor) : 0;
+  if (!Number.isInteger(offset) || offset < 0)
+    throw new HttpError(400, "invalid_request", "cursor must be a non-negative integer.");
+  return {
+    status: 200,
+    data: await listSourceObjects(input.context.database, organizationId, {
+      objectType: input.url.searchParams.get("type") || undefined,
+      search: input.url.searchParams.get("search") || undefined,
+      offset,
+    }),
+  };
+}
+
+export async function getSourceObjectHandler(input: HandlerInput): Promise<HandlerResult> {
+  const organizationId = input.url.searchParams.get("organizationId");
+  if (!organizationId)
+    throw new HttpError(
+      400,
+      "invalid_request",
+      "Missing required query parameter: organizationId.",
+    );
+  await requireMembership(input, organizationId);
+  const item = await getSourceObjectDto(
+    input.context.database,
+    organizationId,
+    input.params.sourceObjectId ?? "",
+  );
+  if (!item) throw new HttpError(404, "not_found", "Source object not found.");
+  return { status: 200, data: item };
+}
+
 export async function createSyncScopeHandler(
   input: HandlerInput,
 ): Promise<{ status: number; data: JsonValue }> {
@@ -617,7 +654,14 @@ export async function listSyncRunResourcesHandler(input: HandlerInput): Promise<
   if (!run) throw new HttpError(404, "not_found", "Sync run not found.");
   await requireMembership(input, run.run.organizationId);
   const cursor = input.url.searchParams.get("cursor") ?? undefined;
-  const result = await listSyncRunResourceProgress(input.context.database, run.run.id, cursor);
+  const limitParam = input.url.searchParams.get("limit");
+  const limit = limitParam === null ? undefined : Number(limitParam);
+  const result = await listSyncRunResourceProgress(
+    input.context.database,
+    run.run.id,
+    cursor,
+    limit !== undefined && Number.isFinite(limit) ? limit : undefined,
+  );
   return {
     status: 200,
     data: result as unknown as JsonObject,

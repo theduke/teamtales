@@ -11,9 +11,11 @@ import type {
   GenerateWeeklyReportRequestDto,
   IntegrationSummaryDto,
   OrganizationSummaryDto,
+  ListSourceObjectsResponseDto,
   PageDto,
   ReportDetailDto,
   ReportSummaryDto,
+  SourceObjectDto,
   SyncScopeDto,
   ListIntegrationResourcesResponseDto,
   SetSyncScopeSelectionRequestDto,
@@ -128,6 +130,26 @@ class BrowserTeamtalesApiClient {
     );
   }
 
+  listSourceObjects(
+    organizationId: string,
+    options: { type?: string; search?: string; cursor?: string } = {},
+  ): Promise<ListSourceObjectsResponseDto> {
+    const query = new URLSearchParams();
+    if (options.type) query.set("type", options.type);
+    if (options.search) query.set("search", options.search);
+    if (options.cursor) query.set("cursor", options.cursor);
+    const suffix = query.size ? `?${query}` : "";
+    return request<ListSourceObjectsResponseDto>(
+      `/api/organizations/${encodeURIComponent(organizationId)}/source-objects${suffix}`,
+    );
+  }
+
+  getSourceObject(sourceObjectId: string, organizationId: string): Promise<SourceObjectDto> {
+    return request<SourceObjectDto>(
+      `/api/source-objects/${encodeURIComponent(sourceObjectId)}?organizationId=${encodeURIComponent(organizationId)}`,
+    );
+  }
+
   getReport(reportId: string, organizationId: string): Promise<ReportDetailDto> {
     return request<ReportDetailDto>(
       `/api/reports/${encodeURIComponent(reportId)}?organizationId=${encodeURIComponent(organizationId)}`,
@@ -164,8 +186,12 @@ class BrowserTeamtalesApiClient {
   listSyncRunResources(
     syncRunId: string,
     cursor?: string,
+    limit?: number,
   ): Promise<PageDto<SyncRunResourceProgressDto>> {
-    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+    const params = new URLSearchParams();
+    if (cursor) params.set("cursor", cursor);
+    if (limit) params.set("limit", String(limit));
+    const query = params.size > 0 ? `?${params.toString()}` : "";
     return request<PageDto<SyncRunResourceProgressDto>>(
       `/api/sync-runs/${encodeURIComponent(syncRunId)}/resources${query}`,
     );

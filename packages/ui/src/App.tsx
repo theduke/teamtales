@@ -1,6 +1,6 @@
 import type { FormEvent, ReactElement, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router";
+import { Navigate, NavLink, Route, Routes, useNavigate, useParams } from "react-router";
 import {
   ActionIcon,
   Alert,
@@ -17,6 +17,7 @@ import {
   NativeSelect,
   Paper,
   PasswordInput,
+  Pagination,
   Progress,
   SimpleGrid,
   Stack,
@@ -44,8 +45,11 @@ import {
 import type {
   DashboardDto,
   GenerateWeeklyReportRequestDto,
+  ListSourceObjectsResponseDto,
   OrganizationSyncStatusDto,
   ReportDetailDto,
+  SourceObjectDto,
+  SourceObjectSummaryDto,
   SyncRunProgressDto,
   SyncRunResourceProgressDto,
   SyncRunDto,
@@ -455,7 +459,13 @@ export function App(): ReactElement {
           />
           <Route
             path="/data"
-            element={<DataSection dashboard={dashboard} reportDetail={reportDetail} />}
+            element={<DataSection organizationId={selectedOrganizationId} onError={handleError} />}
+          />
+          <Route
+            path="/data/:sourceObjectId"
+            element={
+              <DataDetailSection organizationId={selectedOrganizationId} onError={handleError} />
+            }
           />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
@@ -953,7 +963,23 @@ function SyncSection({
 type ActiveSyncRun = {
   progress: SyncRunProgressDto;
   resources: SyncRunResourceProgressDto[];
+  resourcePage: number;
 };
+
+const syncResourcePageSize = 1_000;
+
+async function loadSyncRunResourcePage(
+  syncRunId: string,
+  targetPage: number,
+): Promise<SyncRunResourceProgressDto[]> {
+  let cursor: string | undefined;
+  for (let page = 1; page <= targetPage; page += 1) {
+    const result = await apiClient.listSyncRunResources(syncRunId, cursor, syncResourcePageSize);
+    if (page === targetPage || !result.nextCursor) return result.items;
+    cursor = result.nextCursor;
+  }
+  return [];
+}
 
 function ActiveSyncProgress({
   organizationId,
@@ -970,6 +996,7 @@ function ActiveSyncProgress({
   const [error, setError] = useState<string>();
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [cancellingRunId, setCancellingRunId] = useState<string>();
+  const [resourcePages, setResourcePages] = useState<Record<string, number>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -986,11 +1013,12 @@ function ActiveSyncProgress({
         const nextStatus = await apiClient.getOrganizationSyncStatus(organizationId);
         const nextRuns = await Promise.all(
           nextStatus.activeRuns.map(async (run) => {
+            const resourcePage = resourcePages[run.id] ?? 1;
             const [progress, resources] = await Promise.all([
               apiClient.getSyncRun(run.id),
-              apiClient.listSyncRunResources(run.id),
+              loadSyncRunResourcePage(run.id, resourcePage),
             ]);
-            return { progress, resources: resources.items };
+            return { progress, resources, resourcePage };
           }),
         );
         if (cancelled) return;
@@ -1012,7 +1040,7 @@ function ActiveSyncProgress({
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [onActiveRunsChange, organizationId, refreshSignal, refreshNonce]);
+  }, [onActiveRunsChange, organizationId, refreshSignal, refreshNonce, resourcePages]);
 
   const cancelRun = (syncRunId: string) => {
     setCancellingRunId(syncRunId);
@@ -1055,13 +1083,17 @@ function ActiveSyncProgress({
             {error}
           </Alert>
         )}
-        {runs.map(({ progress, resources }) => (
+        {runs.map(({ progress, resources, resourcePage }) => (
           <SyncRunProgressCard
             key={progress.run.id}
             progress={progress}
             resources={resources}
+            resourcePage={resourcePage}
             cancelling={cancellingRunId === progress.run.id}
             onCancel={() => cancelRun(progress.run.id)}
+            onResourcePageChange={(page) =>
+              setResourcePages((pages) => ({ ...pages, [progress.run.id]: page }))
+            }
           />
         ))}
         {!error && !loading && runs.length === 0 && (
@@ -1077,13 +1109,17 @@ function ActiveSyncProgress({
 function SyncRunProgressCard({
   progress,
   resources,
+  resourcePage,
   cancelling,
   onCancel,
+  onResourcePageChange,
 }: {
   progress: SyncRunProgressDto;
   resources: SyncRunResourceProgressDto[];
+  resourcePage: number;
   cancelling: boolean;
   onCancel: () => void;
+  onResourcePageChange: (page: number) => void;
 }): ReactElement {
   const { run, childRunCounts } = progress;
   const total = Object.values(childRunCounts).reduce((sum, count) => sum + count, 0);
@@ -1092,6 +1128,9 @@ function SyncRunProgressCard({
     (childRunCounts.failed ?? 0) +
     (childRunCounts.cancelled ?? 0);
   const percent = total === 0 ? 0 : Math.round((complete / total) * 100);
+  const resourcePageCount = Math.ceil(total / syncResourcePageSize);
+  const firstResource = (resourcePage - 1) * syncResourcePageSize + 1;
+  const lastResource = Math.min(firstResource + resources.length - 1, total);
   const counters = resources.length
     ? resources.reduce(
         (sum, item) => ({
@@ -1165,11 +1204,19 @@ function SyncRunProgressCard({
                 </Badge>
               </Group>
             ))}
-            {resources.length < total && (
+            <Group justify="space-between" gap="sm">
               <Text size="xs" c="dimmed">
-                Showing {resources.length} of {total} resources
+                Showing {firstResource}-{lastResource} of {total} resources
               </Text>
-            )}
+              {resourcePageCount > 1 && (
+                <Pagination
+                  size="sm"
+                  value={resourcePage}
+                  onChange={onResourcePageChange}
+                  total={resourcePageCount}
+                />
+              )}
+            </Group>
           </Stack>
         )}
       </Stack>
@@ -1350,25 +1397,258 @@ function ReportsSection({
 }
 
 function DataSection({
-  dashboard,
-  reportDetail,
+  organizationId,
+  onError,
 }: {
-  dashboard: DashboardDto | undefined;
-  reportDetail: ReportDetailDto | undefined;
+  organizationId: string;
+  onError: (error: unknown) => void;
 }): ReactElement {
+  const navigate = useNavigate();
+  const [items, setItems] = useState<SourceObjectSummaryDto[]>([]);
+  const [types, setTypes] = useState<string[]>([]);
+  const [objectType, setObjectType] = useState("");
+  const [search, setSearch] = useState("");
+  const [cursor, setCursor] = useState<string>();
+  const [previousCursors, setPreviousCursors] = useState<string[]>([]);
+  const [nextCursor, setNextCursor] = useState<string>();
+  const [loadingItems, setLoadingItems] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (!organizationId) {
+      setItems([]);
+      setTypes([]);
+      return;
+    }
+    setLoadingItems(true);
+    void apiClient
+      .listSourceObjects(organizationId, { type: objectType, search, cursor })
+      .then((page) => {
+        if (!cancelled) {
+          setItems(page.items);
+          setTypes(page.types);
+          setNextCursor(page.nextCursor);
+        }
+      })
+      .catch((error) => !cancelled && onError(error))
+      .finally(() => !cancelled && setLoadingItems(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [cursor, objectType, onError, organizationId, search]);
+  const resetPagination = () => {
+    setCursor(undefined);
+    setPreviousCursors([]);
+  };
   return (
     <Stack>
-      <PageTitle
-        title="Data"
-        subtitle="Raw API payloads for troubleshooting and integration work."
-      />
-      <Panel title="Dashboard DTO">
-        <Code block>{JSON.stringify(dashboard ?? null, null, 2)}</Code>
-      </Panel>
-      <Panel title="Report DTO">
-        <Code block>{JSON.stringify(reportDetail ?? null, null, 2)}</Code>
+      <PageTitle title="Data" subtitle="Explore every item synced from your connected providers." />
+      <Panel title="Synced items">
+        <Group align="end" mb="md">
+          <NativeSelect
+            label="Type"
+            value={objectType}
+            onChange={(event) => {
+              setObjectType(event.target.value);
+              resetPagination();
+            }}
+            data={[
+              { value: "", label: "All types" },
+              ...types.map((type) => ({ value: type, label: type })),
+            ]}
+          />
+          <TextInput
+            label="Search"
+            placeholder="Repository, ID, or payload text"
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              resetPagination();
+            }}
+            style={{ flex: 1 }}
+          />
+        </Group>
+        {loadingItems ? (
+          <Text c="dimmed">Loading synced items…</Text>
+        ) : (
+          <DataTable
+            columns={["Type", "Provider", "External ID", "State", "Last seen", "Open"]}
+            rows={items.map((item) => [
+              item.objectType,
+              item.provider,
+              item.externalId,
+              item.sourceState,
+              formatDateTime(item.lastSeenAt),
+              <Button
+                key={item.id}
+                size="xs"
+                variant="light"
+                onClick={() => void navigate(`/data/${encodeURIComponent(item.id)}`)}
+              >
+                Inspect
+              </Button>,
+            ])}
+            empty="No synced items yet. Items appear here as each provider sync completes."
+          />
+        )}
+        <Group justify="space-between" mt="md">
+          <Button
+            variant="default"
+            disabled={previousCursors.length === 0}
+            onClick={() => {
+              const previous = previousCursors.at(-1);
+              setPreviousCursors((values) => values.slice(0, -1));
+              setCursor(previous || undefined);
+            }}
+          >
+            Previous
+          </Button>
+          <Text size="sm" c="dimmed">
+            {items.length} items on this page
+          </Text>
+          <Button
+            disabled={!nextCursor}
+            onClick={() => {
+              if (!nextCursor) return;
+              setPreviousCursors((values) => [...values, cursor ?? ""]);
+              setCursor(nextCursor);
+            }}
+          >
+            Next
+          </Button>
+        </Group>
       </Panel>
     </Stack>
+  );
+}
+function DataDetailSection({
+  organizationId,
+  onError,
+}: {
+  organizationId: string;
+  onError: (error: unknown) => void;
+}): ReactElement {
+  const navigate = useNavigate();
+  const { sourceObjectId = "" } = useParams();
+  const [item, setItem] = useState<SourceObjectDto>();
+  useEffect(() => {
+    let cancelled = false;
+    setItem(undefined);
+    if (!organizationId || !sourceObjectId) return;
+    void apiClient
+      .getSourceObject(sourceObjectId, organizationId)
+      .then((value) => !cancelled && setItem(value))
+      .catch((error) => !cancelled && onError(error));
+    return () => {
+      cancelled = true;
+    };
+  }, [onError, organizationId, sourceObjectId]);
+  return (
+    <Stack>
+      <Group>
+        <Button variant="subtle" onClick={() => void navigate("/data")}>
+          Back to data
+        </Button>
+        <PageTitle
+          title={item ? `${item.objectType}: ${item.externalId}` : "Data item"}
+          subtitle="Synced provider payload"
+        />
+      </Group>
+      {item ? (
+        <Panel title="Payload">
+          <Stack gap="sm">
+            {item.externalUrl && (
+              <Anchor href={item.externalUrl} target="_blank" rel="noreferrer">
+                Open in provider
+              </Anchor>
+            )}
+            <JsonViewer value={item.raw} />
+          </Stack>
+        </Panel>
+      ) : (
+        <Empty text="Loading synced item…" />
+      )}
+    </Stack>
+  );
+}
+function JsonViewer({ value, name, depth = 0 }: { value: unknown; name?: string; depth?: number }) {
+  if (value === null) return <JsonValue name={name} value="null" color="dimmed" />;
+  if (Array.isArray(value)) {
+    return (
+      <JsonBranch name={name} label={`Array (${value.length})`} depth={depth}>
+        {value.map((item, index) => (
+          <JsonViewer key={index} name={`[${index}]`} value={item} depth={depth + 1} />
+        ))}
+      </JsonBranch>
+    );
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return (
+      <JsonBranch name={name} label={`Object (${entries.length})`} depth={depth}>
+        {entries.map(([key, item]) => (
+          <JsonViewer key={key} name={key} value={item} depth={depth + 1} />
+        ))}
+      </JsonBranch>
+    );
+  }
+  if (typeof value === "string" && /^https?:\/\//.test(value)) {
+    return (
+      <Group gap="xs" wrap="nowrap">
+        {name && <Text fw={600}>{name}</Text>}
+        <Anchor href={value} target="_blank" rel="noreferrer" truncate>
+          {value}
+        </Anchor>
+      </Group>
+    );
+  }
+  return (
+    <JsonValue
+      name={name}
+      value={JSON.stringify(value)}
+      color={typeof value === "string" ? "blue" : "orange"}
+    />
+  );
+}
+function JsonBranch({
+  name,
+  label,
+  depth,
+  children,
+}: {
+  name?: string;
+  label: string;
+  depth: number;
+  children: ReactNode;
+}) {
+  return (
+    <Box
+      pl={depth ? "md" : 0}
+      style={{ borderLeft: depth ? "2px solid var(--mantine-color-gray-3)" : undefined }}
+    >
+      <details open={depth < 2}>
+        <summary style={{ cursor: "pointer" }}>
+          <Text component="span" fw={600} mr="xs">
+            {name ?? "payload"}
+          </Text>
+          <Badge component="span" size="xs" variant="light" color="gray">
+            {label}
+          </Badge>
+        </summary>
+        <Stack gap={4} mt="xs">
+          {children}
+        </Stack>
+      </details>
+    </Box>
+  );
+}
+function JsonValue({ name, value, color }: { name?: string; value: string; color: string }) {
+  return (
+    <Group gap="xs" wrap="nowrap">
+      {name && <Text fw={600}>{name}</Text>}
+      <Code c={color} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+        {value}
+      </Code>
+    </Group>
   );
 }
 function PageTitle({ title, subtitle }: { title: string; subtitle: string }) {

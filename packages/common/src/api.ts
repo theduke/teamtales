@@ -43,6 +43,30 @@ export type OrganizationDto = {
 
 export type OrganizationSummaryDto = OrganizationDto;
 
+export type SourceObjectSummaryDto = {
+  id: string;
+  organizationId: string;
+  integrationId: string;
+  syncScopeId?: string;
+  provider: Provider;
+  objectType: string;
+  externalId: string;
+  externalUrl?: string;
+  externalCreatedAt?: string;
+  externalUpdatedAt?: string;
+  externalDeletedAt?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastChangedAt: string;
+  sourceState: string;
+};
+
+export type SourceObjectDto = SourceObjectSummaryDto & { raw: JsonValue };
+
+export type ListSourceObjectsResponseDto = PageDto<SourceObjectSummaryDto> & {
+  types: string[];
+};
+
 export type AuthUserDto = {
   id: string;
   email: string;
@@ -467,6 +491,7 @@ export interface TeamtalesApiClient {
   listSyncRunResources(
     syncRunId: string,
     cursor?: string,
+    limit?: number,
   ): Promise<PageDto<SyncRunResourceProgressDto>>;
   getOrganizationSyncStatus(organizationId: string): Promise<OrganizationSyncStatusDto>;
 }
