@@ -13,6 +13,7 @@ npm run dev:local
 ```
 
 The API runs on port 9100 by default and Vite proxies `/api` to it from port 9101. Database migrations run automatically when the API starts.
+`dev:local` loads the development-only settings in `.env.dev`, including `TEAMTALES_CREDENTIAL_KEY`.
 Use the displayed `http://127.0.0.1:9101` URL so authenticated writes match the configured CSRF origin.
 
 Run `npm run db:down` to stop MySQL. Its data is retained in the `mysql-data` Docker volume. The local container uses host networking and binds port 3306, so that port must be available. For a non-Compose database, set `DATABASE_URL` or the `DB_*` variables and use `npm run dev`.
