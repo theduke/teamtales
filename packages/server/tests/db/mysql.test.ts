@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 
 import { authenticatePassword, setPassword } from "../../src/auth/index.js";
-import { openDatabase, mysqlConnectionOptions, resolveMigrationsFolder } from "../../src/db/index.js";
+import { openDatabase, migrationsEnabled, mysqlConnectionOptions, resolveMigrationsFolder } from "../../src/db/index.js";
 import { integrations, organizations, syncScopes, users } from "../../src/db/schema.js";
 import { addPersonalAccessTokenIntegrationService, addSyncScopeService, createOrganizationService } from "../../src/services/index.js";
 
@@ -20,6 +20,13 @@ describe("MySQL configuration", () => {
 
   it("accepts DATABASE_URL", () => {
     assert.equal(mysqlConnectionOptions({ DATABASE_URL: "mysql://user:pass@localhost/db" }).uri, "mysql://user:pass@localhost/db");
+  });
+
+  it("only auto-runs migrations when explicitly enabled", () => {
+    assert.equal(migrationsEnabled({}), false);
+    assert.equal(migrationsEnabled({ TEAMTALES_AUTO_MIGRATE: "true" }), true);
+    assert.equal(migrationsEnabled({ TEAMTALES_AUTO_MIGRATE: "0" }), false);
+    assert.throws(() => migrationsEnabled({ TEAMTALES_AUTO_MIGRATE: "sometimes" }), /TEAMTALES_AUTO_MIGRATE/);
   });
 
   it("finds migrations from the repository root and server workspace", () => {

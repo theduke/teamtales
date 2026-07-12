@@ -37,13 +37,24 @@ export function resolveMigrationsFolder(cwd = process.cwd(), moduleUrl = import.
   return folder;
 }
 
+/** Production is opt-in; set TEAMTALES_AUTO_MIGRATE=true for local development. */
+export function migrationsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env.TEAMTALES_AUTO_MIGRATE;
+  if (value === undefined || value === "") return false;
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
+  throw new Error("TEAMTALES_AUTO_MIGRATE must be true/false or 1/0.");
+}
+
 export async function openDatabase(options: OpenDatabaseOptions = {}): Promise<OpenDatabaseResult> {
-  const connectionOptions = mysqlConnectionOptions(options.env);
-  if (options.runMigrations !== false) {
+  const env = options.env ?? process.env;
+  const connectionOptions = mysqlConnectionOptions(env);
+  if (options.runMigrations ?? migrationsEnabled(env)) {
     const migrationPool = mysql.createPool({ ...connectionOptions, connectionLimit: 2 });
     try {
       const migrationDb = drizzle({ client: migrationPool, schema, mode: "default" });
       const migrationsFolder = options.migrationsFolder ?? resolveMigrationsFolder();
+      await migrationPool.query("CREATE TABLE IF NOT EXISTS `__drizzle_migrations` (`id` int NOT NULL AUTO_INCREMENT, `hash` text NOT NULL, `created_at` bigint, `name` text NOT NULL, PRIMARY KEY (`id`))");
       await migrate(migrationDb, { migrationsFolder });
     } finally {
       await migrationPool.end();

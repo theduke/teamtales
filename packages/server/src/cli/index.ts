@@ -56,7 +56,7 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
     const commandName = parsed.command.join(" ");
     if (!supportedCommands.has(commandName)) throw new Error(`Unknown command: ${parsed.command.join(" ")}`);
 
-    const opened = await openCliDatabase(parsed, env);
+    const opened = await openCliDatabase(parsed, env, commandName === "init-db" || commandName === "migrate");
     try {
       let result: Record<string, unknown>;
       switch (commandName) {
@@ -319,8 +319,8 @@ function cliEnvironment(parsed: ParsedArgs, env: NodeJS.ProcessEnv): NodeJS.Proc
   return databaseUrl ? { ...env, DATABASE_URL: databaseUrl } : env;
 }
 
-function openCliDatabase(parsed: ParsedArgs, env: NodeJS.ProcessEnv) {
-  return openDatabase({ env: cliEnvironment(parsed, env), runMigrations: true });
+function openCliDatabase(parsed: ParsedArgs, env: NodeJS.ProcessEnv, runMigrations: boolean) {
+  return openDatabase({ env: cliEnvironment(parsed, env), runMigrations });
 }
 
 function databaseLabel(parsed: ParsedArgs, env: NodeJS.ProcessEnv): string | undefined {

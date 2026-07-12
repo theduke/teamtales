@@ -7,7 +7,7 @@ import { createApiServer } from "./server.js";
 
 export async function startDevServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const config = createApiConfig(env);
-  const database = await openDatabase({ env, runMigrations: true });
+  const database = await openDatabase({ env });
   const server = createApiServer({ config, database: database.db });
 
   server.listen(config.port, config.host, () => {
