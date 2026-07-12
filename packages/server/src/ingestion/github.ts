@@ -14,7 +14,7 @@ export const githubMvpObjectTypes = [
   "github.user",
 ] as const satisfies readonly GitHubSourceObjectType[];
 
-export const githubMvpScopeTypes = ["github.repository"] as const;
+export const githubMvpScopeTypes = ["github.repository", "github.organization"] as const;
 
 export interface GitHubRepositoryScopeConfig {
   repository: string;
@@ -44,6 +44,10 @@ export class GitHubSourceConnector implements SourceConnector {
   }
 
   async fetchSourceObjects(context: ConnectorExecutionContext): Promise<ConnectorFetchResult> {
+    if (context.scope.scopeType === "github.organization") {
+      return this.fetchOrganizationSourceObjects(context);
+    }
+
     if (context.scope.scopeType !== "github.repository") {
       throw new Error(`Unsupported GitHub scope type: ${context.scope.scopeType}`);
     }
@@ -131,6 +135,62 @@ export class GitHubSourceConnector implements SourceConnector {
         repository: repository.name,
         apiBaseUrl: this.apiBaseUrl,
         requestsMade: client.requestsMade,
+      },
+    };
+  }
+
+  private async fetchOrganizationSourceObjects(context: ConnectorExecutionContext): Promise<ConnectorFetchResult> {
+    if (context.scope.selectionMode === "selected") {
+      return {
+        objects: [],
+        cursorUpdates: [],
+        metadata: { organization: context.scope.externalName, repositories: 0, selectionMode: "selected" },
+      };
+    }
+
+    if (context.scope.selectionMode !== "all") {
+      throw new Error(`Unsupported GitHub organization selection mode: ${context.scope.selectionMode}`);
+    }
+
+    const token = context.credential.encryptedSecret.trim();
+    if (!token) {
+      throw new Error("Missing GitHub personal access token");
+    }
+
+    const organization = parseOrganizationScope(context);
+    const client = new GitHubRestClient(this.fetchImpl, this.apiBaseUrl, token);
+    const results: ConnectorFetchResult[] = [];
+
+    for await (const repository of client.paginateObjects(`/orgs/${encodeURIComponent(organization)}/repos`, {
+      type: "all",
+      per_page: "100",
+    })) {
+      const fullName = stringField(repository.full_name);
+      if (!fullName) {
+        throw new Error("GitHub organization repository response is missing full_name");
+      }
+
+      results.push(await this.fetchSourceObjects({
+        ...context,
+        scope: {
+          ...context.scope,
+          scopeType: "github.repository",
+          externalId: stringField(repository.id) ?? fullName,
+          externalName: fullName,
+          selectionMode: "individual",
+          configJson: { repository: fullName },
+        },
+      }));
+    }
+
+    return {
+      objects: results.flatMap((result) => result.objects),
+      cursorUpdates: mergeCursorUpdates(results.flatMap((result) => result.cursorUpdates)),
+      metadata: {
+        organization,
+        repositories: results.length,
+        apiBaseUrl: this.apiBaseUrl,
+        requestsMade: client.requestsMade + results.reduce((total, result) => total + metadataNumber(result.metadata, "requestsMade"), 0),
       },
     };
   }
@@ -256,6 +316,29 @@ function parseRepositoryScope(context: ConnectorExecutionContext): GitHubReposit
     name: repository,
     path: `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
   };
+}
+
+function parseOrganizationScope(context: ConnectorExecutionContext): string {
+  const organization = context.scope.externalName || context.scope.externalId;
+  if (!organization || !/^[^/\s]+$/.test(organization)) {
+    throw new Error("GitHub organization scope must provide an organization login");
+  }
+  return organization;
+}
+
+function mergeCursorUpdates(updates: readonly ConnectorCursorUpdate[]): ConnectorCursorUpdate[] {
+  const merged = new Map<string, ConnectorCursorUpdate>();
+  for (const update of updates) {
+    const existing = merged.get(update.objectType);
+    if (!existing || (update.highWatermark && (!existing.highWatermark || update.highWatermark > existing.highWatermark))) {
+      merged.set(update.objectType, update);
+    }
+  }
+  return [...merged.values()];
+}
+
+function metadataNumber(metadata: JsonValue | undefined, key: string): number {
+  return isJsonObject(metadata) && typeof metadata[key] === "number" ? metadata[key] : 0;
 }
 
 function latestCursor(context: ConnectorExecutionContext, objectType: GitHubSourceObjectType): Date | undefined {

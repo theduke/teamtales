@@ -79,6 +79,33 @@ describe("GitHubSourceConnector", () => {
     assert.equal(fetch.calls.some((call) => call.path === "/repos/acme/widgets/pulls/6"), false);
   });
 
+  it("expands an all-repositories organization scope into repository syncs", async () => {
+    const fetch = mockGitHubFetch({
+      "GET /orgs/acme/repos?type=all&per_page=100": jsonResponse([repo(), { ...repo(), id: 101, full_name: "acme/gadgets", name: "gadgets" }]),
+      "GET /repos/acme/widgets": jsonResponse(repo()),
+      "GET /repos/acme/widgets/pulls?state=all&sort=updated&direction=asc&per_page=100": jsonResponse([]),
+      "GET /repos/acme/gadgets": jsonResponse({ ...repo(), id: 101, full_name: "acme/gadgets", name: "gadgets" }),
+      "GET /repos/acme/gadgets/pulls?state=all&sort=updated&direction=asc&per_page=100": jsonResponse([]),
+    });
+    const connector = new GitHubSourceConnector({ fetch, apiBaseUrl: "https://api.github.test" });
+
+    const result = await connector.fetchSourceObjects(organizationContext("all"));
+
+    assert.deepEqual(
+      result.objects.map((object) => `${object.objectType}:${object.externalId}`),
+      ["github.repository:100", "github.repository:101"],
+    );
+    assert.equal(fetch.calls.some((call) => call.path === "/orgs/acme/repos"), true);
+  });
+
+  it("does not resync an organization whose selected repositories have child scopes", async () => {
+    const connector = new GitHubSourceConnector({ fetch: mockGitHubFetch({}), apiBaseUrl: "https://api.github.test" });
+
+    const result = await connector.fetchSourceObjects(organizationContext("selected"));
+
+    assert.deepEqual(result.objects, []);
+  });
+
   it("follows pagination links and optionally fetches commits", async () => {
     const fetch = mockGitHubFetch({
       "GET /repos/acme/widgets": jsonResponse(repo()),
@@ -167,6 +194,21 @@ function context(options: { includeCommits?: boolean; cursors?: ConnectorExecuti
       integrationId: "int_1",
       encryptedSecret: "github_pat_secret",
       secretHint: "ghit...cret",
+    },
+  };
+}
+
+function organizationContext(selectionMode: "all" | "selected"): ConnectorExecutionContext {
+  const result = context();
+  return {
+    ...result,
+    scope: {
+      ...result.scope,
+      scopeType: "github.organization",
+      externalId: "1",
+      externalName: "acme",
+      selectionMode,
+      configJson: {},
     },
   };
 }
