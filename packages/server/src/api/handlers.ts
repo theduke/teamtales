@@ -28,7 +28,8 @@ import {
   createOrganizationService,
   generateWeeklyReportFromRequestService,
   runProviderSyncService,
-  setSyncScopeSelectionService,
+  setGitHubScopeSelectionService,
+  setLinearScopeSelectionService,
 } from "../services/index.js";
 import { discoverProviderResources, verifyProviderToken } from "../providers/discovery.js";
 import { decryptCredentialSecret } from "../security/credentials.js";
@@ -232,16 +233,24 @@ export async function listIntegrationResourcesHandler(input: HandlerInput): Prom
   if (!credential) throw new HttpError(404, "not_found", "Integration credential not found.");
   const key = input.context.config.credentialEncryptionKey;
   if (!key) throw new HttpError(500, "credential_key_missing", "Credential encryption key is not configured.");
-  return { status: 200, data: { provider: integration.provider, resources: await discoverProviderResources(integration.provider as Provider, decryptCredentialSecret(credential.encryptedSecret, key)) } };
+  const token = decryptCredentialSecret(credential.encryptedSecret, key);
+  const provider = integration.provider as Provider;
+  return provider === "github"
+    ? { status: 200, data: { provider, discovery: await discoverProviderResources("github", token) } }
+    : { status: 200, data: { provider, discovery: await discoverProviderResources("linear", token) } };
 }
 
 export async function setSyncScopeSelectionHandler(input: HandlerInput): Promise<HandlerResult> {
   const body = assertRecord(await readJsonBody(input.context.request)); const organizationId = requiredString(body, "organizationId"); const principal = await requireMembership(input, organizationId, ["owner", "admin"]);
-  if (!Array.isArray(body.selections)) throw new HttpError(400, "invalid_request", "selections must be an array.");
   const [integration] = await input.context.database.select().from(integrations).where(and(eq(integrations.id, input.params.integrationId ?? ""), eq(integrations.organizationId, organizationId))).limit(1);
   if (!integration) throw new HttpError(404, "not_found", "Integration not found.");
-  const selections = body.selections.map(selection => { const value = assertRecord(selection); return { scopeType: requiredString(value, "scopeType") as Extract<SyncScopeDto["scopeType"], "github.repository" | "linear.workspace" | "linear.team" | "linear.project">, externalId: requiredString(value, "externalId"), externalName: requiredString(value, "externalName"), ...(optionalJsonObject(value, "config") ? { config: optionalJsonObject(value, "config") } : {}) }; });
-  return { status: 200, data: { items: await setSyncScopeSelectionService(input.context.database, { organizationId, userId: principal.userId, integrationId: integration.id, provider: integration.provider as Provider, selections }) } };
+  const [credential] = await input.context.database.select().from(integrationCredentials).where(eq(integrationCredentials.integrationId, integration.id)).limit(1);
+  const key = input.context.config.credentialEncryptionKey; if (!credential || !key) throw new HttpError(500, "credential_key_missing", "Integration credential is unavailable.");
+  try {
+    const provider = integration.provider as Provider; const token = decryptCredentialSecret(credential.encryptedSecret, key);
+    if (provider === "github") { const selection = assertRecord(body.selection); const organizations: Array<{ organizationId: string; mode: "all" } | { organizationId: string; mode: "selected"; repositoryIds: string[] }> = Array.isArray(selection.organizations) ? selection.organizations.map(item => { const value = assertRecord(item); const mode = requiredString(value, "mode"); if (mode === "all") return { organizationId: requiredString(value, "organizationId"), mode }; if (mode === "selected") return { organizationId: requiredString(value, "organizationId"), mode, repositoryIds: arrayOfStrings(value.repositoryIds, "repositoryIds") }; throw new HttpError(400, "invalid_request", "Invalid GitHub organization selection mode."); }) : (() => { throw new HttpError(400, "invalid_request", "selection.organizations must be an array."); })(); const items = await setGitHubScopeSelectionService(input.context.database, { organizationId, userId: principal.userId, integrationId: integration.id, provider, selection: { organizations, repositoryIds: arrayOfStrings(selection.repositoryIds, "repositoryIds") }, discovery: await discoverProviderResources("github", token) }); return { status: 200, data: { items } }; }
+    const selection = assertRecord(body.selection); const mode = requiredString(selection, "mode"); if (mode !== "all" && mode !== "selected") throw new HttpError(400, "invalid_request", "Invalid Linear selection mode."); const items = await setLinearScopeSelectionService(input.context.database, { organizationId, userId: principal.userId, integrationId: integration.id, provider, selection: mode === "all" ? { mode } : { mode, teamIds: arrayOfStrings(selection.teamIds, "teamIds") }, discovery: await discoverProviderResources("linear", token) }); return { status: 200, data: { items } };
+  } catch (error) { if (error instanceof HttpError) throw error; throw new HttpError(400, "provider_discovery_failed", error instanceof Error ? error.message : "Could not validate provider selection."); }
 }
 
 export async function listSyncScopesHandler(input: HandlerInput): Promise<{ status: number; data: JsonValue }> {
@@ -361,6 +370,11 @@ function parseProvider(value: string): Provider {
   if (value !== "github" && value !== "linear") {
     throw new HttpError(400, "unsupported_provider", `Unsupported provider: ${value}.`);
   }
+  return value;
+}
+
+function arrayOfStrings(value: unknown, name: string): string[] {
+  if (!Array.isArray(value) || value.some(item => typeof item !== "string")) throw new HttpError(400, "invalid_request", `${name} must be an array of strings.`);
   return value;
 }
 

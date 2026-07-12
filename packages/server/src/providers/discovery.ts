@@ -1,4 +1,4 @@
-import type { DiscoveredResourceDto, JsonObject } from "@teamtales/common/api";
+import type { GitHubDiscoveryDto, JsonObject, LinearDiscoveryDto } from "@teamtales/common/api";
 import type { Provider } from "@teamtales/common/domain";
 import { GitHubRestClient, type FetchLike as GitHubFetchLike } from "./github-client.js";
 import { fetchConnection, LinearGraphqlClient, type FetchLike as LinearFetchLike, type JsonValueObject } from "./linear-client.js";
@@ -19,25 +19,25 @@ export async function verifyProviderToken(provider: Provider, token: string, fet
     return { displayName: name };
   } catch (error) { throw new ProviderTokenError(error instanceof Error ? error.message : "Invalid provider token."); }
 }
-export async function discoverProviderResources(provider: Provider, token: string, fetchImpl: FetchLike = globalThis.fetch.bind(globalThis)): Promise<DiscoveredResourceDto[]> {
+export async function discoverProviderResources(provider: "github", token: string, fetchImpl?: FetchLike): Promise<GitHubDiscoveryDto>;
+export async function discoverProviderResources(provider: "linear", token: string, fetchImpl?: FetchLike): Promise<LinearDiscoveryDto>;
+export async function discoverProviderResources(provider: Provider, token: string, fetchImpl: FetchLike = globalThis.fetch.bind(globalThis)): Promise<GitHubDiscoveryDto | LinearDiscoveryDto> {
   const normalizedToken = token.trim();
   if (!normalizedToken) throw new ProviderTokenError("Provider token must not be empty.");
   if (provider === "github") {
-    const client = new GitHubRestClient(fetchImpl, "https://api.github.com", normalizedToken); const resources: DiscoveredResourceDto[] = [];
-    await Promise.all([collect(client.paginateObjects("/user/orgs", { per_page: "100" })), (async () => { for await (const repo of client.paginateObjects("/user/repos", { affiliation: "owner,collaborator,organization_member", per_page: "100", sort: "full_name" })) { const id = text(repo.id); const name = text(repo.full_name); const owner = object(repo.owner); if (id && name) resources.push({ scopeType: "github.repository", externalId: id, externalName: name, group: text(owner?.login), description: text(repo.description), config: {} }); } })()]);
-    return resources.sort((a, b) => a.externalName.localeCompare(b.externalName));
+    const client = new GitHubRestClient(fetchImpl, "https://api.github.com", normalizedToken); const [user, orgRows, repoRows] = await Promise.all([client.getObject("/user"), collect(client.paginateObjects("/user/orgs", { per_page: "100" })), collect(client.paginateObjects("/user/repos", { affiliation: "owner,collaborator,organization_member", per_page: "100", sort: "full_name" }))]);
+    const accountId = text(user.id); const login = text(user.login); if (!accountId || !login) throw new Error("GitHub user response did not include an identity.");
+    const organizations = orgRows.flatMap(org => { const id = text(org.id); const orgLogin = text(org.login); return id && orgLogin ? [{ id, login: orgLogin, ...(text(org.name) ? { name: text(org.name) } : {}), ...(text(org.avatar_url) ? { avatarUrl: text(org.avatar_url) } : {}), ...(typeof org.public_repos === "number" ? { repositoryCount: org.public_repos } : {}) }] : []; });
+    const orgIds = new Set(organizations.map(org => org.id));
+    return { account: { id: accountId, login, ...(text(user.name) ? { name: text(user.name) } : {}), ...(text(user.avatar_url) ? { avatarUrl: text(user.avatar_url) } : {}) }, organizations, repositories: repoRows.flatMap(repo => { const id = text(repo.id); const fullName = text(repo.full_name); const owner = object(repo.owner); const ownerId = text(owner?.id); const ownerLogin = text(owner?.login); const ownerType = text(owner?.type); if (!id || !fullName || !ownerId || !ownerLogin || (ownerType !== "Organization" && ownerType !== "User")) return []; return [{ id, fullName, ownerId, ownerLogin, ownerType: ownerType as "Organization" | "User", ...(orgIds.has(ownerId) ? { organizationId: ownerId } : {}), ...(text(repo.visibility) ? { visibility: text(repo.visibility) } : {}), archived: repo.archived === true, fork: repo.fork === true, ...(text(repo.description) ? { description: text(repo.description) } : {}) }]; }).sort((a, b) => a.fullName.localeCompare(b.fullName)) };
   }
   const client = new LinearGraphqlClient(normalizedToken, fetchImpl); const workspace = await client.query<{ organization?: JsonValueObject | null }>(workspaceAndViewerQuery);
-  const resources: DiscoveredResourceDto[] = []; const organization = workspace.organization;
-  if (organization && text(organization.id) && text(organization.name)) resources.push({ scopeType: "linear.workspace", externalId: text(organization.id)!, externalName: text(organization.name)!, group: "Workspace", config: {} });
-  const [teams, projects] = await Promise.all([fetchConnection(client, "teams", teamsQuery), fetchConnection(client, "projects", projectsQuery)]);
-  for (const team of teams) { const id = text(team.id); const name = text(team.name); if (id && name) resources.push({ scopeType: "linear.team", externalId: id, externalName: name, group: "Teams", description: text(team.key), config: {} }); }
-  for (const project of projects) { const id = text(project.id); const name = text(project.name); const teams = object(project.teams); const nodes = Array.isArray(teams?.nodes) ? teams.nodes : []; const firstTeam = object(nodes[0]); if (id && name) resources.push({ scopeType: "linear.project", externalId: id, externalName: name, group: text(firstTeam?.name) ?? "Projects", description: text(project.state), config: {} }); }
-  return resources;
+  const organization = workspace.organization; const workspaceId = text(organization?.id); const workspaceName = text(organization?.name); if (!workspaceId || !workspaceName) throw new Error("Linear organization response did not include an identity.");
+  const teams = await fetchConnection(client, "teams", teamsQuery);
+  return { workspace: { id: workspaceId, name: workspaceName }, teams: teams.flatMap(team => { const id = text(team.id); const name = text(team.name); const key = text(team.key); return id && name && key ? [{ id, name, key }] : []; }) };
 }
 async function collect<T>(items: AsyncIterable<T>): Promise<T[]> { const result: T[] = []; for await (const item of items) result.push(item); return result; }
 function text(value: unknown): string | undefined { return typeof value === "string" || typeof value === "number" ? String(value) : undefined; }
 function object(value: unknown): JsonObject | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonObject : undefined; }
 const workspaceAndViewerQuery = `query LinearWorkspaceAndViewer { viewer { id name displayName email } organization { id name urlKey } }`;
 const teamsQuery = `query LinearTeams($first: Int!, $after: String) { teams(first: $first, after: $after) { nodes { id key name } pageInfo { hasNextPage endCursor } } }`;
-const projectsQuery = `query LinearProjects($first: Int!, $after: String) { projects(first: $first, after: $after) { nodes { id name state teams { nodes { name } } } pageInfo { hasNextPage endCursor } } }`;

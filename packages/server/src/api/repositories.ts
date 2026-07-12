@@ -22,7 +22,7 @@ export async function listIntegrations(db: DbExecutor, organizationId: string): 
 
 export async function listSyncScopes(db: DbExecutor, organizationId: string): Promise<SyncScopeDto[]> {
   const rows = await db.select().from(syncScopes).where(eq(syncScopes.organizationId, organizationId)).orderBy(asc(syncScopes.createdAt), asc(syncScopes.id));
-  return rows.map(row => ({ id: row.id, organizationId: row.organizationId, integrationId: row.integrationId, provider: row.provider as Provider, scopeType: row.scopeType as SyncScopeDto["scopeType"], externalId: row.externalId ?? "", externalName: row.externalName, config: JSON.parse(row.configJson) as JsonObject, enabled: Boolean(row.enabled), ...(row.lastSuccessAt ? { lastSuccessAt: row.lastSuccessAt } : {}), ...(row.lastAttemptAt ? { lastAttemptAt: row.lastAttemptAt } : {}), createdAt: row.createdAt, updatedAt: row.updatedAt }));
+  return rows.map(row => ({ id: row.id, organizationId: row.organizationId, integrationId: row.integrationId, provider: row.provider as Provider, scopeType: row.scopeType as SyncScopeDto["scopeType"], externalId: row.externalId ?? "", externalName: row.externalName, ...(row.parentScopeId ? { parentScopeId: row.parentScopeId } : {}), selectionMode: row.selectionMode as SyncScopeDto["selectionMode"], config: JSON.parse(row.configJson) as JsonObject, enabled: Boolean(row.enabled), ...(row.lastSuccessAt ? { lastSuccessAt: row.lastSuccessAt } : {}), ...(row.lastAttemptAt ? { lastAttemptAt: row.lastAttemptAt } : {}), createdAt: row.createdAt, updatedAt: row.updatedAt }));
 }
 
 export async function listReports(db: DbExecutor, organizationId: string): Promise<ReportSummaryDto[]> {

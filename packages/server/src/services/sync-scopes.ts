@@ -1,91 +1,47 @@
 import type { AppDatabase } from "../db/mysql.js";
 import { syncScopes } from "../db/schema.js";
 import { and, eq } from "drizzle-orm";
-import type { DiscoveredResourceDto, JsonObject, SyncScopeDto } from "@teamtales/common/api";
+import type { GitHubDiscoveryDto, JsonObject, LinearDiscoveryDto, SyncScopeDto } from "@teamtales/common/api";
 import type { Provider } from "@teamtales/common/domain";
-
-import {
-  requireIntegrationInOrganization,
-  requireOrganization,
-  requireOrganizationRole,
-} from "../persistence/index.js";
+import { requireIntegrationInOrganization, requireOrganization, requireOrganizationRole } from "../persistence/index.js";
 import { stableId } from "./ids.js";
 
-export interface AddSyncScopeServiceInput {
-  id?: string;
-  organizationId: string;
-  userId: string;
-  integrationId: string;
-  provider: Provider;
-  scopeType: SyncScopeDto["scopeType"];
-  externalId?: string;
-  externalName: string;
-  config?: JsonObject;
-  enabled?: boolean;
-}
-
-const supportedSyncScopeTypes = [
-  "github.repository",
-  "github.organization",
-  "linear.workspace",
-  "linear.team",
-  "linear.project",
-] as const satisfies readonly SyncScopeDto["scopeType"][];
+export interface AddSyncScopeServiceInput { id?: string; organizationId: string; userId: string; integrationId: string; provider: Provider; scopeType: SyncScopeDto["scopeType"]; externalId?: string; externalName: string; config?: JsonObject; enabled?: boolean; }
+type BaseInput = Pick<AddSyncScopeServiceInput, "organizationId" | "userId" | "integrationId" | "provider">;
 
 export async function addSyncScopeService(database: AppDatabase, input: AddSyncScopeServiceInput): Promise<SyncScopeDto> {
-  await requireOrganization(database, input.organizationId);
-  await requireOrganizationRole(database, input.organizationId, input.userId, ["owner", "admin"]);
-  await requireIntegrationInOrganization(database, input.organizationId, input.integrationId);
-  validateScopeTypeForProvider(input.provider, input.scopeType);
-
-  const now = new Date().toISOString();
-  const scopeId =
-    input.id ?? stableId("scope", input.organizationId, input.integrationId, input.scopeType, input.externalName);
-  const enabled = input.enabled ?? true;
-
-  await database.insert(syncScopes).values({ id: scopeId, organizationId: input.organizationId, integrationId: input.integrationId, provider: input.provider, scopeType: input.scopeType, externalId: input.externalId ?? null, externalName: input.externalName, configJson: JSON.stringify(input.config ?? {}), enabled: enabled ? 1 : 0, createdAt: now, updatedAt: now });
-
-  return {
-    id: scopeId,
-    organizationId: input.organizationId,
-    integrationId: input.integrationId,
-    provider: input.provider,
-    scopeType: input.scopeType,
-    externalId: input.externalId ?? "",
-    externalName: input.externalName,
-    config: input.config ?? {},
-    enabled,
-    createdAt: now,
-    updatedAt: now,
-  };
+  await authorize(database, input);
+  if (!input.scopeType.startsWith(`${input.provider}.`)) throw new Error(`Sync scope type ${input.scopeType} is not supported for provider ${input.provider}.`);
+  const now = new Date().toISOString(); const id = input.id ?? scopeId(input, input.scopeType, input.externalId ?? input.externalName);
+  await database.insert(syncScopes).values({ id, organizationId: input.organizationId, integrationId: input.integrationId, provider: input.provider, scopeType: input.scopeType, externalId: input.externalId ?? null, externalName: input.externalName, selectionMode: "individual", configJson: JSON.stringify(input.config ?? {}), enabled: input.enabled === false ? 0 : 1, createdAt: now, updatedAt: now });
+  return toDto({ id, ...input, externalId: input.externalId ?? "", selectionMode: "individual", parentScopeId: undefined, enabled: input.enabled !== false, createdAt: now, updatedAt: now });
 }
 
-export async function setSyncScopeSelectionService(database: AppDatabase, input: Omit<AddSyncScopeServiceInput, "scopeType" | "externalId" | "externalName" | "config" | "enabled"> & { selections: DiscoveredResourceDto[] }): Promise<SyncScopeDto[]> {
-  await requireOrganization(database, input.organizationId);
-  await requireOrganizationRole(database, input.organizationId, input.userId, ["owner", "admin"]);
-  await requireIntegrationInOrganization(database, input.organizationId, input.integrationId);
-  const now = new Date().toISOString();
-  const selected = new Set(input.selections.map(selection => stableId("scope", input.organizationId, input.integrationId, selection.scopeType, selection.externalName)));
-  await database.transaction(async transaction => {
-    const existing = await transaction.select().from(syncScopes).where(and(eq(syncScopes.organizationId, input.organizationId), eq(syncScopes.integrationId, input.integrationId)));
-    for (const selection of input.selections) {
-      validateScopeTypeForProvider(input.provider, selection.scopeType);
-      const id = stableId("scope", input.organizationId, input.integrationId, selection.scopeType, selection.externalName);
-      const row = existing.find(scope => scope.id === id);
-      if (row) await transaction.update(syncScopes).set({ externalId: selection.externalId, externalName: selection.externalName, configJson: JSON.stringify(selection.config ?? {}), enabled: 1, updatedAt: now }).where(eq(syncScopes.id, id));
-      else await transaction.insert(syncScopes).values({ id, organizationId: input.organizationId, integrationId: input.integrationId, provider: input.provider, scopeType: selection.scopeType, externalId: selection.externalId, externalName: selection.externalName, configJson: JSON.stringify(selection.config ?? {}), enabled: 1, createdAt: now, updatedAt: now });
-    }
-    for (const scope of existing) if (!selected.has(scope.id)) await transaction.update(syncScopes).set({ enabled: 0, updatedAt: now }).where(eq(syncScopes.id, scope.id));
+export async function setGitHubScopeSelectionService(database: AppDatabase, input: BaseInput & { selection: { organizations: Array<{ organizationId: string; mode: "all" } | { organizationId: string; mode: "selected"; repositoryIds: string[] }>; repositoryIds: string[] }; discovery: GitHubDiscoveryDto }): Promise<SyncScopeDto[]> {
+  await authorize(database, input); if (input.provider !== "github") throw new Error("GitHub selection requires a GitHub integration.");
+  const organizations = new Map(input.discovery.organizations.map(value => [value.id, value])); const repositories = new Map(input.discovery.repositories.map(value => [value.id, value]));
+  const orgIds = new Set<string>(); const repoIds = new Set<string>();
+  for (const item of input.selection.organizations) { if (orgIds.has(item.organizationId)) throw new Error("Duplicate organization selection."); orgIds.add(item.organizationId); const org = organizations.get(item.organizationId); if (!org) throw new Error("Unknown or inaccessible GitHub organization."); if (item.mode === "selected") for (const repositoryId of item.repositoryIds) { if (repoIds.has(repositoryId)) throw new Error("Duplicate repository selection."); repoIds.add(repositoryId); const repository = repositories.get(repositoryId); if (!repository || repository.organizationId !== org.id) throw new Error("Repository does not belong to the selected organization."); } }
+  for (const repositoryId of input.selection.repositoryIds) { if (repoIds.has(repositoryId)) throw new Error("Repository selected more than once."); repoIds.add(repositoryId); const repository = repositories.get(repositoryId); if (!repository) throw new Error("Unknown or inaccessible GitHub repository."); if ([...orgIds].some(id => organizations.get(id)?.id === repository.organizationId && input.selection.organizations.find(item => item.organizationId === id)?.mode === "all")) throw new Error("A repository is already covered by an all-repositories organization."); }
+  await database.transaction(async tx => {
+    const now = new Date().toISOString(); const existing = await tx.select().from(syncScopes).where(and(eq(syncScopes.integrationId, input.integrationId), eq(syncScopes.provider, "github")));
+    const desired = new Set<string>();
+    for (const item of input.selection.organizations) { const org = organizations.get(item.organizationId)!; const id = scopeId(input, "github.organization", org.id); desired.add(id); await upsert(tx, { id, organizationId: input.organizationId, integrationId: input.integrationId, provider: "github", scopeType: "github.organization", externalId: org.id, externalName: org.login, parentScopeId: null, selectionMode: item.mode, configJson: "{}", enabled: 1, createdAt: now, updatedAt: now }); if (item.mode === "selected") for (const repositoryId of item.repositoryIds) { const repo = repositories.get(repositoryId)!; const childId = scopeId(input, "github.repository", repo.id); desired.add(childId); await upsert(tx, { id: childId, organizationId: input.organizationId, integrationId: input.integrationId, provider: "github", scopeType: "github.repository", externalId: repo.id, externalName: repo.fullName, parentScopeId: id, selectionMode: "individual", configJson: "{}", enabled: 1, createdAt: now, updatedAt: now }); } }
+    for (const repositoryId of input.selection.repositoryIds) { const repo = repositories.get(repositoryId)!; const id = scopeId(input, "github.repository", repo.id); desired.add(id); await upsert(tx, { id, organizationId: input.organizationId, integrationId: input.integrationId, provider: "github", scopeType: "github.repository", externalId: repo.id, externalName: repo.fullName, parentScopeId: null, selectionMode: "individual", configJson: "{}", enabled: 1, createdAt: now, updatedAt: now }); }
+    for (const row of existing) if (!desired.has(row.id)) await tx.update(syncScopes).set({ enabled: 0, updatedAt: now }).where(eq(syncScopes.id, row.id));
   });
-  const rows = await database.select().from(syncScopes).where(and(eq(syncScopes.organizationId, input.organizationId), eq(syncScopes.integrationId, input.integrationId)));
-  return rows.map(row => ({ id: row.id, organizationId: row.organizationId, integrationId: row.integrationId, provider: row.provider as Provider, scopeType: row.scopeType as SyncScopeDto["scopeType"], externalId: row.externalId ?? "", externalName: row.externalName, config: JSON.parse(row.configJson) as JsonObject, enabled: row.enabled === 1, lastSuccessAt: row.lastSuccessAt ?? undefined, lastAttemptAt: row.lastAttemptAt ?? undefined, createdAt: row.createdAt, updatedAt: row.updatedAt }));
+  return scopesForIntegration(database, input.organizationId, input.integrationId);
 }
 
-function validateScopeTypeForProvider(provider: Provider, scopeType: SyncScopeDto["scopeType"]): void {
-  if (!supportedSyncScopeTypes.includes(scopeType)) {
-    throw new Error(`Unsupported sync scope type: ${scopeType}.`);
-  }
-  if (!scopeType.startsWith(`${provider}.`)) {
-    throw new Error(`Sync scope type ${scopeType} is not supported for provider ${provider}.`);
-  }
+export async function setLinearScopeSelectionService(database: AppDatabase, input: BaseInput & { selection: { mode: "all" } | { mode: "selected"; teamIds: string[] }; discovery: LinearDiscoveryDto }): Promise<SyncScopeDto[]> {
+  await authorize(database, input); if (input.provider !== "linear") throw new Error("Linear selection requires a Linear integration."); const teams = new Map(input.discovery.teams.map(team => [team.id, team])); const teamIds = input.selection.mode === "selected" ? input.selection.teamIds : [];
+  if (new Set(teamIds).size !== teamIds.length || teamIds.some(id => !teams.has(id))) throw new Error("Unknown, inaccessible, or duplicate Linear team.");
+  await database.transaction(async tx => { const now = new Date().toISOString(); const workspaceId = scopeId(input, "linear.workspace", input.discovery.workspace.id); const desired = new Set([workspaceId]); await upsert(tx, { id: workspaceId, organizationId: input.organizationId, integrationId: input.integrationId, provider: "linear", scopeType: "linear.workspace", externalId: input.discovery.workspace.id, externalName: input.discovery.workspace.name, parentScopeId: null, selectionMode: input.selection.mode, configJson: "{}", enabled: 1, createdAt: now, updatedAt: now }); for (const teamId of teamIds) { const team = teams.get(teamId)!; const id = scopeId(input, "linear.team", team.id); desired.add(id); await upsert(tx, { id, organizationId: input.organizationId, integrationId: input.integrationId, provider: "linear", scopeType: "linear.team", externalId: team.id, externalName: team.name, parentScopeId: workspaceId, selectionMode: "individual", configJson: "{}", enabled: 1, createdAt: now, updatedAt: now }); } const existing = await tx.select().from(syncScopes).where(and(eq(syncScopes.integrationId, input.integrationId), eq(syncScopes.provider, "linear"))); for (const row of existing) if (!desired.has(row.id)) await tx.update(syncScopes).set({ enabled: 0, updatedAt: now }).where(eq(syncScopes.id, row.id)); });
+  return scopesForIntegration(database, input.organizationId, input.integrationId);
 }
+
+async function authorize(database: AppDatabase, input: BaseInput): Promise<void> { await requireOrganization(database, input.organizationId); await requireOrganizationRole(database, input.organizationId, input.userId, ["owner", "admin"]); await requireIntegrationInOrganization(database, input.organizationId, input.integrationId); }
+function scopeId(input: Pick<BaseInput, "organizationId" | "integrationId">, scopeType: SyncScopeDto["scopeType"], externalId: string): string { return stableId("scope", input.organizationId, input.integrationId, scopeType, externalId); }
+async function upsert(tx: any, value: any): Promise<void> { const existing = await tx.select({ id: syncScopes.id }).from(syncScopes).where(eq(syncScopes.id, value.id)).limit(1); if (existing[0]) await tx.update(syncScopes).set({ ...value, createdAt: undefined }).where(eq(syncScopes.id, value.id)); else await tx.insert(syncScopes).values(value); }
+async function scopesForIntegration(database: AppDatabase, organizationId: string, integrationId: string): Promise<SyncScopeDto[]> { const rows = await database.select().from(syncScopes).where(and(eq(syncScopes.organizationId, organizationId), eq(syncScopes.integrationId, integrationId))); return rows.map(row => ({ id: row.id, organizationId: row.organizationId, integrationId: row.integrationId, provider: row.provider as Provider, scopeType: row.scopeType as SyncScopeDto["scopeType"], externalId: row.externalId ?? "", externalName: row.externalName, ...(row.parentScopeId ? { parentScopeId: row.parentScopeId } : {}), selectionMode: row.selectionMode as SyncScopeDto["selectionMode"], config: JSON.parse(row.configJson) as JsonObject, enabled: row.enabled === 1, createdAt: row.createdAt, updatedAt: row.updatedAt })); }
+function toDto(value: any): SyncScopeDto { return { id: value.id, organizationId: value.organizationId, integrationId: value.integrationId, provider: value.provider, scopeType: value.scopeType, externalId: value.externalId, externalName: value.externalName, ...(value.parentScopeId ? { parentScopeId: value.parentScopeId } : {}), selectionMode: value.selectionMode, config: value.config ?? {}, enabled: value.enabled, createdAt: value.createdAt, updatedAt: value.updatedAt }; }

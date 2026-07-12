@@ -91,6 +91,8 @@ export type SyncScopeDto = {
   scopeType: "github.repository" | "github.organization" | "linear.workspace" | "linear.team" | "linear.project";
   externalId: string;
   externalName: string;
+  parentScopeId?: string;
+  selectionMode: "all" | "selected" | "individual";
   config: JsonObject;
   enabled: boolean;
   lastSuccessAt?: string;
@@ -239,15 +241,19 @@ export type AddSyncScopeRequestDto = {
 };
 
 export type DiscoveredResourceDto = {
-  scopeType: Extract<SyncScopeDto["scopeType"], "github.repository" | "linear.workspace" | "linear.team" | "linear.project">;
+  scopeType: Extract<SyncScopeDto["scopeType"], "github.repository" | "github.organization" | "linear.workspace" | "linear.team">;
   externalId: string;
   externalName: string;
   group?: string;
   description?: string;
   config?: JsonObject;
 };
-export type ListIntegrationResourcesResponseDto = { provider: Provider; resources: DiscoveredResourceDto[] };
-export type SetSyncScopeSelectionRequestDto = { organizationId: string; selections: DiscoveredResourceDto[] };
+export type GitHubDiscoveryDto = { account: { id: string; login: string; name?: string; avatarUrl?: string }; organizations: Array<{ id: string; login: string; name?: string; avatarUrl?: string; repositoryCount?: number }>; repositories: Array<{ id: string; fullName: string; ownerId: string; ownerLogin: string; ownerType: "Organization" | "User"; organizationId?: string; visibility?: string; archived: boolean; fork: boolean; description?: string }> };
+export type LinearDiscoveryDto = { workspace: { id: string; name: string }; teams: Array<{ id: string; name: string; key: string }> };
+export type ListIntegrationResourcesResponseDto = { provider: "github"; discovery: GitHubDiscoveryDto } | { provider: "linear"; discovery: LinearDiscoveryDto };
+export type SetGitHubScopeSelectionRequestDto = { organizationId: string; selection: { organizations: Array<{ organizationId: string; mode: "all" } | { organizationId: string; mode: "selected"; repositoryIds: string[] }>; repositoryIds: string[] } };
+export type SetLinearScopeSelectionRequestDto = { organizationId: string; selection: { mode: "all" } | { mode: "selected"; teamIds: string[] } };
+export type SetSyncScopeSelectionRequestDto = SetGitHubScopeSelectionRequestDto | SetLinearScopeSelectionRequestDto;
 export type SetSyncScopeSelectionResponseDto = { items: SyncScopeDto[] };
 
 export type GenerateWeeklyReportRequestDto = {

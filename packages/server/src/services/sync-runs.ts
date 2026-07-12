@@ -245,9 +245,11 @@ async function readSyncScope(
 
   return {
     ...row,
+    parentScopeId: row.parentScopeId ?? undefined,
     provider: row.provider as Provider,
     scopeType: row.scopeType as SyncScope["scopeType"],
     externalId: row.externalId ?? "",
+    selectionMode: row.selectionMode as SyncScope["selectionMode"],
     configJson: JSON.parse(row.configJson) as JsonObject,
     enabled: row.enabled === 1,
     lastSuccessAt: dateFromString(row.lastSuccessAt ?? undefined),

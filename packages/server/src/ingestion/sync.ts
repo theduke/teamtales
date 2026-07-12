@@ -30,6 +30,8 @@ export interface SyncScope {
   scopeType: SyncScopeType;
   externalId: string;
   externalName: string;
+  parentScopeId?: string;
+  selectionMode: "all" | "selected" | "individual";
   configJson: JsonValue;
   enabled: boolean;
   lastSuccessAt?: Date;
