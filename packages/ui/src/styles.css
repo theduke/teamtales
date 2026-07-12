@@ -155,8 +155,23 @@ a {
   padding: 8px 18px;
 }
 
-.section-tabs button {
+.section-tabs a {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #aeb6bf;
+  border-radius: 6px;
+  color: #1f2328;
+  display: inline-flex;
   min-width: 92px;
+  min-height: 32px;
+  padding: 6px 10px;
+  text-decoration: none;
+}
+
+.section-tabs a:hover,
+.section-tabs a.active {
+  border-color: #2f6f87;
+  background: #e8f3f6;
 }
 
 main {

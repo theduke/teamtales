@@ -1,5 +1,6 @@
 import type { FormEvent, ReactElement, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router";
 
 import type {
   DashboardDto,
@@ -17,8 +18,14 @@ import type {
 import { ApiClientError, apiClient } from "./api";
 import { ProvidersSection } from "./ProvidersSection";
 
-const sections = ["Dashboard", "Providers", "Sync", "Reports", "Data"] as const;
-type Section = (typeof sections)[number];
+const sections = [
+  { label: "Dashboard", path: "/dashboard" },
+  { label: "Setup", path: "/setup" },
+  { label: "Providers", path: "/providers" },
+  { label: "Sync", path: "/sync" },
+  { label: "Reports", path: "/reports" },
+  { label: "Data", path: "/data" },
+] as const;
 
 type Notice = { tone: "success" | "error" | "info"; text: string };
 
@@ -34,7 +41,7 @@ const reportScopeTypes: ReportScopeType[] = [
 const emptyDashboard: DashboardDto | undefined = undefined;
 
 export function App(): ReactElement {
-  const [section, setSection] = useState<Section>("Dashboard");
+  const navigate = useNavigate();
   const [health, setHealth] = useState<"unknown" | "ok" | "error">("unknown");
   const [organizations, setOrganizations] = useState<DashboardDto["organizations"]>([]);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
@@ -161,6 +168,7 @@ export function App(): ReactElement {
       setAuth(session);
       setNotice(undefined);
       await loadOrganizations();
+      navigate("/dashboard", { replace: true });
     } catch (error) {
       handleError(error);
     } finally {
@@ -180,6 +188,7 @@ export function App(): ReactElement {
       await loadOrganizations();
       setSelectedOrganizationId(organization.id);
       showNotice({ tone: "success", text: `Created ${organization.name}.` });
+      navigate("/dashboard", { replace: true });
     } catch (error) {
       handleError(error);
     } finally {
@@ -198,6 +207,7 @@ export function App(): ReactElement {
       setSelectedReportId("");
       setReportDetail(undefined);
       setNotice(undefined);
+      navigate("/login", { replace: true });
     } catch (error) {
       handleError(error);
     } finally {
@@ -266,15 +276,23 @@ export function App(): ReactElement {
 
   if (!auth || !auth.authenticated) {
     return (
-      <AuthScreen
-        health={health}
-        loading={loading}
-        bootstrapAllowed={auth?.bootstrapAllowed ?? false}
-        notice={notice}
-        onDismissNotice={() => setNotice(undefined)}
-        onLogin={(email, password) => void authenticate(email, password)}
-        onBootstrap={(request) => void bootstrapOrganization(request)}
-      />
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            <AuthScreen
+              health={health}
+              loading={loading}
+              bootstrapAllowed={auth?.bootstrapAllowed ?? false}
+              notice={notice}
+              onDismissNotice={() => setNotice(undefined)}
+              onLogin={(email, password) => void authenticate(email, password)}
+              onBootstrap={(request) => void bootstrapOrganization(request)}
+            />
+          }
+        />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
     );
   }
 
@@ -312,15 +330,14 @@ export function App(): ReactElement {
       </header>
 
       <nav className="section-tabs" aria-label="Console sections">
-        {sections.map((name) => (
-          <button
-            key={name}
-            type="button"
-            className={section === name ? "active" : ""}
-            onClick={() => setSection(name)}
+        {sections.map(({ label, path }) => (
+          <NavLink
+            key={path}
+            to={path}
+            className={({ isActive }) => (isActive ? "active" : undefined)}
           >
-            {name}
-          </button>
+            {label}
+          </NavLink>
         ))}
       </nav>
 
@@ -334,35 +351,72 @@ export function App(): ReactElement {
       ) : null}
 
       <main>
-        {section === "Dashboard" ? <DashboardSection dashboard={dashboard} /> : null}
-        {section === "Providers" ? <ProvidersSection dashboard={dashboard} organizationId={selectedOrganizationId} onChanged={() => void refresh()} onError={handleError} onNotice={showNotice} /> : null}
-        {section === "Sync" ? (
-          <SyncSection
-            dashboard={dashboard}
-            selectedOrganizationId={selectedOrganizationId}
-            onChanged={() => void refresh()}
-            onError={handleError}
-            onNotice={showNotice}
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<DashboardSection dashboard={dashboard} />} />
+          <Route
+            path="/setup"
+            element={
+              <SetupSection
+                dashboard={dashboard}
+                selectedOrganizationId={selectedOrganizationId}
+                onCreatedOrganization={(organizationId) => {
+                  setSelectedOrganizationId(organizationId);
+                  void loadOrganizations().then(() => loadDashboard(organizationId)).catch(handleError);
+                }}
+                onChanged={() => void refresh()}
+                onError={handleError}
+                onNotice={showNotice}
+              />
+            }
           />
-        ) : null}
-        {section === "Reports" ? (
-          <ReportsSection
-            dashboard={dashboard}
-            reportDetail={reportDetail}
-            selectedOrganization={selectedOrganization}
-            selectedOrganizationId={selectedOrganizationId}
-            selectedReportId={selectedReportId}
-            onSelectReport={setSelectedReportId}
-            onGenerated={(report) => {
-              setSelectedReportId(report.id);
-              setReportDetail(report);
-              void refresh();
-            }}
-            onError={handleError}
-            onNotice={showNotice}
+          <Route
+            path="/providers"
+            element={
+              <ProvidersSection
+                dashboard={dashboard}
+                organizationId={selectedOrganizationId}
+                onChanged={() => void refresh()}
+                onError={handleError}
+                onNotice={showNotice}
+              />
+            }
           />
-        ) : null}
-        {section === "Data" ? <DataSection dashboard={dashboard} reportDetail={reportDetail} /> : null}
+          <Route
+            path="/sync"
+            element={
+              <SyncSection
+                dashboard={dashboard}
+                selectedOrganizationId={selectedOrganizationId}
+                onChanged={() => void refresh()}
+                onError={handleError}
+                onNotice={showNotice}
+              />
+            }
+          />
+          <Route
+            path="/reports"
+            element={
+              <ReportsSection
+                dashboard={dashboard}
+                reportDetail={reportDetail}
+                selectedOrganization={selectedOrganization}
+                selectedOrganizationId={selectedOrganizationId}
+                selectedReportId={selectedReportId}
+                onSelectReport={setSelectedReportId}
+                onGenerated={(report) => {
+                  setSelectedReportId(report.id);
+                  setReportDetail(report);
+                  void refresh();
+                }}
+                onError={handleError}
+                onNotice={showNotice}
+              />
+            }
+          />
+          <Route path="/data" element={<DataSection dashboard={dashboard} reportDetail={reportDetail} />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
       </main>
     </div>
   );
