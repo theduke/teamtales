@@ -408,8 +408,8 @@ function principalDto(principal: AuthPrincipal): JsonObject {
 
 function validateBootstrapPassword(password: string): void {
   const bytes = Buffer.byteLength(password, "utf8");
-  if (bytes < 12 || bytes > 1_024) {
-    throw new HttpError(400, "invalid_request", "Password must contain between 12 and 1024 UTF-8 bytes.");
+  if (bytes < 8 || bytes > 1_024) {
+    throw new HttpError(400, "invalid_request", "Password must contain between 8 and 1024 UTF-8 bytes.");
   }
 }
 

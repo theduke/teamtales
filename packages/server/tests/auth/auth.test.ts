@@ -31,7 +31,7 @@ describe("MySQL authentication", mysqlTestOptions, () => {
   it("rejects weak passwords, unknown users, and users without a password", async () => {
     const local = await databaseWithUser();
     try {
-      await assert.rejects(setPassword(local.db, local.userId, "too-short"), /12 and 1024/);
+      await assert.rejects(setPassword(local.db, local.userId, "short"), /8 and 1024/);
       await assert.rejects(setPassword(local.db, uniqueId("missing"), "long enough password"), /not found/);
       assert.equal(await authenticatePassword(local.db, local.email, "anything at all"), undefined);
       assert.equal(await authenticatePassword(local.db, "missing@example.test", "anything at all"), undefined);

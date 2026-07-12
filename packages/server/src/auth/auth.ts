@@ -279,8 +279,8 @@ export async function revokeApiToken(
 
 function assertPassword(password: string): void {
   const byteLength = Buffer.byteLength(password, "utf8");
-  if (byteLength < 12 || byteLength > 1_024) {
-    throw new Error("Password must contain between 12 and 1024 UTF-8 bytes");
+  if (byteLength < 8 || byteLength > 1_024) {
+    throw new Error("Password must contain between 8 and 1024 UTF-8 bytes");
   }
 }
 
