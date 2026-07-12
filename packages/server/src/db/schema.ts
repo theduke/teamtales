@@ -1,7 +1,7 @@
 import { double, index, int, mysqlTable, text, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
-const id = (name = "id") => varchar(name, { length: 191 });
-const value = (name: string) => varchar(name, { length: 512 });
+const id = (name = "id") => varchar(name, { length: 120 });
+const value = (name: string) => varchar(name, { length: 120 });
 const instant = (name: string) => varchar(name, { length: 40 });
 const timestamps = {
   createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()),

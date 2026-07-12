@@ -40,7 +40,7 @@ export function resolveMigrationsFolder(cwd = process.cwd(), moduleUrl = import.
 export async function openDatabase(options: OpenDatabaseOptions = {}): Promise<OpenDatabaseResult> {
   const connectionOptions = mysqlConnectionOptions(options.env);
   if (options.runMigrations !== false) {
-    const migrationPool = mysql.createPool({ ...connectionOptions, connectionLimit: 1 });
+    const migrationPool = mysql.createPool({ ...connectionOptions, connectionLimit: 2 });
     try {
       const migrationDb = drizzle({ client: migrationPool, schema, mode: "default" });
       const migrationsFolder = options.migrationsFolder ?? resolveMigrationsFolder();
