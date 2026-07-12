@@ -1,6 +1,7 @@
 import type { GitHubDiscoveryDto, JsonObject, LinearDiscoveryDto } from "@teamtales/common/api";
 import type { Provider } from "@teamtales/common/domain";
 import { GitHubRestClient, type FetchLike as GitHubFetchLike } from "./github-client.js";
+import { GitHubRestDiscoveryClient, type GitHubDiscoveryClient } from "./github-discovery-client.js";
 import { fetchConnection, LinearGraphqlClient, type FetchLike as LinearFetchLike, type JsonValueObject } from "./linear-client.js";
 
 type FetchLike = GitHubFetchLike & LinearFetchLike;
@@ -25,16 +26,19 @@ export async function discoverProviderResources(provider: Provider, token: strin
   const normalizedToken = token.trim();
   if (!normalizedToken) throw new ProviderTokenError("Provider token must not be empty.");
   if (provider === "github") {
-    const client = new GitHubRestClient(fetchImpl, "https://api.github.com", normalizedToken); const [user, orgRows, repoRows] = await Promise.all([client.getObject("/user"), collect(client.paginateObjects("/user/orgs", { per_page: "100" })), collect(client.paginateObjects("/user/repos", { affiliation: "owner,collaborator,organization_member", per_page: "100", sort: "full_name" }))]);
-    const accountId = text(user.id); const login = text(user.login); if (!accountId || !login) throw new Error("GitHub user response did not include an identity.");
-    const organizations = orgRows.flatMap(org => { const id = text(org.id); const orgLogin = text(org.login); return id && orgLogin ? [{ id, login: orgLogin, ...(text(org.name) ? { name: text(org.name) } : {}), ...(text(org.avatar_url) ? { avatarUrl: text(org.avatar_url) } : {}), ...(typeof org.public_repos === "number" ? { repositoryCount: org.public_repos } : {}) }] : []; });
-    const orgIds = new Set(organizations.map(org => org.id));
-    return { account: { id: accountId, login, ...(text(user.name) ? { name: text(user.name) } : {}), ...(text(user.avatar_url) ? { avatarUrl: text(user.avatar_url) } : {}) }, organizations, repositories: repoRows.flatMap(repo => { const id = text(repo.id); const fullName = text(repo.full_name); const owner = object(repo.owner); const ownerId = text(owner?.id); const ownerLogin = text(owner?.login); const ownerType = text(owner?.type); if (!id || !fullName || !ownerId || !ownerLogin || (ownerType !== "Organization" && ownerType !== "User")) return []; return [{ id, fullName, ownerId, ownerLogin, ownerType: ownerType as "Organization" | "User", ...(orgIds.has(ownerId) ? { organizationId: ownerId } : {}), ...(text(repo.visibility) ? { visibility: text(repo.visibility) } : {}), archived: repo.archived === true, fork: repo.fork === true, ...(text(repo.description) ? { description: text(repo.description) } : {}) }]; }).sort((a, b) => a.fullName.localeCompare(b.fullName)) };
+    return discoverGitHubResources(new GitHubRestDiscoveryClient(normalizedToken, fetchImpl));
   }
   const client = new LinearGraphqlClient(normalizedToken, fetchImpl); const workspace = await client.query<{ organization?: JsonValueObject | null }>(workspaceAndViewerQuery);
   const organization = workspace.organization; const workspaceId = text(organization?.id); const workspaceName = text(organization?.name); if (!workspaceId || !workspaceName) throw new Error("Linear organization response did not include an identity.");
   const teams = await fetchConnection(client, "teams", teamsQuery);
   return { workspace: { id: workspaceId, name: workspaceName }, teams: teams.flatMap(team => { const id = text(team.id); const name = text(team.name); const key = text(team.key); return id && name && key ? [{ id, name, key }] : []; }) };
+}
+export async function discoverGitHubResources(client: GitHubDiscoveryClient): Promise<GitHubDiscoveryDto> {
+  const [user, orgRows, repoRows] = await Promise.all([client.getAuthenticatedAccount(), collect(client.listOrganizations()), collect(client.listRepositories())]);
+  const accountId = text(user.id); const login = text(user.login); if (!accountId || !login) throw new Error("GitHub user response did not include an identity.");
+  const organizations = orgRows.flatMap(org => { const id = text(org.id); const orgLogin = text(org.login); return id && orgLogin ? [{ id, login: orgLogin, ...(text(org.name) ? { name: text(org.name) } : {}), ...(text(org.avatar_url) ? { avatarUrl: text(org.avatar_url) } : {}), ...(typeof org.public_repos === "number" ? { repositoryCount: org.public_repos } : {}) }] : []; });
+  const orgIds = new Set(organizations.map(org => org.id));
+  return { account: { id: accountId, login, ...(text(user.name) ? { name: text(user.name) } : {}), ...(text(user.avatar_url) ? { avatarUrl: text(user.avatar_url) } : {}) }, organizations, repositories: repoRows.flatMap(repo => { const id = text(repo.id); const fullName = text(repo.full_name); const owner = object(repo.owner); const ownerId = text(owner?.id); const ownerLogin = text(owner?.login); const ownerType = text(owner?.type); if (!id || !fullName || !ownerId || !ownerLogin || (ownerType !== "Organization" && ownerType !== "User")) return []; return [{ id, fullName, ownerId, ownerLogin, ownerType: ownerType as "Organization" | "User", ...(orgIds.has(ownerId) ? { organizationId: ownerId } : {}), ...(text(repo.visibility) ? { visibility: text(repo.visibility) } : {}), archived: repo.archived === true, fork: repo.fork === true, ...(text(repo.description) ? { description: text(repo.description) } : {}) }]; }).sort((a, b) => a.fullName.localeCompare(b.fullName)) };
 }
 async function collect<T>(items: AsyncIterable<T>): Promise<T[]> { const result: T[] = []; for await (const item of items) result.push(item); return result; }
 function text(value: unknown): string | undefined { return typeof value === "string" || typeof value === "number" ? String(value) : undefined; }

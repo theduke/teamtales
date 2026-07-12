@@ -9,7 +9,7 @@ import type { ReportContext } from "@teamtales/common/domain";
 import { createApiServer } from "../../src/api/server.js";
 import { createApiToken } from "../../src/auth/index.js";
 import type { AppDatabase } from "../../src/db/index.js";
-import { activityEvents, integrationCredentials, integrations, organizationMemberships, organizations, people, sourceObjects, users, workItems } from "../../src/db/schema.js";
+import { activityEvents, integrationCredentials, integrations, organizationMemberships, organizations, people, sourceObjects, syncScopes, users, workItems } from "../../src/db/schema.js";
 import { saveCompleteAnalysisResult } from "../../src/persistence/index.js";
 import { mysqlTestOptions, openTestDatabase } from "../helpers/mysql.js";
 
@@ -83,6 +83,60 @@ describe("TeamTales API", mysqlTestOptions, () => {
 
     const [row] = await app.database.db.select({ encryptedSecret: integrationCredentials.encryptedSecret }).from(integrationCredentials).where(eq(integrationCredentials.integrationId, response.body.ok ? String(response.body.data.id) : ""));
     assert.equal(row?.encryptedSecret.includes(token), false);
+  });
+
+  it("creates, discovers, and modifies GitHub relational scopes", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.startsWith(app.url)) return originalFetch(input, init);
+      const path = new URL(url).pathname;
+      if (path === "/user") return jsonResponse({ id: 1, login: "octocat", name: "Octocat" });
+      if (path === "/user/orgs") return jsonResponse([{ id: 10, login: "acme", name: "Acme" }]);
+      if (path === "/user/repos") return jsonResponse([
+        { id: 101, full_name: "acme/widgets", owner: { id: 10, login: "acme", type: "Organization" }, archived: false, fork: false },
+        { id: 102, full_name: "octocat/private-tools", owner: { id: 1, login: "octocat", type: "User" }, archived: false, fork: false },
+      ]);
+      return jsonResponse({ message: `Unexpected GitHub path ${path}` }, 404);
+    };
+    try {
+      const created = await apiFetch<{ id: string }>(app.url, "/api/integrations/pat", { method: "POST", body: { organizationId: "org_api", provider: "github", displayName: "Scoped GitHub", token: "github_scoped_token" } });
+      assert.equal(created.status, 201); const integrationId = created.body.ok ? created.body.data.id : "";
+      const discovered = await apiFetch<{ provider: string; discovery: { organizations: Array<{ id: string }>; repositories: Array<{ id: string }> } }>(app.url, `/api/integrations/${integrationId}/resources?organizationId=org_api`);
+      assert.equal(discovered.status, 200); assert.deepEqual(discovered.body.ok && discovered.body.data.discovery.organizations.map(item => item.id), ["10"]);
+      const saved = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { organizations: [{ organizationId: "10", mode: "selected", repositoryIds: ["101"] }], repositoryIds: ["102"] } } });
+      assert.equal(saved.status, 200);
+      let rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId));
+      const organization = rows.find(row => row.scopeType === "github.organization"); const child = rows.find(row => row.externalId === "101"); const standalone = rows.find(row => row.externalId === "102");
+      assert.equal(organization?.selectionMode, "selected"); assert.equal(child?.parentScopeId, organization?.id); assert.equal(standalone?.parentScopeId, null); assert.equal(standalone?.selectionMode, "individual"); assert.equal(rows.every(row => row.configJson === "{}"), true);
+      const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { organizations: [{ organizationId: "10", mode: "all" }], repositoryIds: [] } } });
+      assert.equal(modified.status, 200);
+      rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId));
+      assert.equal(rows.find(row => row.scopeType === "github.organization")?.selectionMode, "all");
+      assert.equal(rows.find(row => row.externalId === "101")?.enabled, 0); assert.equal(rows.find(row => row.externalId === "102")?.enabled, 0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it("creates and modifies Linear workspace team scopes", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      const url = String(input); if (url.startsWith(app.url)) return originalFetch(input, init);
+      const request = JSON.parse(String(init?.body ?? "{}")) as { query?: string };
+      if (request.query?.includes("LinearWorkspaceAndViewer")) return jsonResponse({ data: { viewer: { id: "viewer" }, organization: { id: "workspace_1", name: "Linear Workspace" } } });
+      if (request.query?.includes("LinearTeams")) return jsonResponse({ data: { teams: { nodes: [{ id: "team_1", name: "Engineering", key: "ENG" }, { id: "team_2", name: "Design", key: "DES" }], pageInfo: { hasNextPage: false } } } });
+      return jsonResponse({ errors: [{ message: "Unexpected Linear query" }] }, 400);
+    };
+    try {
+      const created = await apiFetch<{ id: string }>(app.url, "/api/integrations/pat", { method: "POST", body: { organizationId: "org_api", provider: "linear", displayName: "Scoped Linear", token: "linear_scoped_token" } });
+      assert.equal(created.status, 201); const integrationId = created.body.ok ? created.body.data.id : "";
+      const saved = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { mode: "selected", teamIds: ["team_1"] } } });
+      assert.equal(saved.status, 200);
+      let rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId)); const workspace = rows.find(row => row.scopeType === "linear.workspace");
+      assert.equal(workspace?.selectionMode, "selected"); assert.equal(rows.find(row => row.externalId === "team_1")?.parentScopeId, workspace?.id);
+      const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { mode: "all" } } });
+      assert.equal(modified.status, 200);
+      rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId)); assert.equal(rows.find(row => row.scopeType === "linear.workspace")?.selectionMode, "all"); assert.equal(rows.find(row => row.externalId === "team_1")?.enabled, 0);
+    } finally { globalThis.fetch = originalFetch; }
   });
 
   it("adds and lists a sync scope", async () => {
