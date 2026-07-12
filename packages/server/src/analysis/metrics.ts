@@ -35,7 +35,9 @@ export function computeActivityMetrics(events: readonly ActivityEvent[]): Metric
     .map(([name, value]) => ({ name, value }));
 }
 
-export function computePersonMetrics(events: readonly ActivityEvent[]): Map<string, Record<string, number>> {
+export function computePersonMetrics(
+  events: readonly ActivityEvent[],
+): Map<string, Record<string, number>> {
   const byPerson = new Map<string, Record<string, number>>();
 
   for (const event of events) {

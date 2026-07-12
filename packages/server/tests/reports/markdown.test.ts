@@ -120,11 +120,26 @@ Period: 2026-06-22 to 2026-06-29
 
     const markdown = generateWeeklyMarkdownReport(context);
 
-    assert.match(markdown, /- Completion may be a theme: 1 tracked work item is marked completed or merged\./);
-    assert.match(markdown, /- Active work may be a theme: 1 tracked work item remains open or in progress\./);
-    assert.match(markdown, /- Possible risk: Webhook investigation remains active\. Context reason: Item is still in progress Sources: linear:issue:7\./);
-    assert.match(markdown, /- \[Billing export\]\(https:\/\/github.com\/acme\/widgets\/pull\/42\): github, merged\. Facts: github github_pull_request is merged; Merged pull request/);
-    assert.doesNotMatch(markdown, /successfully delivered|blocked the team|root cause|customer impact/i);
+    assert.match(
+      markdown,
+      /- Completion may be a theme: 1 tracked work item is marked completed or merged\./,
+    );
+    assert.match(
+      markdown,
+      /- Active work may be a theme: 1 tracked work item remains open or in progress\./,
+    );
+    assert.match(
+      markdown,
+      /- Possible risk: Webhook investigation remains active\. Context reason: Item is still in progress Sources: linear:issue:7\./,
+    );
+    assert.match(
+      markdown,
+      /- \[Billing export\]\(https:\/\/github.com\/acme\/widgets\/pull\/42\): github, merged\. Facts: github github_pull_request is merged; Merged pull request/,
+    );
+    assert.doesNotMatch(
+      markdown,
+      /successfully delivered|blocked the team|root cause|customer impact/i,
+    );
   });
 
   it("is stable when input arrays are reordered", () => {

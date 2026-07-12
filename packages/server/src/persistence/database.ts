@@ -19,6 +19,7 @@ export function parseJsonValue(json: string): unknown {
 
 export function parseJsonObject(json: string): Record<string, unknown> {
   const value = parseJsonValue(json);
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected JSON object");
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Expected JSON object");
   return value as Record<string, unknown>;
 }

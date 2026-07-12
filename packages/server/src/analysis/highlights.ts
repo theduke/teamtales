@@ -23,7 +23,9 @@ export function scoreHighlights(
   const pinned = new Set(options.manuallyPinnedWorkItemIds ?? []);
 
   return workItems
-    .map((workItem) => scoreWorkItem(workItem, activityByWorkItem.get(workItem.id), pinned, options))
+    .map((workItem) =>
+      scoreWorkItem(workItem, activityByWorkItem.get(workItem.id), pinned, options),
+    )
     .filter((highlight): highlight is Highlight => highlight !== undefined)
     .sort((left, right) => right.score - left.score || left.title.localeCompare(right.title))
     .slice(0, options.maxHighlights ?? 10);
@@ -52,8 +54,8 @@ function scoreWorkItem(
   }
 
   const nonAutomatedEvents = activity?.events.filter((event) => !isAutomatedEvent(event)) ?? [];
-  const discussionEvents = nonAutomatedEvents.filter((event) =>
-    event.eventType.includes("comment") || event.eventType.includes("review"),
+  const discussionEvents = nonAutomatedEvents.filter(
+    (event) => event.eventType.includes("comment") || event.eventType.includes("review"),
   );
 
   if (discussionEvents.length >= 5) {
@@ -112,26 +114,34 @@ function scoreWorkItem(
   };
 }
 
-export function detectRisks(workItems: readonly WorkItem[], events: readonly ActivityEvent[], now: string): Highlight[] {
+export function detectRisks(
+  workItems: readonly WorkItem[],
+  events: readonly ActivityEvent[],
+  now: string,
+): Highlight[] {
   const activityByWorkItem = groupActivityByWorkItem(events);
   const nowTime = Date.parse(now);
 
   return workItems.flatMap((workItem) => {
-    const updatedAt = Date.parse(workItem.updatedAtSource ?? workItem.startedAt ?? workItem.createdAtSource ?? "");
+    const updatedAt = Date.parse(
+      workItem.updatedAtSource ?? workItem.startedAt ?? workItem.createdAtSource ?? "",
+    );
     const ageDays = Number.isFinite(updatedAt) ? (nowTime - updatedAt) / 86_400_000 : 0;
 
     if ((workItem.status === "open" || workItem.status === "in_progress") && ageDays >= 14) {
       const activity = activityByWorkItem.get(workItem.id);
-      return [{
-        workItemId: workItem.id,
-        highlightType: "potential_blocker" as const,
-        score: Math.min(100, 40 + Math.floor(ageDays)),
-        title: workItem.title,
-        reason: [`Open for ${Math.floor(ageDays)} days without completion`],
-        sourceRefs: [...(activity?.sourceRefs ?? new Set<string>())].sort(),
-        relatedPeople: [...(activity?.people ?? new Set<string>())].sort(),
-        relatedWorkItems: [workItem.id],
-      }];
+      return [
+        {
+          workItemId: workItem.id,
+          highlightType: "potential_blocker" as const,
+          score: Math.min(100, 40 + Math.floor(ageDays)),
+          title: workItem.title,
+          reason: [`Open for ${Math.floor(ageDays)} days without completion`],
+          sourceRefs: [...(activity?.sourceRefs ?? new Set<string>())].sort(),
+          relatedPeople: [...(activity?.people ?? new Set<string>())].sort(),
+          relatedWorkItems: [workItem.id],
+        },
+      ];
     }
 
     return [];
@@ -175,7 +185,11 @@ function happenedInPeriod(value: string | undefined, options: HighlightScoringOp
 }
 
 function isLongRunningCompletion(workItem: WorkItem, options: HighlightScoringOptions): boolean {
-  if (!happenedInPeriod(workItem.completedAt, options) || workItem.startedAt === undefined || workItem.completedAt === undefined) {
+  if (
+    !happenedInPeriod(workItem.completedAt, options) ||
+    workItem.startedAt === undefined ||
+    workItem.completedAt === undefined
+  ) {
     return false;
   }
 
@@ -184,6 +198,7 @@ function isLongRunningCompletion(workItem: WorkItem, options: HighlightScoringOp
 
 function isLowSignalMaintenance(workItem: WorkItem, events: readonly ActivityEvent[]): boolean {
   const text = `${workItem.title} ${(workItem.labels ?? []).join(" ")}`.toLowerCase();
-  const maintenance = text.includes("typo") || text.includes("chore") || text.includes("dependency");
+  const maintenance =
+    text.includes("typo") || text.includes("chore") || text.includes("dependency");
   return maintenance && events.length <= 1;
 }

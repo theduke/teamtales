@@ -119,7 +119,8 @@ export function validateReportWriterOutput(output: ReportWriterOutput): string[]
   output.sections.forEach((section, index) => {
     if (section.heading.trim() === "") errors.push(`sections[${index}].heading is required`);
     if (section.body.trim() === "") errors.push(`sections[${index}].body is required`);
-    if (section.sourceRefs.length === 0) errors.push(`sections[${index}].sourceRefs must not be empty`);
+    if (section.sourceRefs.length === 0)
+      errors.push(`sections[${index}].sourceRefs must not be empty`);
   });
 
   return errors;

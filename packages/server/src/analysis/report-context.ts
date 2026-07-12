@@ -1,4 +1,11 @@
-import type { AnalysisInput, Freshness, Highlight, ReportContext, Risk, WorkItem } from "./types.js";
+import type {
+  AnalysisInput,
+  Freshness,
+  Highlight,
+  ReportContext,
+  Risk,
+  WorkItem,
+} from "./types.js";
 import { computeActivityMetrics, computePersonMetrics, eventsInPeriod } from "./metrics.js";
 import { detectRisks, scoreHighlights } from "./highlights.js";
 
@@ -8,7 +15,9 @@ export function buildReportContext(input: AnalysisInput): ReportContext {
   const highlights = scoreHighlights(input.workItems, events, {
     periodStart: input.period.start,
     periodEnd: input.period.end,
-    ...(input.manuallyPinnedWorkItemIds === undefined ? {} : { manuallyPinnedWorkItemIds: input.manuallyPinnedWorkItemIds }),
+    ...(input.manuallyPinnedWorkItemIds === undefined
+      ? {}
+      : { manuallyPinnedWorkItemIds: input.manuallyPinnedWorkItemIds }),
   });
   const riskHighlights = detectRisks(input.workItems, events, input.period.end);
   const personMetrics = computePersonMetrics(events);
@@ -30,7 +39,10 @@ export function buildReportContext(input: AnalysisInput): ReportContext {
         return {
           personId: person.id,
           displayName: person.displayName,
-          activitySummary: summarizePersonActivity(person.displayName, personMetrics.get(person.id) ?? {}),
+          activitySummary: summarizePersonActivity(
+            person.displayName,
+            personMetrics.get(person.id) ?? {},
+          ),
           metrics: personMetrics.get(person.id) ?? {},
           sourceRefs,
         };
@@ -67,7 +79,10 @@ function toRisk(highlight: Highlight): Risk {
   };
 }
 
-function toReportWorkItem(workItem: WorkItem, events: readonly { workItemId?: string; title: string; sourceRef?: string; id: string }[]): ReportContext["workItems"][number] {
+function toReportWorkItem(
+  workItem: WorkItem,
+  events: readonly { workItemId?: string; title: string; sourceRef?: string; id: string }[],
+): ReportContext["workItems"][number] {
   const relatedEvents = events.filter((event) => event.workItemId === workItem.id);
   const summaryFacts = [
     `${workItem.provider} ${workItem.sourceType} is ${workItem.status}`,

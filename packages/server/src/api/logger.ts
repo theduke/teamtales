@@ -3,7 +3,18 @@ import pino from "pino";
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? "info",
   redact: {
-    paths: ["token", "secret", "password", "authorization", "credential", "*.token", "*.secret", "*.password", "*.authorization", "*.credential"],
+    paths: [
+      "token",
+      "secret",
+      "password",
+      "authorization",
+      "credential",
+      "*.token",
+      "*.secret",
+      "*.password",
+      "*.authorization",
+      "*.credential",
+    ],
     censor: "[REDACTED]",
   },
 });

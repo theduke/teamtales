@@ -47,7 +47,11 @@ export async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   }
 }
 
-export function writeJson<T extends JsonValue>(response: ServerResponse, status: number, body: ApiResponseDto<T>): void {
+export function writeJson<T extends JsonValue>(
+  response: ServerResponse,
+  status: number,
+  body: ApiResponseDto<T>,
+): void {
   const payload = JSON.stringify(body);
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -56,7 +60,11 @@ export function writeJson<T extends JsonValue>(response: ServerResponse, status:
   response.end(payload);
 }
 
-export function writeData<T extends JsonValue>(response: ServerResponse, status: number, data: T): void {
+export function writeData<T extends JsonValue>(
+  response: ServerResponse,
+  status: number,
+  data: T,
+): void {
   writeJson(response, status, { ok: true, data });
 }
 
@@ -64,11 +72,16 @@ export function writeError(response: ServerResponse, error: unknown): void {
   const constraint = isConstraintError(error);
   const status = error instanceof HttpError ? error.status : constraint ? 409 : 500;
   const code = error instanceof HttpError ? error.code : constraint ? "conflict" : "internal_error";
-  const message = constraint ? "The request conflicts with an existing resource." : error instanceof Error ? error.message : "Unexpected server error.";
+  const message = constraint
+    ? "The request conflicts with an existing resource."
+    : error instanceof Error
+      ? error.message
+      : "Unexpected server error.";
   const details = error instanceof HttpError ? error.details : undefined;
 
   if (status >= 500 && code === "internal_error") {
-    const errorMessage = error instanceof Error ? redactText(error.stack ?? error.message) : redactText(String(error));
+    const errorMessage =
+      error instanceof Error ? redactText(error.stack ?? error.message) : redactText(String(error));
     logger.error({ error: { message: errorMessage }, status, code }, "Unhandled API error");
   }
 
@@ -86,7 +99,12 @@ function isConstraintError(error: unknown): boolean {
   let current: unknown = error;
   while (current instanceof Error) {
     const code = (current as Error & { code?: string }).code;
-    if (code === "ER_DUP_ENTRY" || code === "ER_NO_REFERENCED_ROW_2" || code === "ER_ROW_IS_REFERENCED_2" || /constraint failed/i.test(current.message)) {
+    if (
+      code === "ER_DUP_ENTRY" ||
+      code === "ER_NO_REFERENCED_ROW_2" ||
+      code === "ER_ROW_IS_REFERENCED_2" ||
+      /constraint failed/i.test(current.message)
+    ) {
       return true;
     }
     current = (current as Error & { cause?: unknown }).cause;
@@ -125,7 +143,10 @@ export function optionalBoolean(record: Record<string, unknown>, key: string): b
   return value;
 }
 
-export function optionalJsonObject(record: Record<string, unknown>, key: string): JsonObject | undefined {
+export function optionalJsonObject(
+  record: Record<string, unknown>,
+  key: string,
+): JsonObject | undefined {
   const value = record[key];
   if (value === undefined) {
     return undefined;

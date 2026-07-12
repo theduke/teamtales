@@ -1,4 +1,10 @@
-import type { ActivityEvent, Provider, WorkItem, WorkItemStatus, WorkType } from "../analysis/types.js";
+import type {
+  ActivityEvent,
+  Provider,
+  WorkItem,
+  WorkItemStatus,
+  WorkType,
+} from "../analysis/types.js";
 
 export type SourceRecord = Record<string, unknown>;
 
@@ -19,11 +25,20 @@ export function workItemId(provider: Provider, sourceType: WorkType, externalId:
   return `${provider}:${sourceType}:${externalId}`;
 }
 
-export function eventId(provider: Provider, eventType: string, externalId: string, occurredAt: string): string {
+export function eventId(
+  provider: Provider,
+  eventType: string,
+  externalId: string,
+  occurredAt: string,
+): string {
   return `${provider}:${eventType}:${externalId}:${occurredAt}`;
 }
 
-export function sourceRef(providerObjectType: string, externalId: string, sourceObjectId?: string): string {
+export function sourceRef(
+  providerObjectType: string,
+  externalId: string,
+  sourceObjectId?: string,
+): string {
   return sourceObjectId ?? `${providerObjectType}:${externalId}`;
 }
 
@@ -97,7 +112,11 @@ export function labelsFromUnknown(values: unknown[]): string[] | undefined {
   return labels.length > 0 ? labels : undefined;
 }
 
-export function requiredString(record: SourceRecord, keys: readonly string[], description: string): string {
+export function requiredString(
+  record: SourceRecord,
+  keys: readonly string[],
+  description: string,
+): string {
   for (const key of keys) {
     const value = stringField(record, key);
     if (value) {
@@ -105,7 +124,9 @@ export function requiredString(record: SourceRecord, keys: readonly string[], de
     }
   }
 
-  const numberValue = keys.map((key) => numberField(record, key)).find((value) => value !== undefined);
+  const numberValue = keys
+    .map((key) => numberField(record, key))
+    .find((value) => value !== undefined);
   if (numberValue !== undefined) {
     return String(numberValue);
   }
@@ -137,12 +158,18 @@ export function githubStatus(record: SourceRecord): WorkItemStatus {
 }
 
 export function linearStatus(record: SourceRecord): WorkItemStatus {
-  const completedAt = firstString(stringField(record, "completedAt"), stringField(record, "completed_at"));
+  const completedAt = firstString(
+    stringField(record, "completedAt"),
+    stringField(record, "completed_at"),
+  );
   if (completedAt) {
     return "completed";
   }
 
-  const stateType = firstString(nestedString(record, ["state", "type"]), nestedString(record, ["workflowState", "type"]));
+  const stateType = firstString(
+    nestedString(record, ["state", "type"]),
+    nestedString(record, ["workflowState", "type"]),
+  );
   if (stateType === "completed") {
     return "completed";
   }

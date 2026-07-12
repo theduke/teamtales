@@ -1,4 +1,10 @@
-import type { GenerateReportResponseDto, GenerateWeeklyReportRequestDto, JsonObject, ReportDto, ReportInputDto } from "@teamtales/common/api";
+import type {
+  GenerateReportResponseDto,
+  GenerateWeeklyReportRequestDto,
+  JsonObject,
+  ReportDto,
+  ReportInputDto,
+} from "@teamtales/common/api";
 import type { Highlight, ReportContext } from "@teamtales/common/domain";
 
 import {
@@ -55,7 +61,13 @@ export async function generateWeeklyReportService(
       },
       metrics: input.context.metrics.map((metric, index) => ({
         ...metric,
-        id: stableId("metric", analysisRunId, String(index), metric.name, JSON.stringify(metric.dimensions ?? {})),
+        id: stableId(
+          "metric",
+          analysisRunId,
+          String(index),
+          metric.name,
+          JSON.stringify(metric.dimensions ?? {}),
+        ),
       })),
       highlights: input.context.highlights.flatMap((highlight, index) => {
         const workItemId = highlight.relatedWorkItems[0];
@@ -63,26 +75,28 @@ export async function generateWeeklyReportService(
           return [];
         }
 
-        return [{
-          id: stableId(
-            "highlight",
-            analysisRunId,
-            String(index),
-            highlight.title,
-            highlight.reason,
-            JSON.stringify(highlight.sourceRefs),
-            JSON.stringify(highlight.relatedPeople),
-            JSON.stringify(highlight.relatedWorkItems),
-          ),
-          workItemId,
-          highlightType: inferHighlightType(highlight),
-          score: Math.max(1, 100 - index),
-          title: highlight.title,
-          reason: [highlight.reason],
-          sourceRefs: highlight.sourceRefs,
-          relatedPeople: highlight.relatedPeople,
-          relatedWorkItems: highlight.relatedWorkItems,
-        }];
+        return [
+          {
+            id: stableId(
+              "highlight",
+              analysisRunId,
+              String(index),
+              highlight.title,
+              highlight.reason,
+              JSON.stringify(highlight.sourceRefs),
+              JSON.stringify(highlight.relatedPeople),
+              JSON.stringify(highlight.relatedWorkItems),
+            ),
+            workItemId,
+            highlightType: inferHighlightType(highlight),
+            score: Math.max(1, 100 - index),
+            title: highlight.title,
+            reason: [highlight.reason],
+            sourceRefs: highlight.sourceRefs,
+            relatedPeople: highlight.relatedPeople,
+            relatedWorkItems: highlight.relatedWorkItems,
+          },
+        ];
       }),
       reportContext: {
         id: analysisReportContextId,
@@ -100,7 +114,13 @@ export async function generateWeeklyReportService(
     input.context.period.end,
   );
 
-  const reportId = stableId("report", analysisReportContextId, "weekly", input.context.period.start, input.context.period.end);
+  const reportId = stableId(
+    "report",
+    analysisReportContextId,
+    "weekly",
+    input.context.period.start,
+    input.context.period.end,
+  );
   const report: ReportDto = {
     id: reportId,
     organizationId: input.context.organization.id,
@@ -196,7 +216,9 @@ export async function generateWeeklyReportService(
   };
 }
 
-function inferHighlightType(highlight: ReportContext["highlights"][number]): Highlight["highlightType"] {
+function inferHighlightType(
+  highlight: ReportContext["highlights"][number],
+): Highlight["highlightType"] {
   const text = `${highlight.title} ${highlight.reason}`.toLowerCase();
   if (text.includes("pull request") || text.includes("merged")) {
     return "merged_pr";

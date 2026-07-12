@@ -1,10 +1,4 @@
-import {
-  createHash,
-  randomBytes,
-  randomUUID,
-  scryptSync,
-  timingSafeEqual,
-} from "node:crypto";
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { apiTokens, authSessions, users } from "../db/schema.js";
@@ -88,14 +82,17 @@ export async function setPassword(
   assertScryptParameters(n, r, p);
   const salt = randomBytes(32);
   const hash = derivePassword(password, salt, n, r, p);
-  const result = await database.update(users).set({
-    passwordHash: hash.toString("base64url"),
-    passwordSalt: salt.toString("base64url"),
-    passwordScryptN: n,
-    passwordScryptR: r,
-    passwordScryptP: p,
-    updatedAt: new Date().toISOString(),
-  }).where(eq(users.id, userId));
+  const result = await database
+    .update(users)
+    .set({
+      passwordHash: hash.toString("base64url"),
+      passwordSalt: salt.toString("base64url"),
+      passwordScryptN: n,
+      passwordScryptR: r,
+      passwordScryptP: p,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(users.id, userId));
   if (affectedRows(result) !== 1) throw new Error(`User ${userId} not found`);
 }
 
@@ -106,16 +103,22 @@ export async function resetUserPassword(
   password: string,
   options: PasswordOptions = {},
 ): Promise<string> {
-  const [userById] = await database.select({ id: users.id }).from(users)
-    .where(eq(users.id, userIdOrEmail)).limit(1);
+  const [userById] = await database
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.id, userIdOrEmail))
+    .limit(1);
   if (userById) {
     await setPassword(database, userById.id, password, options);
     return userById.id;
   }
 
   const normalizedEmail = normalizeEmail(userIdOrEmail);
-  const [userByEmail] = await database.select({ id: users.id }).from(users)
-    .where(sql`lower(${users.primaryEmail}) = ${normalizedEmail}`).limit(1);
+  const [userByEmail] = await database
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.primaryEmail}) = ${normalizedEmail}`)
+    .limit(1);
   if (!userByEmail) throw new Error(`User ${userIdOrEmail} not found`);
   await setPassword(database, userByEmail.id, password, options);
   return userByEmail.id;
@@ -137,16 +140,20 @@ export async function authenticatePassword(
     performDummyPasswordCheck(password);
     return undefined;
   }
-  const [row] = await database.select({
-    id: users.id,
-    displayName: users.displayName,
-    primaryEmail: users.primaryEmail,
-    passwordHash: users.passwordHash,
-    passwordSalt: users.passwordSalt,
-    passwordScryptN: users.passwordScryptN,
-    passwordScryptR: users.passwordScryptR,
-    passwordScryptP: users.passwordScryptP,
-  }).from(users).where(sql`lower(${users.primaryEmail}) = ${normalizedEmail}`).limit(1);
+  const [row] = await database
+    .select({
+      id: users.id,
+      displayName: users.displayName,
+      primaryEmail: users.primaryEmail,
+      passwordHash: users.passwordHash,
+      passwordSalt: users.passwordSalt,
+      passwordScryptN: users.passwordScryptN,
+      passwordScryptR: users.passwordScryptR,
+      passwordScryptP: users.passwordScryptP,
+    })
+    .from(users)
+    .where(sql`lower(${users.primaryEmail}) = ${normalizedEmail}`)
+    .limit(1);
 
   if (!row || !validPasswordRow(row)) {
     performDummyPasswordCheck(password);
@@ -182,7 +189,10 @@ export async function createSession(
   options: TokenLifetimeOptions = {},
 ): Promise<CreatedSession> {
   const now = validDate(options.now ?? new Date(), "now");
-  const expiresAt = validDate(options.expiresAt ?? new Date(now.getTime() + DEFAULT_SESSION_LIFETIME_MS), "expiresAt");
+  const expiresAt = validDate(
+    options.expiresAt ?? new Date(now.getTime() + DEFAULT_SESSION_LIFETIME_MS),
+    "expiresAt",
+  );
   assertFutureExpiry(now, expiresAt);
   await requireAuthenticatableUser(database, userId);
 
@@ -206,18 +216,24 @@ export async function resolveSession(
   options: Pick<TokenLifetimeOptions, "now"> = {},
 ): Promise<AuthenticatedPrincipal | undefined> {
   const now = validDate(options.now ?? new Date(), "now");
-  const [row] = await database.select({
-    credentialId: authSessions.id,
-    expiresAt: authSessions.expiresAt,
-    revokedAt: authSessions.revokedAt,
-    id: users.id,
-    displayName: users.displayName,
-    primaryEmail: users.primaryEmail,
-  }).from(authSessions).innerJoin(users, eq(users.id, authSessions.userId))
-    .where(eq(authSessions.tokenHash, hashToken(token))).limit(1);
+  const [row] = await database
+    .select({
+      credentialId: authSessions.id,
+      expiresAt: authSessions.expiresAt,
+      revokedAt: authSessions.revokedAt,
+      id: users.id,
+      displayName: users.displayName,
+      primaryEmail: users.primaryEmail,
+    })
+    .from(authSessions)
+    .innerJoin(users, eq(users.id, authSessions.userId))
+    .where(eq(authSessions.tokenHash, hashToken(token)))
+    .limit(1);
 
   if (!activeCredential(row, now)) return undefined;
-  await database.update(authSessions).set({ lastUsedAt: now.toISOString(), updatedAt: now.toISOString() })
+  await database
+    .update(authSessions)
+    .set({ lastUsedAt: now.toISOString(), updatedAt: now.toISOString() })
     .where(eq(authSessions.id, row.credentialId));
   return principalFromRow(row, "session", row.credentialId);
 }
@@ -228,7 +244,9 @@ export async function revokeSession(
   options: Pick<TokenLifetimeOptions, "now"> = {},
 ): Promise<boolean> {
   const now = validDate(options.now ?? new Date(), "now").toISOString();
-  const result = await database.update(authSessions).set({ revokedAt: now, updatedAt: now })
+  const result = await database
+    .update(authSessions)
+    .set({ revokedAt: now, updatedAt: now })
     .where(and(eq(authSessions.tokenHash, hashToken(token)), isNull(authSessions.revokedAt)));
   return affectedRows(result) === 1;
 }
@@ -239,9 +257,13 @@ export async function createApiToken(
   options: CreateApiTokenOptions,
 ): Promise<CreatedApiToken> {
   const name = options.name.trim();
-  if (!name || name.length > 100) throw new Error("API token name must contain 1 to 100 characters");
+  if (!name || name.length > 100)
+    throw new Error("API token name must contain 1 to 100 characters");
   const now = validDate(options.now ?? new Date(), "now");
-  const expiresAt = validDate(options.expiresAt ?? new Date(now.getTime() + DEFAULT_API_TOKEN_LIFETIME_MS), "expiresAt");
+  const expiresAt = validDate(
+    options.expiresAt ?? new Date(now.getTime() + DEFAULT_API_TOKEN_LIFETIME_MS),
+    "expiresAt",
+  );
   assertFutureExpiry(now, expiresAt);
   await requireAuthenticatableUser(database, userId);
 
@@ -269,18 +291,24 @@ export async function resolveApiToken(
 ): Promise<AuthenticatedPrincipal | undefined> {
   if (!/^ttapi_[A-Za-z0-9_-]{12}_[A-Za-z0-9_-]{43}$/.test(token)) return undefined;
   const now = validDate(options.now ?? new Date(), "now");
-  const [row] = await database.select({
-    credentialId: apiTokens.id,
-    expiresAt: apiTokens.expiresAt,
-    revokedAt: apiTokens.revokedAt,
-    id: users.id,
-    displayName: users.displayName,
-    primaryEmail: users.primaryEmail,
-  }).from(apiTokens).innerJoin(users, eq(users.id, apiTokens.userId))
-    .where(eq(apiTokens.tokenHash, hashToken(token))).limit(1);
+  const [row] = await database
+    .select({
+      credentialId: apiTokens.id,
+      expiresAt: apiTokens.expiresAt,
+      revokedAt: apiTokens.revokedAt,
+      id: users.id,
+      displayName: users.displayName,
+      primaryEmail: users.primaryEmail,
+    })
+    .from(apiTokens)
+    .innerJoin(users, eq(users.id, apiTokens.userId))
+    .where(eq(apiTokens.tokenHash, hashToken(token)))
+    .limit(1);
 
   if (!activeCredential(row, now)) return undefined;
-  await database.update(apiTokens).set({ lastUsedAt: now.toISOString(), updatedAt: now.toISOString() })
+  await database
+    .update(apiTokens)
+    .set({ lastUsedAt: now.toISOString(), updatedAt: now.toISOString() })
     .where(eq(apiTokens.id, row.credentialId));
   return principalFromRow(row, "api_token", row.credentialId);
 }
@@ -293,8 +321,12 @@ export async function revokeApiToken(
   const now = validDate(options.now ?? new Date(), "now").toISOString();
   const byToken = /^ttapi_[A-Za-z0-9_-]{12}_[A-Za-z0-9_-]{43}$/.test(tokenOrId);
   const identifier = byToken ? hashToken(tokenOrId) : tokenOrId;
-  const identifierCondition = byToken ? eq(apiTokens.tokenHash, identifier) : eq(apiTokens.id, identifier);
-  const result = await database.update(apiTokens).set({ revokedAt: now, updatedAt: now })
+  const identifierCondition = byToken
+    ? eq(apiTokens.tokenHash, identifier)
+    : eq(apiTokens.id, identifier);
+  const result = await database
+    .update(apiTokens)
+    .set({ revokedAt: now, updatedAt: now })
     .where(and(identifierCondition, isNull(apiTokens.revokedAt)));
   return affectedRows(result) === 1;
 }
@@ -326,9 +358,18 @@ function assertScryptParameters(n: number, r: number, p: number): void {
 }
 
 function safeScryptParameters(n: number, r: number, p: number): boolean {
-  return Number.isInteger(n) && n >= 16_384 && n <= 65_536 && (n & (n - 1)) === 0
-    && Number.isInteger(r) && r >= 8 && r <= 16
-    && Number.isInteger(p) && p >= 1 && p <= 4;
+  return (
+    Number.isInteger(n) &&
+    n >= 16_384 &&
+    n <= 65_536 &&
+    (n & (n - 1)) === 0 &&
+    Number.isInteger(r) &&
+    r >= 8 &&
+    r <= 16 &&
+    Number.isInteger(p) &&
+    p >= 1 &&
+    p <= 4
+  );
 }
 
 function validPasswordRow(row: {
@@ -338,9 +379,13 @@ function validPasswordRow(row: {
   passwordScryptR: number | null;
   passwordScryptP: number | null;
 }): boolean {
-  return typeof row.passwordHash === "string" && typeof row.passwordSalt === "string"
-    && typeof row.passwordScryptN === "number" && typeof row.passwordScryptR === "number"
-    && typeof row.passwordScryptP === "number";
+  return (
+    typeof row.passwordHash === "string" &&
+    typeof row.passwordSalt === "string" &&
+    typeof row.passwordScryptN === "number" &&
+    typeof row.passwordScryptR === "number" &&
+    typeof row.passwordScryptP === "number"
+  );
 }
 
 function decodeBase64Url(value: string): Buffer | undefined {
@@ -381,8 +426,11 @@ function principalFromRow(
 }
 
 async function requireAuthenticatableUser(database: AuthDatabase, userId: string): Promise<void> {
-  const [user] = await database.select({ primaryEmail: users.primaryEmail }).from(users)
-    .where(eq(users.id, userId)).limit(1);
+  const [user] = await database
+    .select({ primaryEmail: users.primaryEmail })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
   if (!user) {
     throw new Error(`User ${userId} not found`);
   }

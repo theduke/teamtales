@@ -1,7 +1,12 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 
 import type { Highlight, Metric, ReportContext, ReportScopeType } from "../analysis/types.js";
-import { analysisHighlights, analysisMetrics, analysisReportContexts, analysisRuns } from "../db/schema.js";
+import {
+  analysisHighlights,
+  analysisMetrics,
+  analysisReportContexts,
+  analysisRuns,
+} from "../db/schema.js";
 import {
   jsonStringify,
   parseJsonObject,
@@ -60,7 +65,10 @@ export interface SaveCompleteAnalysisResultInput {
   run: AnalysisRunRecord;
   metrics: readonly (Metric & { id: string })[];
   highlights: readonly (Highlight & { id: string })[];
-  reportContext: Omit<AnalysisReportContextRecord, "organizationId" | "analysisRunId" | "scopeType" | "scopeId" | "periodStart" | "periodEnd">;
+  reportContext: Omit<
+    AnalysisReportContextRecord,
+    "organizationId" | "analysisRunId" | "scopeType" | "scopeId" | "periodStart" | "periodEnd"
+  >;
 }
 
 export interface SavedAnalysisResult {
@@ -70,7 +78,10 @@ export interface SavedAnalysisResult {
   reportContext: AnalysisReportContextRecord;
 }
 
-export async function insertAnalysisRun(database: PersistenceDatabase, run: AnalysisRunRecord): Promise<AnalysisRunRecord> {
+export async function insertAnalysisRun(
+  database: PersistenceDatabase,
+  run: AnalysisRunRecord,
+): Promise<AnalysisRunRecord> {
   await database.insert(analysisRuns).values({
     id: run.id,
     organizationId: run.organizationId,
@@ -148,23 +159,27 @@ export async function saveCompleteAnalysisResult(
     const run = await insertAnalysisRun(transaction, input.run);
     const metrics: AnalysisMetricRecord[] = [];
     for (const metric of input.metrics) {
-      metrics.push(await insertAnalysisMetric(transaction, {
-        ...metric,
-        organizationId: run.organizationId,
-        analysisRunId: run.id,
-        scopeType: run.scopeType,
-        scopeId: run.scopeId,
-        periodStart: run.periodStart,
-        periodEnd: run.periodEnd,
-      }));
+      metrics.push(
+        await insertAnalysisMetric(transaction, {
+          ...metric,
+          organizationId: run.organizationId,
+          analysisRunId: run.id,
+          scopeType: run.scopeType,
+          scopeId: run.scopeId,
+          periodStart: run.periodStart,
+          periodEnd: run.periodEnd,
+        }),
+      );
     }
     const highlights: AnalysisHighlightRecord[] = [];
     for (const highlight of input.highlights) {
-      highlights.push(await insertAnalysisHighlight(transaction, {
-        ...highlight,
-        organizationId: run.organizationId,
-        analysisRunId: run.id,
-      }));
+      highlights.push(
+        await insertAnalysisHighlight(transaction, {
+          ...highlight,
+          organizationId: run.organizationId,
+          analysisRunId: run.id,
+        }),
+      );
     }
     const reportContext = await insertAnalysisReportContext(transaction, {
       ...input.reportContext,
@@ -179,7 +194,10 @@ export async function saveCompleteAnalysisResult(
   });
 }
 
-export async function getAnalysisRun(database: PersistenceDatabase, id: string): Promise<AnalysisRunRecord | undefined> {
+export async function getAnalysisRun(
+  database: PersistenceDatabase,
+  id: string,
+): Promise<AnalysisRunRecord | undefined> {
   const [row] = await database.select().from(analysisRuns).where(eq(analysisRuns.id, id)).limit(1);
   return row ? mapAnalysisRun(row) : undefined;
 }
@@ -189,13 +207,18 @@ export async function getAnalysisRunForOrganization(
   organizationId: string,
   id: string,
 ): Promise<AnalysisRunRecord | undefined> {
-  const [row] = await database.select().from(analysisRuns).where(and(
-    eq(analysisRuns.organizationId, organizationId), eq(analysisRuns.id, id),
-  )).limit(1);
+  const [row] = await database
+    .select()
+    .from(analysisRuns)
+    .where(and(eq(analysisRuns.organizationId, organizationId), eq(analysisRuns.id, id)))
+    .limit(1);
   return row ? mapAnalysisRun(row) : undefined;
 }
 
-export async function requireAnalysisRun(database: PersistenceDatabase, id: string): Promise<AnalysisRunRecord> {
+export async function requireAnalysisRun(
+  database: PersistenceDatabase,
+  id: string,
+): Promise<AnalysisRunRecord> {
   const run = await getAnalysisRun(database, id);
   if (!run) throw new Error(`Analysis run not found: ${id}`);
   return run;
@@ -205,7 +228,10 @@ export async function listAnalysisMetrics(
   database: PersistenceDatabase,
   analysisRunId: string,
 ): Promise<AnalysisMetricRecord[]> {
-  const rows = await database.select().from(analysisMetrics).where(eq(analysisMetrics.analysisRunId, analysisRunId))
+  const rows = await database
+    .select()
+    .from(analysisMetrics)
+    .where(eq(analysisMetrics.analysisRunId, analysisRunId))
     .orderBy(asc(analysisMetrics.id));
   return rows.map(mapAnalysisMetric);
 }
@@ -215,14 +241,28 @@ export async function listAnalysisMetricsForOrganization(
   organizationId: string,
   analysisRunId: string,
 ): Promise<AnalysisMetricRecord[]> {
-  const rows = await database.select().from(analysisMetrics).where(and(
-    eq(analysisMetrics.organizationId, organizationId), eq(analysisMetrics.analysisRunId, analysisRunId),
-  )).orderBy(asc(analysisMetrics.id));
+  const rows = await database
+    .select()
+    .from(analysisMetrics)
+    .where(
+      and(
+        eq(analysisMetrics.organizationId, organizationId),
+        eq(analysisMetrics.analysisRunId, analysisRunId),
+      ),
+    )
+    .orderBy(asc(analysisMetrics.id));
   return rows.map(mapAnalysisMetric);
 }
 
-export async function requireAnalysisMetric(database: PersistenceDatabase, id: string): Promise<AnalysisMetricRecord> {
-  const [row] = await database.select().from(analysisMetrics).where(eq(analysisMetrics.id, id)).limit(1);
+export async function requireAnalysisMetric(
+  database: PersistenceDatabase,
+  id: string,
+): Promise<AnalysisMetricRecord> {
+  const [row] = await database
+    .select()
+    .from(analysisMetrics)
+    .where(eq(analysisMetrics.id, id))
+    .limit(1);
   if (!row) throw new Error(`Analysis metric not found: ${id}`);
   return mapAnalysisMetric(row);
 }
@@ -232,9 +272,11 @@ export async function getAnalysisMetricForOrganization(
   organizationId: string,
   id: string,
 ): Promise<AnalysisMetricRecord | undefined> {
-  const [row] = await database.select().from(analysisMetrics).where(and(
-    eq(analysisMetrics.organizationId, organizationId), eq(analysisMetrics.id, id),
-  )).limit(1);
+  const [row] = await database
+    .select()
+    .from(analysisMetrics)
+    .where(and(eq(analysisMetrics.organizationId, organizationId), eq(analysisMetrics.id, id)))
+    .limit(1);
   return row ? mapAnalysisMetric(row) : undefined;
 }
 
@@ -242,7 +284,10 @@ export async function listAnalysisHighlights(
   database: PersistenceDatabase,
   analysisRunId: string,
 ): Promise<AnalysisHighlightRecord[]> {
-  const rows = await database.select().from(analysisHighlights).where(eq(analysisHighlights.analysisRunId, analysisRunId))
+  const rows = await database
+    .select()
+    .from(analysisHighlights)
+    .where(eq(analysisHighlights.analysisRunId, analysisRunId))
     .orderBy(desc(analysisHighlights.score), asc(analysisHighlights.id));
   return rows.map(mapAnalysisHighlight);
 }
@@ -252,14 +297,28 @@ export async function listAnalysisHighlightsForOrganization(
   organizationId: string,
   analysisRunId: string,
 ): Promise<AnalysisHighlightRecord[]> {
-  const rows = await database.select().from(analysisHighlights).where(and(
-    eq(analysisHighlights.organizationId, organizationId), eq(analysisHighlights.analysisRunId, analysisRunId),
-  )).orderBy(desc(analysisHighlights.score), asc(analysisHighlights.id));
+  const rows = await database
+    .select()
+    .from(analysisHighlights)
+    .where(
+      and(
+        eq(analysisHighlights.organizationId, organizationId),
+        eq(analysisHighlights.analysisRunId, analysisRunId),
+      ),
+    )
+    .orderBy(desc(analysisHighlights.score), asc(analysisHighlights.id));
   return rows.map(mapAnalysisHighlight);
 }
 
-export async function requireAnalysisHighlight(database: PersistenceDatabase, id: string): Promise<AnalysisHighlightRecord> {
-  const [row] = await database.select().from(analysisHighlights).where(eq(analysisHighlights.id, id)).limit(1);
+export async function requireAnalysisHighlight(
+  database: PersistenceDatabase,
+  id: string,
+): Promise<AnalysisHighlightRecord> {
+  const [row] = await database
+    .select()
+    .from(analysisHighlights)
+    .where(eq(analysisHighlights.id, id))
+    .limit(1);
   if (!row) throw new Error(`Analysis highlight not found: ${id}`);
   return mapAnalysisHighlight(row);
 }
@@ -269,9 +328,13 @@ export async function getAnalysisHighlightForOrganization(
   organizationId: string,
   id: string,
 ): Promise<AnalysisHighlightRecord | undefined> {
-  const [row] = await database.select().from(analysisHighlights).where(and(
-    eq(analysisHighlights.organizationId, organizationId), eq(analysisHighlights.id, id),
-  )).limit(1);
+  const [row] = await database
+    .select()
+    .from(analysisHighlights)
+    .where(
+      and(eq(analysisHighlights.organizationId, organizationId), eq(analysisHighlights.id, id)),
+    )
+    .limit(1);
   return row ? mapAnalysisHighlight(row) : undefined;
 }
 
@@ -279,7 +342,11 @@ export async function getAnalysisReportContext(
   database: PersistenceDatabase,
   id: string,
 ): Promise<AnalysisReportContextRecord | undefined> {
-  const [row] = await database.select().from(analysisReportContexts).where(eq(analysisReportContexts.id, id)).limit(1);
+  const [row] = await database
+    .select()
+    .from(analysisReportContexts)
+    .where(eq(analysisReportContexts.id, id))
+    .limit(1);
   return row ? mapAnalysisReportContext(row) : undefined;
 }
 
@@ -288,9 +355,16 @@ export async function getAnalysisReportContextForOrganization(
   organizationId: string,
   id: string,
 ): Promise<AnalysisReportContextRecord | undefined> {
-  const [row] = await database.select().from(analysisReportContexts).where(and(
-    eq(analysisReportContexts.organizationId, organizationId), eq(analysisReportContexts.id, id),
-  )).limit(1);
+  const [row] = await database
+    .select()
+    .from(analysisReportContexts)
+    .where(
+      and(
+        eq(analysisReportContexts.organizationId, organizationId),
+        eq(analysisReportContexts.id, id),
+      ),
+    )
+    .limit(1);
   return row ? mapAnalysisReportContext(row) : undefined;
 }
 
@@ -304,7 +378,11 @@ export async function requireAnalysisReportContext(
 }
 
 function mapAnalysisRun(row: typeof analysisRuns.$inferSelect): AnalysisRunRecord {
-  return { ...row, scopeType: row.scopeType as ReportScopeType, status: row.status as AnalysisRunStatus };
+  return {
+    ...row,
+    scopeType: row.scopeType as ReportScopeType,
+    status: row.status as AnalysisRunStatus,
+  };
 }
 
 function mapAnalysisMetric(row: typeof analysisMetrics.$inferSelect): AnalysisMetricRecord {
@@ -323,7 +401,9 @@ function mapAnalysisMetric(row: typeof analysisMetrics.$inferSelect): AnalysisMe
   };
 }
 
-function mapAnalysisHighlight(row: typeof analysisHighlights.$inferSelect): AnalysisHighlightRecord {
+function mapAnalysisHighlight(
+  row: typeof analysisHighlights.$inferSelect,
+): AnalysisHighlightRecord {
   return {
     id: row.id,
     organizationId: row.organizationId,
@@ -340,7 +420,9 @@ function mapAnalysisHighlight(row: typeof analysisHighlights.$inferSelect): Anal
   };
 }
 
-function mapAnalysisReportContext(row: typeof analysisReportContexts.$inferSelect): AnalysisReportContextRecord {
+function mapAnalysisReportContext(
+  row: typeof analysisReportContexts.$inferSelect,
+): AnalysisReportContextRecord {
   return {
     id: row.id,
     organizationId: row.organizationId,

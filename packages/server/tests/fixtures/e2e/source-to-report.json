@@ -177,9 +177,7 @@
             }
           }
         ],
-        "labels": [
-          "customer-impact"
-        ]
+        "labels": ["customer-impact"]
       }
     },
     {

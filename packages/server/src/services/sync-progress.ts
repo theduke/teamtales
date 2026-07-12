@@ -44,13 +44,19 @@ export async function listSyncRunResourceProgress(
     .orderBy(asc(syncRuns.id))
     .limit(pageSize + 1);
   const page = rows.slice(0, pageSize);
-  const resourceIds = page.flatMap(row => row.providerResourceId ? [row.providerResourceId] : []);
-  const resources = resourceIds.length === 0
-    ? []
-    : await database.select().from(providerResources).where(inArray(providerResources.id, resourceIds));
-  const byId = new Map(resources.map(resource => [resource.id, resource]));
+  const resourceIds = page.flatMap((row) =>
+    row.providerResourceId ? [row.providerResourceId] : [],
+  );
+  const resources =
+    resourceIds.length === 0
+      ? []
+      : await database
+          .select()
+          .from(providerResources)
+          .where(inArray(providerResources.id, resourceIds));
+  const byId = new Map(resources.map((resource) => [resource.id, resource]));
   return {
-    items: page.map(row => {
+    items: page.map((row) => {
       const resource = row.providerResourceId ? byId.get(row.providerResourceId) : undefined;
       return {
         ...(resource ? { resource: toResourceDto(resource) } : {}),
@@ -69,13 +75,18 @@ export async function readOrganizationSyncStatus(
     database
       .select()
       .from(syncRuns)
-      .where(and(
-        eq(syncRuns.organizationId, organizationId),
-        isNull(syncRuns.parentSyncRunId),
-        or(eq(syncRuns.status, "queued"), eq(syncRuns.status, "running")),
-      ))
+      .where(
+        and(
+          eq(syncRuns.organizationId, organizationId),
+          isNull(syncRuns.parentSyncRunId),
+          or(eq(syncRuns.status, "queued"), eq(syncRuns.status, "running")),
+        ),
+      )
       .orderBy(desc(syncRuns.createdAt)),
-    database.select({ syncStatus: providerResources.syncStatus }).from(providerResources).where(eq(providerResources.organizationId, organizationId)),
+    database
+      .select({ syncStatus: providerResources.syncStatus })
+      .from(providerResources)
+      .where(eq(providerResources.organizationId, organizationId)),
   ]);
   const resourceStatusCounts = resources.reduce<Record<string, number>>((counts, resource) => {
     counts[resource.syncStatus] = (counts[resource.syncStatus] ?? 0) + 1;
@@ -114,7 +125,9 @@ export function toSyncRunDto(row: typeof syncRuns.$inferSelect): SyncRunDto {
   };
 }
 
-function toResourceDto(resource: typeof providerResources.$inferSelect): NonNullable<SyncRunResourceProgressDto["resource"]> {
+function toResourceDto(
+  resource: typeof providerResources.$inferSelect,
+): NonNullable<SyncRunResourceProgressDto["resource"]> {
   return {
     id: resource.id,
     provider: resource.provider as Provider,

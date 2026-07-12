@@ -135,7 +135,9 @@ function route(method: string, path: string, handler: Handler, isPublic = false)
   };
 }
 
-async function authenticateRequest(context: ApiContext): Promise<{ principal: AuthPrincipal; kind: "session" | "api_token" } | undefined> {
+async function authenticateRequest(
+  context: ApiContext,
+): Promise<{ principal: AuthPrincipal; kind: "session" | "api_token" } | undefined> {
   const authorization = context.request.headers.authorization;
   if (authorization !== undefined) {
     const match = /^Bearer ([^\s]+)$/.exec(authorization);
@@ -152,23 +154,30 @@ async function authenticateRequest(context: ApiContext): Promise<{ principal: Au
 
 function enforceSameOrigin(context: ApiContext): void {
   const origin = context.request.headers.origin;
-  const expected = context.config.publicOrigin ?? `http://${context.request.headers.host ?? "localhost"}`;
+  const expected =
+    context.config.publicOrigin ?? `http://${context.request.headers.host ?? "localhost"}`;
   if (!origin || normalizeOrigin(origin) !== normalizeOrigin(expected)) {
     throw new HttpError(403, "csrf_rejected", "Request origin is not allowed.");
   }
 }
 
 function normalizeOrigin(value: string): string {
-  try { return new URL(value).origin; } catch { return ""; }
+  try {
+    return new URL(value).origin;
+  } catch {
+    return "";
+  }
 }
 
 function parseCookies(header: string | undefined): Record<string, string> {
   if (!header) return {};
-  return Object.fromEntries(header.split(";").map((part) => {
-    const index = part.indexOf("=");
-    if (index < 0) return [part.trim(), ""];
-    return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())];
-  }));
+  return Object.fromEntries(
+    header.split(";").map((part) => {
+      const index = part.indexOf("=");
+      if (index < 0) return [part.trim(), ""];
+      return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())];
+    }),
+  );
 }
 
 function normalizePathname(pathname: string): string {

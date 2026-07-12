@@ -1,41 +1,630 @@
-import { double, index, int, mysqlTable, text, uniqueIndex, varchar, type AnyMySqlColumn } from "drizzle-orm/mysql-core";
+import {
+  double,
+  index,
+  int,
+  mysqlTable,
+  text,
+  uniqueIndex,
+  varchar,
+  type AnyMySqlColumn,
+} from "drizzle-orm/mysql-core";
 
 const id = (name = "id") => varchar(name, { length: 120 });
 const value = (name: string) => varchar(name, { length: 120 });
 const instant = (name: string) => varchar(name, { length: 40 });
 const timestamps = {
-  createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()),
-  updatedAt: instant("updated_at").notNull().$defaultFn(() => new Date().toISOString()).$onUpdateFn(() => new Date().toISOString()),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: instant("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString())
+    .$onUpdateFn(() => new Date().toISOString()),
 };
 
-export const organizations = mysqlTable("organizations", { id: id().primaryKey(), name: value("name").notNull(), slug: id("slug").notNull(), ...timestamps }, t => [uniqueIndex("organizations_slug_uq").on(t.slug)]);
-export const users = mysqlTable("users", { id: id().primaryKey(), displayName: value("display_name").notNull(), primaryEmail: value("primary_email"), passwordHash: text("password_hash"), passwordSalt: text("password_salt"), passwordScryptN: int("password_scrypt_n"), passwordScryptR: int("password_scrypt_r"), passwordScryptP: int("password_scrypt_p"), ...timestamps }, t => [uniqueIndex("users_primary_email_uq").on(t.primaryEmail)]);
-export const organizationMemberships = mysqlTable("organization_memberships", { id: id().primaryKey(), organizationId: id("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }), userId: id("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), role: value("role").notNull(), status: value("status").notNull(), ...timestamps }, t => [uniqueIndex("organization_memberships_organization_user").on(t.organizationId, t.userId)]);
-export const integrations = mysqlTable("integrations", { id: id().primaryKey(), organizationId: id("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }), provider: value("provider").notNull(), authType: value("auth_type").notNull(), status: value("status").notNull(), displayName: value("display_name").notNull(), ...timestamps }, t => [uniqueIndex("integrations_id_org_uq").on(t.id, t.organizationId), index("idx_integrations_organization_provider").on(t.organizationId, t.provider)]);
-export const integrationCredentials = mysqlTable("integration_credentials", { id: id().primaryKey(), integrationId: id("integration_id").notNull().references(() => integrations.id, { onDelete: "cascade" }), encryptedSecret: text("encrypted_secret").notNull(), secretHint: value("secret_hint"), expiresAt: instant("expires_at"), ...timestamps });
-export const providerResources = mysqlTable("provider_resources", { id: id().primaryKey(), organizationId: id("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }), integrationId: id("integration_id").notNull().references(() => integrations.id, { onDelete: "cascade" }), provider: value("provider").notNull(), resourceType: value("resource_type").notNull(), externalId: value("external_id").notNull(), externalParentId: value("external_parent_id"), parentResourceId: id("parent_resource_id").references((): AnyMySqlColumn => providerResources.id, { onDelete: "set null" }), displayName: value("display_name").notNull(), externalUrl: text("external_url"), metadataJson: text("metadata_json").notNull().default("{}"), discoveryState: value("discovery_state").notNull().default("active"), discoveredAt: instant("discovered_at").notNull(), lastSeenAt: instant("last_seen_at").notNull(), syncStatus: value("sync_status").notNull().default("idle"), currentSyncRunId: id("current_sync_run_id"), lastSyncStartedAt: instant("last_sync_started_at"), lastSyncSucceededAt: instant("last_sync_succeeded_at"), lastSyncFailedAt: instant("last_sync_failed_at"), lastSyncError: text("last_sync_error"), nextAttemptAt: instant("next_attempt_at"), consecutiveFailureCount: int("consecutive_failure_count").notNull().default(0), ...timestamps }, t => [uniqueIndex("provider_resources_integration_type_external_uq").on(t.integrationId, t.resourceType, t.externalId), index("provider_resources_hierarchy_idx").on(t.integrationId, t.parentResourceId, t.discoveryState), index("provider_resources_status_idx").on(t.organizationId, t.integrationId, t.provider, t.resourceType, t.syncStatus)]);
-export const syncScopes = mysqlTable("sync_scopes", { id: id().primaryKey(), organizationId: id("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }), integrationId: id("integration_id").notNull().references(() => integrations.id, { onDelete: "cascade" }), provider: value("provider").notNull(), scopeType: value("scope_type").notNull(), externalId: value("external_id"), externalName: value("external_name").notNull(), providerResourceId: id("provider_resource_id").references(() => providerResources.id, { onDelete: "set null" }), parentScopeId: id("parent_scope_id").references((): AnyMySqlColumn => syncScopes.id, { onDelete: "cascade" }), selectionMode: value("selection_mode").notNull().default("individual"), configJson: text("config_json").notNull(), enabled: int("enabled").notNull().default(1), lastSuccessAt: instant("last_success_at"), lastAttemptAt: instant("last_attempt_at"), ...timestamps }, t => [uniqueIndex("sync_scopes_id_org_uq").on(t.id, t.organizationId), uniqueIndex("sync_scopes_integration_type_external_uq").on(t.integrationId, t.scopeType, t.externalId), index("idx_sync_scopes_hierarchy").on(t.integrationId, t.parentScopeId, t.enabled), index("idx_sync_scopes_integration").on(t.integrationId, t.provider, t.scopeType, t.enabled), index("sync_scopes_resource_idx").on(t.providerResourceId)]);
-export const syncCursors = mysqlTable("sync_cursors", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), integrationId: id("integration_id").notNull(), syncScopeId: id("sync_scope_id").notNull().references(() => syncScopes.id, { onDelete: "cascade" }), providerResourceId: id("provider_resource_id").references(() => providerResources.id, { onDelete: "cascade" }), provider: value("provider").notNull(), objectType: value("object_type").notNull(), cursorKind: value("cursor_kind").notNull(), cursorValue: text("cursor_value"), highWatermark: instant("high_watermark"), lastSuccessAt: instant("last_success_at"), lastAttemptAt: instant("last_attempt_at"), ...timestamps }, t => [uniqueIndex("sync_cursors_scope_object_kind_uq").on(t.syncScopeId, t.objectType, t.cursorKind), uniqueIndex("sync_cursors_resource_object_kind_uq").on(t.providerResourceId, t.objectType, t.cursorKind)]);
-export const syncRuns = mysqlTable("sync_runs", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), integrationId: id("integration_id").notNull(), syncScopeId: id("sync_scope_id"), providerResourceId: id("provider_resource_id").references(() => providerResources.id, { onDelete: "set null" }), parentSyncRunId: id("parent_sync_run_id").references((): AnyMySqlColumn => syncRuns.id, { onDelete: "cascade" }), provider: value("provider").notNull(), runType: value("run_type").notNull(), runKind: value("run_kind").notNull().default("resource"), status: value("status").notNull(), queuedAt: instant("queued_at"), startedAt: instant("started_at").notNull(), finishedAt: instant("finished_at"), leaseExpiresAt: instant("lease_expires_at"), nextAttemptAt: instant("next_attempt_at"), attempt: int("attempt").notNull().default(1), objectsFetched: int("objects_fetched").notNull().default(0), objectsInserted: int("objects_inserted").notNull().default(0), objectsUpdated: int("objects_updated").notNull().default(0), objectsUnchanged: int("objects_unchanged").notNull().default(0), objectsFailed: int("objects_failed").notNull().default(0), activityEventsEmitted: int("activity_events_emitted").notNull().default(0), error: text("error"), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()), updatedAt: instant("updated_at").notNull().$defaultFn(() => new Date().toISOString()).$onUpdateFn(() => new Date().toISOString()) }, t => [index("sync_runs_parent_status_idx").on(t.parentSyncRunId, t.status, t.createdAt), index("sync_runs_resource_status_idx").on(t.providerResourceId, t.status, t.nextAttemptAt), index("sync_runs_queue_idx").on(t.status, t.nextAttemptAt, t.queuedAt)]);
-export const sourceObjects = mysqlTable("source_objects", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), integrationId: id("integration_id").notNull(), syncScopeId: id("sync_scope_id"), provider: value("provider").notNull(), objectType: value("object_type").notNull(), externalId: value("external_id").notNull(), externalUrl: text("external_url"), externalCreatedAt: instant("external_created_at"), externalUpdatedAt: instant("external_updated_at"), externalDeletedAt: instant("external_deleted_at"), rawJson: text("raw_json").notNull(), contentHash: value("content_hash").notNull(), firstSeenAt: instant("first_seen_at").notNull(), lastSeenAt: instant("last_seen_at").notNull(), lastChangedAt: instant("last_changed_at").notNull(), sourceState: value("source_state").notNull(), ...timestamps }, t => [uniqueIndex("source_objects_natural_uq").on(t.organizationId, t.integrationId, t.syncScopeId, t.provider, t.objectType, t.externalId)]);
-export const syncRunItems = mysqlTable("sync_run_items", { id: id().primaryKey(), syncRunId: id("sync_run_id").notNull().references(() => syncRuns.id, { onDelete: "cascade" }), objectType: value("object_type").notNull(), externalId: value("external_id"), action: value("action").notNull(), status: value("status").notNull(), error: text("error"), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const sourceObjectVersions = mysqlTable("source_object_versions", { id: id().primaryKey(), sourceObjectId: id("source_object_id").notNull().references(() => sourceObjects.id, { onDelete: "cascade" }), contentHash: value("content_hash").notNull(), rawJson: text("raw_json").notNull(), seenAt: instant("seen_at").notNull(), changeReason: text("change_reason") });
-export const sourceWebhookEvents = mysqlTable("source_webhook_events", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), integrationId: id("integration_id").notNull(), provider: value("provider").notNull(), eventType: value("event_type").notNull(), externalDeliveryId: value("external_delivery_id"), signatureValid: int("signature_valid").notNull(), rawHeadersJson: text("raw_headers_json").notNull(), rawBodyJson: text("raw_body_json").notNull(), receivedAt: instant("received_at").notNull(), processedAt: instant("processed_at"), status: value("status").notNull(), error: text("error"), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const people = mysqlTable("people", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), displayName: value("display_name").notNull(), primaryEmail: value("primary_email"), ...timestamps }, t => [uniqueIndex("people_id_org_uq").on(t.id, t.organizationId)]);
-export const externalIdentities = mysqlTable("external_identities", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), personId: id("person_id"), provider: value("provider").notNull(), externalId: value("external_id").notNull(), externalUsername: value("external_username"), externalEmail: value("external_email"), displayName: value("display_name"), ...timestamps }, t => [uniqueIndex("external_identities_natural_uq").on(t.organizationId, t.provider, t.externalId)]);
-export const workItems = mysqlTable("work_items", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), sourceObjectId: id("source_object_id"), provider: value("provider").notNull(), sourceType: value("source_type").notNull(), externalId: value("external_id").notNull(), title: text("title").notNull(), description: text("description"), url: text("url"), status: value("status").notNull(), workType: value("work_type").notNull(), createdAtSource: instant("created_at_source"), updatedAtSource: instant("updated_at_source"), startedAt: instant("started_at"), completedAt: instant("completed_at"), ...timestamps }, t => [uniqueIndex("work_items_natural_uq").on(t.organizationId, t.provider, t.sourceType, t.externalId)]);
-export const activityEvents = mysqlTable("activity_events", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), sourceObjectId: id("source_object_id"), provider: value("provider").notNull(), eventType: value("event_type").notNull(), actorPersonId: id("actor_person_id"), workItemId: id("work_item_id"), repositoryId: value("repository_id"), linearTeamId: value("linear_team_id"), linearProjectId: value("linear_project_id"), occurredAt: instant("occurred_at").notNull(), title: text("title").notNull(), body: text("body"), url: text("url"), metadataJson: text("metadata_json").notNull(), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const analysisRuns = mysqlTable("analysis_runs", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), scopeType: value("scope_type").notNull(), scopeId: value("scope_id").notNull(), periodStart: instant("period_start").notNull(), periodEnd: instant("period_end").notNull(), status: value("status").notNull(), startedAt: instant("started_at").notNull(), finishedAt: instant("finished_at"), error: text("error"), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const analysisMetrics = mysqlTable("analysis_metrics", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), analysisRunId: id("analysis_run_id").notNull(), scopeType: value("scope_type").notNull(), scopeId: value("scope_id").notNull(), periodStart: instant("period_start").notNull(), periodEnd: instant("period_end").notNull(), metricName: value("metric_name").notNull(), metricValue: double("metric_value").notNull(), dimensionsJson: text("dimensions_json").notNull(), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const analysisHighlights = mysqlTable("analysis_highlights", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), analysisRunId: id("analysis_run_id").notNull(), workItemId: id("work_item_id"), highlightType: value("highlight_type").notNull(), score: double("score").notNull(), title: text("title").notNull(), reason: text("reason").notNull(), sourceRefsJson: text("source_refs_json").notNull(), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const analysisReportContexts = mysqlTable("analysis_report_contexts", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), analysisRunId: id("analysis_run_id").notNull(), scopeType: value("scope_type").notNull(), scopeId: value("scope_id").notNull(), periodStart: instant("period_start").notNull(), periodEnd: instant("period_end").notNull(), contextJson: text("context_json").notNull(), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const reports = mysqlTable("reports", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), analysisReportContextId: id("analysis_report_context_id").notNull(), reportType: value("report_type").notNull(), scopeType: value("scope_type").notNull(), scopeId: value("scope_id").notNull(), periodStart: instant("period_start").notNull(), periodEnd: instant("period_end").notNull(), status: value("status").notNull(), title: text("title").notNull(), summary: text("summary"), bodyMarkdown: text("body_markdown").notNull(), structuredJson: text("structured_json").notNull(), createdByUserId: id("created_by_user_id"), ...timestamps });
-export const reportInputs = mysqlTable("report_inputs", { id: id().primaryKey(), reportId: id("report_id").notNull(), inputType: value("input_type").notNull(), inputId: id("input_id").notNull(), metadataJson: text("metadata_json").notNull(), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const aiRuns = mysqlTable("ai_runs", { id: id().primaryKey(), organizationId: id("organization_id").notNull(), runType: value("run_type").notNull(), status: value("status").notNull(), model: value("model"), inputRefType: value("input_ref_type").notNull(), inputRefId: id("input_ref_id").notNull(), promptVersion: value("prompt_version").notNull(), startedAt: instant("started_at").notNull(), finishedAt: instant("finished_at"), error: text("error"), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const aiRunSteps = mysqlTable("ai_run_steps", { id: id().primaryKey(), aiRunId: id("ai_run_id").notNull().references(() => aiRuns.id, { onDelete: "cascade" }), stepName: value("step_name").notNull(), status: value("status").notNull(), inputJson: text("input_json"), outputJson: text("output_json"), error: text("error"), startedAt: instant("started_at").notNull(), finishedAt: instant("finished_at"), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) });
-export const reportArtifacts = mysqlTable("report_artifacts", { id: id().primaryKey(), reportId: id("report_id").notNull().references(() => reports.id, { onDelete: "cascade" }), artifactType: value("artifact_type").notNull(), status: value("status").notNull(), title: text("title").notNull(), bodyMarkdown: text("body_markdown"), structuredJson: text("structured_json"), assetUrl: text("asset_url"), ...timestamps });
-export const reportLinks = mysqlTable("report_links", { id: id().primaryKey(), parentReportId: id("parent_report_id").notNull().references(() => reports.id, { onDelete: "cascade" }), childReportId: id("child_report_id").notNull().references(() => reports.id, { onDelete: "cascade" }), linkType: value("link_type").notNull(), createdAt: instant("created_at").notNull().$defaultFn(() => new Date().toISOString()) }, t => [uniqueIndex("report_links_reports_type_uq").on(t.parentReportId, t.childReportId, t.linkType)]);
-export const authSessions = mysqlTable("auth_sessions", { id: id().primaryKey(), userId: id("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), tokenHash: value("token_hash").notNull(), expiresAt: instant("expires_at").notNull(), revokedAt: instant("revoked_at"), lastUsedAt: instant("last_used_at"), ...timestamps }, t => [uniqueIndex("auth_sessions_token_hash_uq").on(t.tokenHash), index("auth_sessions_user_id_idx").on(t.userId)]);
-export const apiTokens = mysqlTable("api_tokens", { id: id().primaryKey(), userId: id("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), name: value("name").notNull(), tokenPrefix: value("token_prefix").notNull(), tokenHash: value("token_hash").notNull(), expiresAt: instant("expires_at").notNull(), revokedAt: instant("revoked_at"), lastUsedAt: instant("last_used_at"), ...timestamps }, t => [uniqueIndex("api_tokens_token_hash_uq").on(t.tokenHash), uniqueIndex("api_tokens_user_prefix_uq").on(t.userId, t.tokenPrefix)]);
+export const organizations = mysqlTable(
+  "organizations",
+  {
+    id: id().primaryKey(),
+    name: value("name").notNull(),
+    slug: id("slug").notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("organizations_slug_uq").on(t.slug)],
+);
+export const users = mysqlTable(
+  "users",
+  {
+    id: id().primaryKey(),
+    displayName: value("display_name").notNull(),
+    primaryEmail: value("primary_email"),
+    passwordHash: text("password_hash"),
+    passwordSalt: text("password_salt"),
+    passwordScryptN: int("password_scrypt_n"),
+    passwordScryptR: int("password_scrypt_r"),
+    passwordScryptP: int("password_scrypt_p"),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("users_primary_email_uq").on(t.primaryEmail)],
+);
+export const organizationMemberships = mysqlTable(
+  "organization_memberships",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: id("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: value("role").notNull(),
+    status: value("status").notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("organization_memberships_organization_user").on(t.organizationId, t.userId)],
+);
+export const integrations = mysqlTable(
+  "integrations",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: value("provider").notNull(),
+    authType: value("auth_type").notNull(),
+    status: value("status").notNull(),
+    displayName: value("display_name").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("integrations_id_org_uq").on(t.id, t.organizationId),
+    index("idx_integrations_organization_provider").on(t.organizationId, t.provider),
+  ],
+);
+export const integrationCredentials = mysqlTable("integration_credentials", {
+  id: id().primaryKey(),
+  integrationId: id("integration_id")
+    .notNull()
+    .references(() => integrations.id, { onDelete: "cascade" }),
+  encryptedSecret: text("encrypted_secret").notNull(),
+  secretHint: value("secret_hint"),
+  expiresAt: instant("expires_at"),
+  ...timestamps,
+});
+export const providerResources = mysqlTable(
+  "provider_resources",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    integrationId: id("integration_id")
+      .notNull()
+      .references(() => integrations.id, { onDelete: "cascade" }),
+    provider: value("provider").notNull(),
+    resourceType: value("resource_type").notNull(),
+    externalId: value("external_id").notNull(),
+    externalParentId: value("external_parent_id"),
+    parentResourceId: id("parent_resource_id").references(
+      (): AnyMySqlColumn => providerResources.id,
+      { onDelete: "set null" },
+    ),
+    displayName: value("display_name").notNull(),
+    externalUrl: text("external_url"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    discoveryState: value("discovery_state").notNull().default("active"),
+    discoveredAt: instant("discovered_at").notNull(),
+    lastSeenAt: instant("last_seen_at").notNull(),
+    syncStatus: value("sync_status").notNull().default("idle"),
+    currentSyncRunId: id("current_sync_run_id"),
+    lastSyncStartedAt: instant("last_sync_started_at"),
+    lastSyncSucceededAt: instant("last_sync_succeeded_at"),
+    lastSyncFailedAt: instant("last_sync_failed_at"),
+    lastSyncError: text("last_sync_error"),
+    nextAttemptAt: instant("next_attempt_at"),
+    consecutiveFailureCount: int("consecutive_failure_count").notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("provider_resources_integration_type_external_uq").on(
+      t.integrationId,
+      t.resourceType,
+      t.externalId,
+    ),
+    index("provider_resources_hierarchy_idx").on(
+      t.integrationId,
+      t.parentResourceId,
+      t.discoveryState,
+    ),
+    index("provider_resources_status_idx").on(
+      t.organizationId,
+      t.integrationId,
+      t.provider,
+      t.resourceType,
+      t.syncStatus,
+    ),
+  ],
+);
+export const syncScopes = mysqlTable(
+  "sync_scopes",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    integrationId: id("integration_id")
+      .notNull()
+      .references(() => integrations.id, { onDelete: "cascade" }),
+    provider: value("provider").notNull(),
+    scopeType: value("scope_type").notNull(),
+    externalId: value("external_id"),
+    externalName: value("external_name").notNull(),
+    providerResourceId: id("provider_resource_id").references(() => providerResources.id, {
+      onDelete: "set null",
+    }),
+    parentScopeId: id("parent_scope_id").references((): AnyMySqlColumn => syncScopes.id, {
+      onDelete: "cascade",
+    }),
+    selectionMode: value("selection_mode").notNull().default("individual"),
+    configJson: text("config_json").notNull(),
+    enabled: int("enabled").notNull().default(1),
+    lastSuccessAt: instant("last_success_at"),
+    lastAttemptAt: instant("last_attempt_at"),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("sync_scopes_id_org_uq").on(t.id, t.organizationId),
+    uniqueIndex("sync_scopes_integration_type_external_uq").on(
+      t.integrationId,
+      t.scopeType,
+      t.externalId,
+    ),
+    index("idx_sync_scopes_hierarchy").on(t.integrationId, t.parentScopeId, t.enabled),
+    index("idx_sync_scopes_integration").on(t.integrationId, t.provider, t.scopeType, t.enabled),
+    index("sync_scopes_resource_idx").on(t.providerResourceId),
+  ],
+);
+export const syncCursors = mysqlTable(
+  "sync_cursors",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id").notNull(),
+    integrationId: id("integration_id").notNull(),
+    syncScopeId: id("sync_scope_id")
+      .notNull()
+      .references(() => syncScopes.id, { onDelete: "cascade" }),
+    providerResourceId: id("provider_resource_id").references(() => providerResources.id, {
+      onDelete: "cascade",
+    }),
+    provider: value("provider").notNull(),
+    objectType: value("object_type").notNull(),
+    cursorKind: value("cursor_kind").notNull(),
+    cursorValue: text("cursor_value"),
+    highWatermark: instant("high_watermark"),
+    lastSuccessAt: instant("last_success_at"),
+    lastAttemptAt: instant("last_attempt_at"),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("sync_cursors_scope_object_kind_uq").on(t.syncScopeId, t.objectType, t.cursorKind),
+    uniqueIndex("sync_cursors_resource_object_kind_uq").on(
+      t.providerResourceId,
+      t.objectType,
+      t.cursorKind,
+    ),
+  ],
+);
+export const syncRuns = mysqlTable(
+  "sync_runs",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id").notNull(),
+    integrationId: id("integration_id").notNull(),
+    syncScopeId: id("sync_scope_id"),
+    providerResourceId: id("provider_resource_id").references(() => providerResources.id, {
+      onDelete: "set null",
+    }),
+    parentSyncRunId: id("parent_sync_run_id").references((): AnyMySqlColumn => syncRuns.id, {
+      onDelete: "cascade",
+    }),
+    provider: value("provider").notNull(),
+    runType: value("run_type").notNull(),
+    runKind: value("run_kind").notNull().default("resource"),
+    status: value("status").notNull(),
+    queuedAt: instant("queued_at"),
+    startedAt: instant("started_at").notNull(),
+    finishedAt: instant("finished_at"),
+    leaseExpiresAt: instant("lease_expires_at"),
+    nextAttemptAt: instant("next_attempt_at"),
+    attempt: int("attempt").notNull().default(1),
+    objectsFetched: int("objects_fetched").notNull().default(0),
+    objectsInserted: int("objects_inserted").notNull().default(0),
+    objectsUpdated: int("objects_updated").notNull().default(0),
+    objectsUnchanged: int("objects_unchanged").notNull().default(0),
+    objectsFailed: int("objects_failed").notNull().default(0),
+    activityEventsEmitted: int("activity_events_emitted").notNull().default(0),
+    error: text("error"),
+    createdAt: instant("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: instant("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString())
+      .$onUpdateFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("sync_runs_parent_status_idx").on(t.parentSyncRunId, t.status, t.createdAt),
+    index("sync_runs_resource_status_idx").on(t.providerResourceId, t.status, t.nextAttemptAt),
+    index("sync_runs_queue_idx").on(t.status, t.nextAttemptAt, t.queuedAt),
+  ],
+);
+export const sourceObjects = mysqlTable(
+  "source_objects",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id").notNull(),
+    integrationId: id("integration_id").notNull(),
+    syncScopeId: id("sync_scope_id"),
+    provider: value("provider").notNull(),
+    objectType: value("object_type").notNull(),
+    externalId: value("external_id").notNull(),
+    externalUrl: text("external_url"),
+    externalCreatedAt: instant("external_created_at"),
+    externalUpdatedAt: instant("external_updated_at"),
+    externalDeletedAt: instant("external_deleted_at"),
+    rawJson: text("raw_json").notNull(),
+    contentHash: value("content_hash").notNull(),
+    firstSeenAt: instant("first_seen_at").notNull(),
+    lastSeenAt: instant("last_seen_at").notNull(),
+    lastChangedAt: instant("last_changed_at").notNull(),
+    sourceState: value("source_state").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("source_objects_natural_uq").on(
+      t.organizationId,
+      t.integrationId,
+      t.syncScopeId,
+      t.provider,
+      t.objectType,
+      t.externalId,
+    ),
+  ],
+);
+export const syncRunItems = mysqlTable("sync_run_items", {
+  id: id().primaryKey(),
+  syncRunId: id("sync_run_id")
+    .notNull()
+    .references(() => syncRuns.id, { onDelete: "cascade" }),
+  objectType: value("object_type").notNull(),
+  externalId: value("external_id"),
+  action: value("action").notNull(),
+  status: value("status").notNull(),
+  error: text("error"),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const sourceObjectVersions = mysqlTable("source_object_versions", {
+  id: id().primaryKey(),
+  sourceObjectId: id("source_object_id")
+    .notNull()
+    .references(() => sourceObjects.id, { onDelete: "cascade" }),
+  contentHash: value("content_hash").notNull(),
+  rawJson: text("raw_json").notNull(),
+  seenAt: instant("seen_at").notNull(),
+  changeReason: text("change_reason"),
+});
+export const sourceWebhookEvents = mysqlTable("source_webhook_events", {
+  id: id().primaryKey(),
+  organizationId: id("organization_id").notNull(),
+  integrationId: id("integration_id").notNull(),
+  provider: value("provider").notNull(),
+  eventType: value("event_type").notNull(),
+  externalDeliveryId: value("external_delivery_id"),
+  signatureValid: int("signature_valid").notNull(),
+  rawHeadersJson: text("raw_headers_json").notNull(),
+  rawBodyJson: text("raw_body_json").notNull(),
+  receivedAt: instant("received_at").notNull(),
+  processedAt: instant("processed_at"),
+  status: value("status").notNull(),
+  error: text("error"),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const people = mysqlTable(
+  "people",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id").notNull(),
+    displayName: value("display_name").notNull(),
+    primaryEmail: value("primary_email"),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("people_id_org_uq").on(t.id, t.organizationId)],
+);
+export const externalIdentities = mysqlTable(
+  "external_identities",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id").notNull(),
+    personId: id("person_id"),
+    provider: value("provider").notNull(),
+    externalId: value("external_id").notNull(),
+    externalUsername: value("external_username"),
+    externalEmail: value("external_email"),
+    displayName: value("display_name"),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("external_identities_natural_uq").on(t.organizationId, t.provider, t.externalId),
+  ],
+);
+export const workItems = mysqlTable(
+  "work_items",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id").notNull(),
+    sourceObjectId: id("source_object_id"),
+    provider: value("provider").notNull(),
+    sourceType: value("source_type").notNull(),
+    externalId: value("external_id").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    url: text("url"),
+    status: value("status").notNull(),
+    workType: value("work_type").notNull(),
+    createdAtSource: instant("created_at_source"),
+    updatedAtSource: instant("updated_at_source"),
+    startedAt: instant("started_at"),
+    completedAt: instant("completed_at"),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("work_items_natural_uq").on(
+      t.organizationId,
+      t.provider,
+      t.sourceType,
+      t.externalId,
+    ),
+  ],
+);
+export const activityEvents = mysqlTable("activity_events", {
+  id: id().primaryKey(),
+  organizationId: id("organization_id").notNull(),
+  sourceObjectId: id("source_object_id"),
+  provider: value("provider").notNull(),
+  eventType: value("event_type").notNull(),
+  actorPersonId: id("actor_person_id"),
+  workItemId: id("work_item_id"),
+  repositoryId: value("repository_id"),
+  linearTeamId: value("linear_team_id"),
+  linearProjectId: value("linear_project_id"),
+  occurredAt: instant("occurred_at").notNull(),
+  title: text("title").notNull(),
+  body: text("body"),
+  url: text("url"),
+  metadataJson: text("metadata_json").notNull(),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const analysisRuns = mysqlTable("analysis_runs", {
+  id: id().primaryKey(),
+  organizationId: id("organization_id").notNull(),
+  scopeType: value("scope_type").notNull(),
+  scopeId: value("scope_id").notNull(),
+  periodStart: instant("period_start").notNull(),
+  periodEnd: instant("period_end").notNull(),
+  status: value("status").notNull(),
+  startedAt: instant("started_at").notNull(),
+  finishedAt: instant("finished_at"),
+  error: text("error"),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const analysisMetrics = mysqlTable("analysis_metrics", {
+  id: id().primaryKey(),
+  organizationId: id("organization_id").notNull(),
+  analysisRunId: id("analysis_run_id").notNull(),
+  scopeType: value("scope_type").notNull(),
+  scopeId: value("scope_id").notNull(),
+  periodStart: instant("period_start").notNull(),
+  periodEnd: instant("period_end").notNull(),
+  metricName: value("metric_name").notNull(),
+  metricValue: double("metric_value").notNull(),
+  dimensionsJson: text("dimensions_json").notNull(),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const analysisHighlights = mysqlTable("analysis_highlights", {
+  id: id().primaryKey(),
+  organizationId: id("organization_id").notNull(),
+  analysisRunId: id("analysis_run_id").notNull(),
+  workItemId: id("work_item_id"),
+  highlightType: value("highlight_type").notNull(),
+  score: double("score").notNull(),
+  title: text("title").notNull(),
+  reason: text("reason").notNull(),
+  sourceRefsJson: text("source_refs_json").notNull(),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const analysisReportContexts = mysqlTable("analysis_report_contexts", {
+  id: id().primaryKey(),
+  organizationId: id("organization_id").notNull(),
+  analysisRunId: id("analysis_run_id").notNull(),
+  scopeType: value("scope_type").notNull(),
+  scopeId: value("scope_id").notNull(),
+  periodStart: instant("period_start").notNull(),
+  periodEnd: instant("period_end").notNull(),
+  contextJson: text("context_json").notNull(),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const reports = mysqlTable("reports", {
+  id: id().primaryKey(),
+  organizationId: id("organization_id").notNull(),
+  analysisReportContextId: id("analysis_report_context_id").notNull(),
+  reportType: value("report_type").notNull(),
+  scopeType: value("scope_type").notNull(),
+  scopeId: value("scope_id").notNull(),
+  periodStart: instant("period_start").notNull(),
+  periodEnd: instant("period_end").notNull(),
+  status: value("status").notNull(),
+  title: text("title").notNull(),
+  summary: text("summary"),
+  bodyMarkdown: text("body_markdown").notNull(),
+  structuredJson: text("structured_json").notNull(),
+  createdByUserId: id("created_by_user_id"),
+  ...timestamps,
+});
+export const reportInputs = mysqlTable("report_inputs", {
+  id: id().primaryKey(),
+  reportId: id("report_id").notNull(),
+  inputType: value("input_type").notNull(),
+  inputId: id("input_id").notNull(),
+  metadataJson: text("metadata_json").notNull(),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const aiRuns = mysqlTable("ai_runs", {
+  id: id().primaryKey(),
+  organizationId: id("organization_id").notNull(),
+  runType: value("run_type").notNull(),
+  status: value("status").notNull(),
+  model: value("model"),
+  inputRefType: value("input_ref_type").notNull(),
+  inputRefId: id("input_ref_id").notNull(),
+  promptVersion: value("prompt_version").notNull(),
+  startedAt: instant("started_at").notNull(),
+  finishedAt: instant("finished_at"),
+  error: text("error"),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const aiRunSteps = mysqlTable("ai_run_steps", {
+  id: id().primaryKey(),
+  aiRunId: id("ai_run_id")
+    .notNull()
+    .references(() => aiRuns.id, { onDelete: "cascade" }),
+  stepName: value("step_name").notNull(),
+  status: value("status").notNull(),
+  inputJson: text("input_json"),
+  outputJson: text("output_json"),
+  error: text("error"),
+  startedAt: instant("started_at").notNull(),
+  finishedAt: instant("finished_at"),
+  createdAt: instant("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+export const reportArtifacts = mysqlTable("report_artifacts", {
+  id: id().primaryKey(),
+  reportId: id("report_id")
+    .notNull()
+    .references(() => reports.id, { onDelete: "cascade" }),
+  artifactType: value("artifact_type").notNull(),
+  status: value("status").notNull(),
+  title: text("title").notNull(),
+  bodyMarkdown: text("body_markdown"),
+  structuredJson: text("structured_json"),
+  assetUrl: text("asset_url"),
+  ...timestamps,
+});
+export const reportLinks = mysqlTable(
+  "report_links",
+  {
+    id: id().primaryKey(),
+    parentReportId: id("parent_report_id")
+      .notNull()
+      .references(() => reports.id, { onDelete: "cascade" }),
+    childReportId: id("child_report_id")
+      .notNull()
+      .references(() => reports.id, { onDelete: "cascade" }),
+    linkType: value("link_type").notNull(),
+    createdAt: instant("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex("report_links_reports_type_uq").on(t.parentReportId, t.childReportId, t.linkType),
+  ],
+);
+export const authSessions = mysqlTable(
+  "auth_sessions",
+  {
+    id: id().primaryKey(),
+    userId: id("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: value("token_hash").notNull(),
+    expiresAt: instant("expires_at").notNull(),
+    revokedAt: instant("revoked_at"),
+    lastUsedAt: instant("last_used_at"),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("auth_sessions_token_hash_uq").on(t.tokenHash),
+    index("auth_sessions_user_id_idx").on(t.userId),
+  ],
+);
+export const apiTokens = mysqlTable(
+  "api_tokens",
+  {
+    id: id().primaryKey(),
+    userId: id("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: value("name").notNull(),
+    tokenPrefix: value("token_prefix").notNull(),
+    tokenHash: value("token_hash").notNull(),
+    expiresAt: instant("expires_at").notNull(),
+    revokedAt: instant("revoked_at"),
+    lastUsedAt: instant("last_used_at"),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("api_tokens_token_hash_uq").on(t.tokenHash),
+    uniqueIndex("api_tokens_user_prefix_uq").on(t.userId, t.tokenPrefix),
+  ],
+);
 
-export const schema = { organizations, users, organizationMemberships, integrations, integrationCredentials, providerResources, syncScopes, syncCursors, syncRuns, syncRunItems, sourceObjects, sourceObjectVersions, sourceWebhookEvents, people, externalIdentities, workItems, activityEvents, analysisRuns, analysisMetrics, analysisHighlights, analysisReportContexts, aiRuns, aiRunSteps, reports, reportInputs, reportArtifacts, reportLinks, authSessions, apiTokens };
+export const schema = {
+  organizations,
+  users,
+  organizationMemberships,
+  integrations,
+  integrationCredentials,
+  providerResources,
+  syncScopes,
+  syncCursors,
+  syncRuns,
+  syncRunItems,
+  sourceObjects,
+  sourceObjectVersions,
+  sourceWebhookEvents,
+  people,
+  externalIdentities,
+  workItems,
+  activityEvents,
+  analysisRuns,
+  analysisMetrics,
+  analysisHighlights,
+  analysisReportContexts,
+  aiRuns,
+  aiRunSteps,
+  reports,
+  reportInputs,
+  reportArtifacts,
+  reportLinks,
+  authSessions,
+  apiTokens,
+};

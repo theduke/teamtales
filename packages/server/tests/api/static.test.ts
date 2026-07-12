@@ -20,21 +20,24 @@ it("serves the SPA without allowing encoded path traversal", async () => {
     uiDirectory: ui,
   });
   try {
-    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     assert.ok(address && typeof address === "object");
     const body = await new Promise<string>((resolve, reject) => {
-      const outgoing = request({ host: "127.0.0.1", port: address.port, path: "/%2e%2e/secret.txt" }, response => {
-        const chunks: Buffer[] = [];
-        response.on("data", chunk => chunks.push(Buffer.from(chunk)));
-        response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-      });
+      const outgoing = request(
+        { host: "127.0.0.1", port: address.port, path: "/%2e%2e/secret.txt" },
+        (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+          response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        },
+      );
       outgoing.on("error", reject);
       outgoing.end();
     });
     assert.equal(body, "teamtales-index");
   } finally {
-    await new Promise<void>(resolve => server.close(() => resolve()));
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(parent, { recursive: true, force: true });
   }
 });

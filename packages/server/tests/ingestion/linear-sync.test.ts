@@ -9,7 +9,11 @@ const originalFetch = globalThis.fetch;
 
 describe("LinearSourceConnector", () => {
   it("fetches Linear workspace objects with pagination and updated-at cursors", async () => {
-    const calls: Array<{ authorization: string | null; query: string; variables: Record<string, unknown> }> = [];
+    const calls: Array<{
+      authorization: string | null;
+      query: string;
+      variables: Record<string, unknown>;
+    }> = [];
     globalThis.fetch = mockLinearFetch((query, variables, init) => {
       calls.push({
         authorization: new Headers(init.headers).get("authorization"),
@@ -40,13 +44,22 @@ describe("LinearSourceConnector", () => {
 
       if (query.includes("LinearUsers")) {
         if (variables.after === null) {
-          return connection("users", [{ id: "user_1", name: "Grace", active: true, createdAt: "2026-01-02T00:00:00.000Z" }], true, "users_page_2");
+          return connection(
+            "users",
+            [{ id: "user_1", name: "Grace", active: true, createdAt: "2026-01-02T00:00:00.000Z" }],
+            true,
+            "users_page_2",
+          );
         }
-        return connection("users", [{ id: "user_2", name: "Katherine", active: true, createdAt: "2026-01-03T00:00:00.000Z" }]);
+        return connection("users", [
+          { id: "user_2", name: "Katherine", active: true, createdAt: "2026-01-03T00:00:00.000Z" },
+        ]);
       }
 
       if (query.includes("LinearTeams")) {
-        return connection("teams", [{ id: "team_1", key: "ENG", name: "Engineering", createdAt: "2026-01-02T00:00:00.000Z" }]);
+        return connection("teams", [
+          { id: "team_1", key: "ENG", name: "Engineering", createdAt: "2026-01-02T00:00:00.000Z" },
+        ]);
       }
 
       if (query.includes("LinearProjects")) {
@@ -131,10 +144,20 @@ describe("LinearSourceConnector", () => {
     });
 
     try {
-      const result = await new LinearSourceConnector().fetchSourceObjects(context([issueCursor(), commentCursor()]));
+      const result = await new LinearSourceConnector().fetchSourceObjects(
+        context([issueCursor(), commentCursor()]),
+      );
 
-      assert.equal(calls.every((call) => call.authorization === "lin_api_test_token"), true);
-      assert.equal(calls.find((call) => call.query.includes("LinearUsers") && call.variables.after === "users_page_2") !== undefined, true);
+      assert.equal(
+        calls.every((call) => call.authorization === "lin_api_test_token"),
+        true,
+      );
+      assert.equal(
+        calls.find(
+          (call) => call.query.includes("LinearUsers") && call.variables.after === "users_page_2",
+        ) !== undefined,
+        true,
+      );
       assert.deepEqual(
         result.objects.map((object) => `${object.objectType}:${object.externalId}`),
         [
@@ -150,7 +173,10 @@ describe("LinearSourceConnector", () => {
           "linear.comment:comment_1",
         ],
       );
-      assert.equal(result.objects.find((object) => object.objectType === "linear.issue")?.externalUrl, "https://linear.app/acme/issue/ENG-123");
+      assert.equal(
+        result.objects.find((object) => object.objectType === "linear.issue")?.externalUrl,
+        "https://linear.app/acme/issue/ENG-123",
+      );
       assert.deepEqual(result.cursorUpdates, [
         {
           objectType: "linear.issue",
@@ -172,7 +198,13 @@ describe("LinearSourceConnector", () => {
     globalThis.fetch = async () =>
       new Response(
         JSON.stringify({
-          errors: [{ message: "Field does not exist", path: ["issues"], extensions: { code: "GRAPHQL_VALIDATION_FAILED" } }],
+          errors: [
+            {
+              message: "Field does not exist",
+              path: ["issues"],
+              extensions: { code: "GRAPHQL_VALIDATION_FAILED" },
+            },
+          ],
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
@@ -257,11 +289,20 @@ function syncCursor(objectType: string, cursorValue: string): SyncCursor {
   };
 }
 
-function mockLinearFetch(resolver: (query: string, variables: Record<string, unknown>, init: RequestInit) => Record<string, unknown>): typeof fetch {
+function mockLinearFetch(
+  resolver: (
+    query: string,
+    variables: Record<string, unknown>,
+    init: RequestInit,
+  ) => Record<string, unknown>,
+): typeof fetch {
   return async (_input, init) => {
     assert.ok(init);
     assert.equal(init.method, "POST");
-    const body = JSON.parse(String(init.body)) as { query: string; variables: Record<string, unknown> };
+    const body = JSON.parse(String(init.body)) as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
     return new Response(JSON.stringify({ data: resolver(body.query, body.variables, init) }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -269,7 +310,12 @@ function mockLinearFetch(resolver: (query: string, variables: Record<string, unk
   };
 }
 
-function connection(name: string, nodes: Record<string, unknown>[], hasNextPage = false, endCursor: string | null = null): Record<string, unknown> {
+function connection(
+  name: string,
+  nodes: Record<string, unknown>[],
+  hasNextPage = false,
+  endCursor: string | null = null,
+): Record<string, unknown> {
   return {
     [name]: {
       nodes,

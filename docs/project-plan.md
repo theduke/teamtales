@@ -81,11 +81,11 @@ updated_at
 
 Rules:
 
-* never store plaintext tokens
-* never log tokens
-* decrypt only inside connector execution
-* support credential rotation
-* store token hints only for UI/debugging
+- never store plaintext tokens
+- never log tokens
+- decrypt only inside connector execution
+- support credential rotation
+- store token hints only for UI/debugging
 
 ## 3. Sync Operational Tables
 
@@ -95,11 +95,11 @@ Represents the unit being synced.
 
 Examples:
 
-* GitHub repository
-* GitHub organization, later
-* Linear workspace
-* Linear team
-* Linear project
+- GitHub repository
+- GitHub organization, later
+- Linear workspace
+- Linear team
+- Linear project
 
 Fields:
 
@@ -390,10 +390,10 @@ if hash same -> update last_seen_at only
 
 This gives a clean separation between:
 
-* object was fetched
-* object changed
-* object generated new normalized activity
-* object affected a report
+- object was fetched
+- object changed
+- object generated new normalized activity
+- object affected a report
 
 ## 6. GitHub Ingestion
 
@@ -405,10 +405,7 @@ Example config:
 
 ```json
 {
-  "repositories": [
-    "org/repo-a",
-    "org/repo-b"
-  ]
+  "repositories": ["org/repo-a", "org/repo-b"]
 }
 ```
 
@@ -673,16 +670,16 @@ AI should not be needed to count PRs, group work by project, or determine which 
 
 The analysis layer should:
 
-* group activity by timeframe
-* group activity by person
-* group activity by GitHub repository
-* group activity by Linear team
-* group activity by Linear project
-* compute contribution/activity metrics
-* select candidate highlights
-* detect repeated themes
-* detect possible risks or stale items
-* build report contexts for AI generation
+- group activity by timeframe
+- group activity by person
+- group activity by GitHub repository
+- group activity by Linear team
+- group activity by Linear project
+- compute contribution/activity metrics
+- select candidate highlights
+- detect repeated themes
+- detect possible risks or stale items
+- build report contexts for AI generation
 
 ## 9.2 Analysis Tables
 
@@ -1046,13 +1043,13 @@ Output:
 
 Rules:
 
-* do not invent people
-* do not invent PRs
-* do not invent Linear issues
-* do not invent metrics
-* cite source refs internally
-* use cautious language for inferred themes
-* distinguish facts from interpretation
+- do not invent people
+- do not invent PRs
+- do not invent Linear issues
+- do not invent metrics
+- cite source refs internally
+- use cautious language for inferred themes
+- distinguish facts from interpretation
 
 ## 11.4 Fact Checker Agent
 
@@ -1104,19 +1101,19 @@ It should not add new facts.
 
 Allowed:
 
-* improve wording
-* shorten
-* make tone more cheerful
-* improve structure
-* remove unsupported claims
+- improve wording
+- shorten
+- make tone more cheerful
+- improve structure
+- remove unsupported claims
 
 Not allowed:
 
-* add new metrics
-* add new people
-* add new issues
-* add new PRs
-* infer exact causes without support
+- add new metrics
+- add new people
+- add new issues
+- add new PRs
+- infer exact causes without support
 
 ## 12. Report Tables
 
@@ -1405,4 +1402,3 @@ Movie Script Agent
 The orchestrator should mostly manage state transitions and retries.
 
 It should not become a giant god object.
-

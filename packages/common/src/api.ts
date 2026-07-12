@@ -88,7 +88,12 @@ export type SyncScopeDto = {
   organizationId: string;
   integrationId: string;
   provider: Provider;
-  scopeType: "github.repository" | "github.organization" | "linear.workspace" | "linear.team" | "linear.project";
+  scopeType:
+    | "github.repository"
+    | "github.organization"
+    | "linear.workspace"
+    | "linear.team"
+    | "linear.project";
   externalId: string;
   externalName: string;
   parentScopeId?: string;
@@ -241,19 +246,62 @@ export type AddSyncScopeRequestDto = {
 };
 
 export type DiscoveredResourceDto = {
-  scopeType: Extract<SyncScopeDto["scopeType"], "github.repository" | "github.organization" | "linear.workspace" | "linear.team">;
+  scopeType: Extract<
+    SyncScopeDto["scopeType"],
+    "github.repository" | "github.organization" | "linear.workspace" | "linear.team"
+  >;
   externalId: string;
   externalName: string;
   group?: string;
   description?: string;
   config?: JsonObject;
 };
-export type GitHubDiscoveryDto = { account: { id: string; login: string; name?: string; avatarUrl?: string }; organizations: Array<{ id: string; login: string; name?: string; avatarUrl?: string; repositoryCount?: number }>; repositories: Array<{ id: string; fullName: string; ownerId: string; ownerLogin: string; ownerType: "Organization" | "User"; organizationId?: string; visibility?: string; archived: boolean; fork: boolean; description?: string }> };
-export type LinearDiscoveryDto = { workspace: { id: string; name: string }; teams: Array<{ id: string; name: string; key: string }> };
-export type ListIntegrationResourcesResponseDto = { provider: "github"; discovery: GitHubDiscoveryDto } | { provider: "linear"; discovery: LinearDiscoveryDto };
-export type SetGitHubScopeSelectionRequestDto = { organizationId: string; selection: { organizations: Array<{ organizationId: string; mode: "all" } | { organizationId: string; mode: "selected"; repositoryIds: string[] }>; repositoryIds: string[] } };
-export type SetLinearScopeSelectionRequestDto = { organizationId: string; selection: { mode: "all" } | { mode: "selected"; teamIds: string[] } };
-export type SetSyncScopeSelectionRequestDto = SetGitHubScopeSelectionRequestDto | SetLinearScopeSelectionRequestDto;
+export type GitHubDiscoveryDto = {
+  account: { id: string; login: string; name?: string; avatarUrl?: string };
+  organizations: Array<{
+    id: string;
+    login: string;
+    name?: string;
+    avatarUrl?: string;
+    repositoryCount?: number;
+  }>;
+  repositories: Array<{
+    id: string;
+    fullName: string;
+    ownerId: string;
+    ownerLogin: string;
+    ownerType: "Organization" | "User";
+    organizationId?: string;
+    visibility?: string;
+    archived: boolean;
+    fork: boolean;
+    description?: string;
+  }>;
+};
+export type LinearDiscoveryDto = {
+  workspace: { id: string; name: string };
+  teams: Array<{ id: string; name: string; key: string }>;
+};
+export type ListIntegrationResourcesResponseDto =
+  | { provider: "github"; discovery: GitHubDiscoveryDto }
+  | { provider: "linear"; discovery: LinearDiscoveryDto };
+export type SetGitHubScopeSelectionRequestDto = {
+  organizationId: string;
+  selection: {
+    organizations: Array<
+      | { organizationId: string; mode: "all" }
+      | { organizationId: string; mode: "selected"; repositoryIds: string[] }
+    >;
+    repositoryIds: string[];
+  };
+};
+export type SetLinearScopeSelectionRequestDto = {
+  organizationId: string;
+  selection: { mode: "all" } | { mode: "selected"; teamIds: string[] };
+};
+export type SetSyncScopeSelectionRequestDto =
+  | SetGitHubScopeSelectionRequestDto
+  | SetLinearScopeSelectionRequestDto;
 export type SetSyncScopeSelectionResponseDto = { items: SyncScopeDto[] };
 
 export type GenerateWeeklyReportRequestDto = {
@@ -296,7 +344,13 @@ export type TriggerSyncResponseDto = {
 };
 
 /** Known sync states are suggested while allowing forward-compatible server states. */
-export type SyncRunStatusDto = "queued" | "running" | "completed" | "failed" | "cancelled" | (string & {});
+export type SyncRunStatusDto =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | (string & {});
 
 export type SyncRunCountersDto = {
   objectsFetched: number;
@@ -403,7 +457,10 @@ export interface TeamtalesApiClient {
   generateWeeklyReport(request: GenerateWeeklyReportRequestDto): Promise<GenerateReportResponseDto>;
   triggerSync(provider: Provider, request?: TriggerSyncRequestDto): Promise<TriggerSyncResponseDto>;
   getSyncRun(syncRunId: string): Promise<SyncRunProgressDto>;
-  listSyncRunResources(syncRunId: string, cursor?: string): Promise<PageDto<SyncRunResourceProgressDto>>;
+  listSyncRunResources(
+    syncRunId: string,
+    cursor?: string,
+  ): Promise<PageDto<SyncRunResourceProgressDto>>;
   getOrganizationSyncStatus(organizationId: string): Promise<OrganizationSyncStatusDto>;
 }
 

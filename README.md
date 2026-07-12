@@ -41,4 +41,8 @@ Set `TEAMTALES_CREDENTIAL_KEY` as a deployment secret before storing integration
 npm run check
 ```
 
+Vite+ powers the workspace workflow: `npm run dev` starts the API and UI in
+parallel, `npm run format` applies formatting, `npm run lint` runs linting, and
+`npm run typecheck` checks every workspace package.
+
 MySQL integration tests use `TEAMTALES_TEST_DATABASE_URL` and are skipped when it is unset.

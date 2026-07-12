@@ -1,5 +1,9 @@
 import type { JsonValue } from "./json.js";
-import type { ConnectorExecutionContext, ConnectorFetchResult, SourceConnector } from "./providers.js";
+import type {
+  ConnectorExecutionContext,
+  ConnectorFetchResult,
+  SourceConnector,
+} from "./providers.js";
 import type { IncomingSourceObject, LinearSourceObjectType } from "./source-object.js";
 import type { SyncCursor } from "./sync.js";
 import { fetchConnection, LinearGraphqlClient } from "../providers/linear-client.js";
@@ -40,7 +44,14 @@ interface LinearGraphqlPage<TNode extends JsonValueObject> {
 
 type JsonValueObject = { [key: string]: JsonValue };
 
-type LinearConnectionName = "users" | "teams" | "projects" | "workflowStates" | "issueLabels" | "issues" | "comments";
+type LinearConnectionName =
+  | "users"
+  | "teams"
+  | "projects"
+  | "workflowStates"
+  | "issueLabels"
+  | "issues"
+  | "comments";
 
 type WorkspaceAndViewerResponse = {
   viewer?: JsonValueObject | null;
@@ -54,7 +65,9 @@ export class LinearSourceConnector implements SourceConnector {
 
   async fetchSourceObjects(context: ConnectorExecutionContext): Promise<ConnectorFetchResult> {
     if (context.scope.provider !== this.provider) {
-      throw new Error(`Linear connector cannot fetch ${context.scope.provider} scope ${context.scope.id}`);
+      throw new Error(
+        `Linear connector cannot fetch ${context.scope.provider} scope ${context.scope.id}`,
+      );
     }
 
     const client = new LinearGraphqlClient(context.credential.encryptedSecret);
@@ -63,10 +76,18 @@ export class LinearSourceConnector implements SourceConnector {
     const objects: IncomingSourceObject[] = [];
     const cursorUpdates = [];
 
-    const workspaceAndViewer = await client.query<WorkspaceAndViewerResponse>(workspaceAndViewerQuery);
+    const workspaceAndViewer =
+      await client.query<WorkspaceAndViewerResponse>(workspaceAndViewerQuery);
     const workspace = workspaceAndViewer.organization;
     if (workspace) {
-      objects.push(toIncoming(identity, "linear.workspace", stringId(workspace, context.scope.externalId), workspace));
+      objects.push(
+        toIncoming(
+          identity,
+          "linear.workspace",
+          stringId(workspace, context.scope.externalId),
+          workspace,
+        ),
+      );
     }
 
     const viewer = workspaceAndViewer.viewer;
@@ -82,11 +103,26 @@ export class LinearSourceConnector implements SourceConnector {
       objects.push(toIncoming(identity, "linear.team", stringId(team), team));
     }
 
-    for (const project of filterByScope(await fetchConnection(client, "projects", projectsQuery), scope)) {
-      objects.push(toIncoming(identity, "linear.project", stringId(project), project, dateFromField(project, "createdAt"), dateFromField(project, "updatedAt")));
+    for (const project of filterByScope(
+      await fetchConnection(client, "projects", projectsQuery),
+      scope,
+    )) {
+      objects.push(
+        toIncoming(
+          identity,
+          "linear.project",
+          stringId(project),
+          project,
+          dateFromField(project, "createdAt"),
+          dateFromField(project, "updatedAt"),
+        ),
+      );
     }
 
-    for (const workflowState of filterByScope(await fetchConnection(client, "workflowStates", workflowStatesQuery), scope)) {
+    for (const workflowState of filterByScope(
+      await fetchConnection(client, "workflowStates", workflowStatesQuery),
+      scope,
+    )) {
       objects.push(
         toIncoming(
           identity,
@@ -99,8 +135,20 @@ export class LinearSourceConnector implements SourceConnector {
       );
     }
 
-    for (const label of filterByScope(await fetchConnection(client, "issueLabels", issueLabelsQuery), scope)) {
-      objects.push(toIncoming(identity, "linear.label", stringId(label), label, dateFromField(label, "createdAt"), dateFromField(label, "updatedAt")));
+    for (const label of filterByScope(
+      await fetchConnection(client, "issueLabels", issueLabelsQuery),
+      scope,
+    )) {
+      objects.push(
+        toIncoming(
+          identity,
+          "linear.label",
+          stringId(label),
+          label,
+          dateFromField(label, "createdAt"),
+          dateFromField(label, "updatedAt"),
+        ),
+      );
     }
 
     const issueSince = cursorSince(context.cursors, "linear.issue");
@@ -109,7 +157,15 @@ export class LinearSourceConnector implements SourceConnector {
     const issueHighWatermark = maxUpdatedAt(issues);
     for (const issue of issues) {
       objects.push(
-        toIncoming(identity, "linear.issue", stringId(issue), issue, dateFromField(issue, "createdAt"), dateFromField(issue, "updatedAt"), stringField(issue, "url")),
+        toIncoming(
+          identity,
+          "linear.issue",
+          stringId(issue),
+          issue,
+          dateFromField(issue, "createdAt"),
+          dateFromField(issue, "updatedAt"),
+          stringField(issue, "url"),
+        ),
       );
     }
     cursorUpdates.push({
@@ -120,7 +176,9 @@ export class LinearSourceConnector implements SourceConnector {
 
     const commentSince = cursorSince(context.cursors, "linear.comment");
     const commentFilter = scopedUpdatedAtFilter(scope, commentSince, true);
-    const comments = await fetchConnection(client, "comments", commentsQuery, { filter: commentFilter });
+    const comments = await fetchConnection(client, "comments", commentsQuery, {
+      filter: commentFilter,
+    });
     const commentHighWatermark = maxUpdatedAt(comments);
     for (const comment of comments) {
       objects.push(
@@ -169,7 +227,7 @@ class LegacyLinearGraphqlClient {
     const response = await fetch(linearGraphqlEndpoint, {
       method: "POST",
       headers: {
-        "authorization": this.personalAccessToken,
+        authorization: this.personalAccessToken,
         "content-type": "application/json",
       },
       body: JSON.stringify({ query, variables }),
@@ -179,11 +237,15 @@ class LegacyLinearGraphqlClient {
     try {
       payload = await response.json();
     } catch (error) {
-      throw new Error(`Linear GraphQL returned non-JSON response with status ${response.status}: ${errorMessage(error)}`);
+      throw new Error(
+        `Linear GraphQL returned non-JSON response with status ${response.status}: ${errorMessage(error)}`,
+      );
     }
 
     if (!response.ok) {
-      throw new Error(`Linear GraphQL request failed with status ${response.status}: ${graphqlErrorSummary(payload)}`);
+      throw new Error(
+        `Linear GraphQL request failed with status ${response.status}: ${graphqlErrorSummary(payload)}`,
+      );
     }
 
     if (!isRecord(payload)) {
@@ -213,7 +275,9 @@ async function legacyFetchConnection<TNode extends JsonValueObject>(
   let after: string | undefined;
 
   for (;;) {
-    const data = await client.query<Record<LinearConnectionName, LinearGraphqlPage<TNode> | undefined>>(query, {
+    const data = await client.query<
+      Record<LinearConnectionName, LinearGraphqlPage<TNode> | undefined>
+    >(query, {
       ...variables,
       first: pageSize,
       after: after ?? null,
@@ -236,7 +300,9 @@ async function legacyFetchConnection<TNode extends JsonValueObject>(
   }
 }
 
-function sourceIdentity(context: ConnectorExecutionContext): Omit<IncomingSourceObject, "objectType" | "externalId" | "rawJson"> {
+function sourceIdentity(
+  context: ConnectorExecutionContext,
+): Omit<IncomingSourceObject, "objectType" | "externalId" | "rawJson"> {
   return {
     organizationId: context.organizationId,
     integrationId: context.integrationId,
@@ -278,21 +344,40 @@ function toIncoming(
 function linearScope(context: ConnectorExecutionContext): { teamId?: string; projectId?: string } {
   const config = isRecord(context.scope.configJson) ? context.scope.configJson : {};
   const configuredTeamId = stringField(config, "teamId") ?? stringField(config, "linearTeamId");
-  const configuredProjectId = stringField(config, "projectId") ?? stringField(config, "linearProjectId");
+  const configuredProjectId =
+    stringField(config, "projectId") ?? stringField(config, "linearProjectId");
 
   return {
-    teamId: context.scope.scopeType === "linear.team" ? configuredTeamId ?? context.scope.externalId : configuredTeamId,
-    projectId: context.scope.scopeType === "linear.project" ? configuredProjectId ?? context.scope.externalId : configuredProjectId,
+    teamId:
+      context.scope.scopeType === "linear.team"
+        ? (configuredTeamId ?? context.scope.externalId)
+        : configuredTeamId,
+    projectId:
+      context.scope.scopeType === "linear.project"
+        ? (configuredProjectId ?? context.scope.externalId)
+        : configuredProjectId,
   };
 }
 
-function filterByScope<TNode extends JsonValueObject>(nodes: TNode[], scope: { teamId?: string; projectId?: string }): TNode[] {
+function filterByScope<TNode extends JsonValueObject>(
+  nodes: TNode[],
+  scope: { teamId?: string; projectId?: string },
+): TNode[] {
   return nodes.filter((node) => {
-    if (scope.projectId && stringField(node, "id") !== scope.projectId && nestedString(node, ["project", "id"]) !== scope.projectId) {
+    if (
+      scope.projectId &&
+      stringField(node, "id") !== scope.projectId &&
+      nestedString(node, ["project", "id"]) !== scope.projectId
+    ) {
       return false;
     }
 
-    if (scope.teamId && nestedString(node, ["team", "id"]) !== scope.teamId && !teamsIncludeId(node, scope.teamId) && stringField(node, "id") !== scope.teamId) {
+    if (
+      scope.teamId &&
+      nestedString(node, ["team", "id"]) !== scope.teamId &&
+      !teamsIncludeId(node, scope.teamId) &&
+      stringField(node, "id") !== scope.teamId
+    ) {
       return false;
     }
 
@@ -300,7 +385,11 @@ function filterByScope<TNode extends JsonValueObject>(nodes: TNode[], scope: { t
   });
 }
 
-function scopedUpdatedAtFilter(scope: { teamId?: string; projectId?: string }, since: Date | undefined, isComment = false): JsonValueObject | null {
+function scopedUpdatedAtFilter(
+  scope: { teamId?: string; projectId?: string },
+  since: Date | undefined,
+  isComment = false,
+): JsonValueObject | null {
   const filter: JsonValueObject = {};
   if (since) {
     filter.updatedAt = { gte: since.toISOString() };
@@ -326,10 +415,21 @@ function scopedUpdatedAtFilter(scope: { teamId?: string; projectId?: string }, s
   return Object.keys(filter).length > 0 ? filter : null;
 }
 
-function cursorSince(cursors: readonly SyncCursor[], objectType: LinearSourceObjectType): Date | undefined {
-  const candidates = cursors.filter((cursor) => cursor.provider === "linear" && cursor.objectType === objectType && cursor.cursorKind === "updated_at");
+function cursorSince(
+  cursors: readonly SyncCursor[],
+  objectType: LinearSourceObjectType,
+): Date | undefined {
+  const candidates = cursors.filter(
+    (cursor) =>
+      cursor.provider === "linear" &&
+      cursor.objectType === objectType &&
+      cursor.cursorKind === "updated_at",
+  );
   const dates = candidates
-    .flatMap((cursor) => [cursor.highWatermark, cursor.cursorValue ? parseDate(cursor.cursorValue) : undefined])
+    .flatMap((cursor) => [
+      cursor.highWatermark,
+      cursor.cursorValue ? parseDate(cursor.cursorValue) : undefined,
+    ])
     .filter((date): date is Date => date instanceof Date);
 
   return dates.sort((left, right) => right.getTime() - left.getTime())[0];
@@ -389,7 +489,9 @@ function stringField(record: JsonValueObject, key: string): string | undefined {
 }
 
 function stripUndefinedJson(record: Record<string, JsonValue | undefined>): JsonValueObject {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as JsonValueObject;
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined),
+  ) as JsonValueObject;
 }
 
 function isRecord(value: unknown): value is JsonValueObject {
@@ -410,7 +512,10 @@ function graphqlErrorMessage(error: unknown): string {
 
   const message = typeof error.message === "string" ? error.message : "unknown GraphQL error";
   const path = Array.isArray(error.path) ? ` at ${error.path.join(".")}` : "";
-  const code = isRecord(error.extensions) && typeof error.extensions.code === "string" ? ` (${error.extensions.code})` : "";
+  const code =
+    isRecord(error.extensions) && typeof error.extensions.code === "string"
+      ? ` (${error.extensions.code})`
+      : "";
   return `${message}${path}${code}`;
 }
 

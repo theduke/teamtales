@@ -2,9 +2,7 @@
   "version": "6",
   "dialect": "mysql",
   "id": "fb14a27b-7602-4c46-bf6d-2ddadeb3d8a7",
-  "prevIds": [
-    "b80f70d8-11fe-4e32-b53d-c6a86443f8c7"
-  ],
+  "prevIds": ["b80f70d8-11fe-4e32-b53d-c6a86443f8c7"],
   "ddl": [
     {
       "name": "activity_events",
@@ -4743,233 +4741,175 @@
       "table": "work_items"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "activity_events",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "ai_run_steps",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "ai_runs",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "analysis_highlights",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "analysis_metrics",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "analysis_report_contexts",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "analysis_runs",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "api_tokens",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "auth_sessions",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "external_identities",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "integration_credentials",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "integrations",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "organization_memberships",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "organizations",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "people",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "provider_resources",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "report_artifacts",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "report_inputs",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "report_links",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "reports",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "source_object_versions",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "source_objects",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "source_webhook_events",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "sync_cursors",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "sync_run_items",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "sync_runs",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "sync_scopes",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "users",
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "name": "PRIMARY",
       "table": "work_items",
       "entityType": "pks"
@@ -5579,13 +5519,9 @@
       "table": "work_items"
     },
     {
-      "columns": [
-        "ai_run_id"
-      ],
+      "columns": ["ai_run_id"],
       "tableTo": "ai_runs",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5594,13 +5530,9 @@
       "table": "ai_run_steps"
     },
     {
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5609,13 +5541,9 @@
       "table": "api_tokens"
     },
     {
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5624,13 +5552,9 @@
       "table": "auth_sessions"
     },
     {
-      "columns": [
-        "integration_id"
-      ],
+      "columns": ["integration_id"],
       "tableTo": "integrations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5639,13 +5563,9 @@
       "table": "integration_credentials"
     },
     {
-      "columns": [
-        "organization_id"
-      ],
+      "columns": ["organization_id"],
       "tableTo": "organizations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5654,13 +5574,9 @@
       "table": "integrations"
     },
     {
-      "columns": [
-        "organization_id"
-      ],
+      "columns": ["organization_id"],
       "tableTo": "organizations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5669,13 +5585,9 @@
       "table": "organization_memberships"
     },
     {
-      "columns": [
-        "user_id"
-      ],
+      "columns": ["user_id"],
       "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5684,13 +5596,9 @@
       "table": "organization_memberships"
     },
     {
-      "columns": [
-        "organization_id"
-      ],
+      "columns": ["organization_id"],
       "tableTo": "organizations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5699,13 +5607,9 @@
       "table": "provider_resources"
     },
     {
-      "columns": [
-        "integration_id"
-      ],
+      "columns": ["integration_id"],
       "tableTo": "integrations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5714,13 +5618,9 @@
       "table": "provider_resources"
     },
     {
-      "columns": [
-        "parent_resource_id"
-      ],
+      "columns": ["parent_resource_id"],
       "tableTo": "provider_resources",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "nameExplicit": false,
@@ -5729,13 +5629,9 @@
       "table": "provider_resources"
     },
     {
-      "columns": [
-        "report_id"
-      ],
+      "columns": ["report_id"],
       "tableTo": "reports",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5744,13 +5640,9 @@
       "table": "report_artifacts"
     },
     {
-      "columns": [
-        "parent_report_id"
-      ],
+      "columns": ["parent_report_id"],
       "tableTo": "reports",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5759,13 +5651,9 @@
       "table": "report_links"
     },
     {
-      "columns": [
-        "child_report_id"
-      ],
+      "columns": ["child_report_id"],
       "tableTo": "reports",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5774,13 +5662,9 @@
       "table": "report_links"
     },
     {
-      "columns": [
-        "source_object_id"
-      ],
+      "columns": ["source_object_id"],
       "tableTo": "source_objects",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5789,13 +5673,9 @@
       "table": "source_object_versions"
     },
     {
-      "columns": [
-        "sync_scope_id"
-      ],
+      "columns": ["sync_scope_id"],
       "tableTo": "sync_scopes",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5804,13 +5684,9 @@
       "table": "sync_cursors"
     },
     {
-      "columns": [
-        "provider_resource_id"
-      ],
+      "columns": ["provider_resource_id"],
       "tableTo": "provider_resources",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5819,13 +5695,9 @@
       "table": "sync_cursors"
     },
     {
-      "columns": [
-        "sync_run_id"
-      ],
+      "columns": ["sync_run_id"],
       "tableTo": "sync_runs",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5834,13 +5706,9 @@
       "table": "sync_run_items"
     },
     {
-      "columns": [
-        "provider_resource_id"
-      ],
+      "columns": ["provider_resource_id"],
       "tableTo": "provider_resources",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "nameExplicit": false,
@@ -5849,13 +5717,9 @@
       "table": "sync_runs"
     },
     {
-      "columns": [
-        "parent_sync_run_id"
-      ],
+      "columns": ["parent_sync_run_id"],
       "tableTo": "sync_runs",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5864,13 +5728,9 @@
       "table": "sync_runs"
     },
     {
-      "columns": [
-        "organization_id"
-      ],
+      "columns": ["organization_id"],
       "tableTo": "organizations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5879,13 +5739,9 @@
       "table": "sync_scopes"
     },
     {
-      "columns": [
-        "integration_id"
-      ],
+      "columns": ["integration_id"],
       "tableTo": "integrations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
@@ -5894,13 +5750,9 @@
       "table": "sync_scopes"
     },
     {
-      "columns": [
-        "provider_resource_id"
-      ],
+      "columns": ["provider_resource_id"],
       "tableTo": "provider_resources",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "nameExplicit": false,
@@ -5909,13 +5761,9 @@
       "table": "sync_scopes"
     },
     {
-      "columns": [
-        "parent_scope_id"
-      ],
+      "columns": ["parent_scope_id"],
       "tableTo": "sync_scopes",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,

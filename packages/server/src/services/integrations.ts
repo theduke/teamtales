@@ -32,15 +32,28 @@ export async function addPersonalAccessTokenIntegrationService(
   input: AddPersonalAccessTokenIntegrationInput,
 ): Promise<IntegrationWithSecretHintDto> {
   const displayName = input.displayName ?? `${input.provider} PAT`;
-  const integrationId = input.id ?? stableId("integration", input.organizationId, input.provider, displayName);
+  const integrationId =
+    input.id ?? stableId("integration", input.organizationId, input.provider, displayName);
   const credentialId = input.credentialId ?? stableId("credential", integrationId);
 
   return withTransaction(database, async (transaction) => {
     await requireOrganization(transaction, input.organizationId);
-    await requireOrganizationRole(transaction, input.organizationId, input.userId, ["owner", "admin"]);
+    await requireOrganizationRole(transaction, input.organizationId, input.userId, [
+      "owner",
+      "admin",
+    ]);
 
     const now = new Date().toISOString();
-    await transaction.insert(integrations).values({ id: integrationId, organizationId: input.organizationId, provider: input.provider, authType: "personal_access_token", status: "active", displayName, createdAt: now, updatedAt: now });
+    await transaction.insert(integrations).values({
+      id: integrationId,
+      organizationId: input.organizationId,
+      provider: input.provider,
+      authType: "personal_access_token",
+      status: "active",
+      displayName,
+      createdAt: now,
+      updatedAt: now,
+    });
 
     const credential = createIntegrationCredentialRecord({
       id: credentialId,
@@ -49,7 +62,15 @@ export async function addPersonalAccessTokenIntegrationService(
       encryptionKey: input.encryptionKey,
     });
 
-    await transaction.insert(integrationCredentials).values({ id: credential.id, integrationId: credential.integrationId, encryptedSecret: credential.encryptedSecret, secretHint: credential.secretHint, expiresAt: credential.expiresAt?.toISOString() ?? null, createdAt: now, updatedAt: now });
+    await transaction.insert(integrationCredentials).values({
+      id: credential.id,
+      integrationId: credential.integrationId,
+      encryptedSecret: credential.encryptedSecret,
+      secretHint: credential.secretHint,
+      expiresAt: credential.expiresAt?.toISOString() ?? null,
+      createdAt: now,
+      updatedAt: now,
+    });
 
     return {
       id: integrationId,

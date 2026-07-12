@@ -1,5 +1,10 @@
 import type { JsonValue } from "./json.js";
-import type { ConnectorCursorUpdate, ConnectorExecutionContext, ConnectorFetchResult, SourceConnector } from "./providers.js";
+import type {
+  ConnectorCursorUpdate,
+  ConnectorExecutionContext,
+  ConnectorFetchResult,
+  SourceConnector,
+} from "./providers.js";
 import type { GitHubSourceObjectType, IncomingSourceObject } from "./source-object.js";
 import { logger } from "../api/logger.js";
 import { GitHubRestClient } from "../providers/github-client.js";
@@ -64,7 +69,13 @@ export class GitHubSourceConnector implements SourceConnector {
     const objects: IncomingSourceObject[] = [];
 
     const repositoryMetadata = await client.getObject(`/repos/${repository.path}`);
-    objects.push(factory.create("github.repository", String(repositoryMetadata.id ?? repository.name), repositoryMetadata));
+    objects.push(
+      factory.create(
+        "github.repository",
+        String(repositoryMetadata.id ?? repository.name),
+        repositoryMetadata,
+      ),
+    );
 
     const pullRequestCursor = latestCursor(context, "github.pull_request");
     let pullRequestHighWatermark = pullRequestCursor;
@@ -73,12 +84,15 @@ export class GitHubSourceConnector implements SourceConnector {
     let issueCommentHighWatermark: Date | undefined;
     let commitHighWatermark: Date | undefined;
 
-    for await (const pullRequestSummary of client.paginateObjects(`/repos/${repository.path}/pulls`, {
-      state: "all",
-      sort: "updated",
-      direction: "asc",
-      per_page: "100",
-    })) {
+    for await (const pullRequestSummary of client.paginateObjects(
+      `/repos/${repository.path}/pulls`,
+      {
+        state: "all",
+        sort: "updated",
+        direction: "asc",
+        per_page: "100",
+      },
+    )) {
       const summaryUpdatedAt = dateFromString(pullRequestSummary.updated_at);
       if (pullRequestCursor && summaryUpdatedAt && summaryUpdatedAt <= pullRequestCursor) {
         continue;
@@ -92,33 +106,61 @@ export class GitHubSourceConnector implements SourceConnector {
         continue;
       }
 
-      objects.push(factory.create("github.pull_request", String(pullRequest.id ?? pullNumber), pullRequest));
+      objects.push(
+        factory.create("github.pull_request", String(pullRequest.id ?? pullNumber), pullRequest),
+      );
       pullRequestHighWatermark = maxDate(pullRequestHighWatermark, pullUpdatedAt);
 
-      for await (const review of client.paginateObjects(`/repos/${repository.path}/pulls/${pullNumber}/reviews`, { per_page: "100" })) {
+      for await (const review of client.paginateObjects(
+        `/repos/${repository.path}/pulls/${pullNumber}/reviews`,
+        { per_page: "100" },
+      )) {
         objects.push(factory.create("github.pull_request_review", String(review.id), review));
-        reviewHighWatermark = maxDate(reviewHighWatermark, dateFromString(review.submitted_at) ?? dateFromString(review.updated_at));
+        reviewHighWatermark = maxDate(
+          reviewHighWatermark,
+          dateFromString(review.submitted_at) ?? dateFromString(review.updated_at),
+        );
       }
 
-      for await (const reviewComment of client.paginateObjects(`/repos/${repository.path}/pulls/${pullNumber}/comments`, { per_page: "100" })) {
-        objects.push(factory.create("github.pull_request_comment", String(reviewComment.id), reviewComment));
-        reviewCommentHighWatermark = maxDate(reviewCommentHighWatermark, dateFromString(reviewComment.updated_at));
+      for await (const reviewComment of client.paginateObjects(
+        `/repos/${repository.path}/pulls/${pullNumber}/comments`,
+        { per_page: "100" },
+      )) {
+        objects.push(
+          factory.create("github.pull_request_comment", String(reviewComment.id), reviewComment),
+        );
+        reviewCommentHighWatermark = maxDate(
+          reviewCommentHighWatermark,
+          dateFromString(reviewComment.updated_at),
+        );
       }
 
-      for await (const issueComment of client.paginateObjects(`/repos/${repository.path}/issues/${pullNumber}/comments`, { per_page: "100" })) {
+      for await (const issueComment of client.paginateObjects(
+        `/repos/${repository.path}/issues/${pullNumber}/comments`,
+        { per_page: "100" },
+      )) {
         objects.push(factory.create("github.issue_comment", String(issueComment.id), issueComment));
-        issueCommentHighWatermark = maxDate(issueCommentHighWatermark, dateFromString(issueComment.updated_at));
+        issueCommentHighWatermark = maxDate(
+          issueCommentHighWatermark,
+          dateFromString(issueComment.updated_at),
+        );
       }
 
       if (repository.includeCommits) {
-        for await (const commit of client.paginateObjects(`/repos/${repository.path}/pulls/${pullNumber}/commits`, { per_page: "100" })) {
+        for await (const commit of client.paginateObjects(
+          `/repos/${repository.path}/pulls/${pullNumber}/commits`,
+          { per_page: "100" },
+        )) {
           const externalId = stringField(commit.sha) ?? stringField(commit.node_id);
           if (!externalId) {
             continue;
           }
 
           objects.push(factory.create("github.commit", externalId, commit));
-          commitHighWatermark = maxDate(commitHighWatermark, dateFromString(objectField(commit.commit, "committer")?.date));
+          commitHighWatermark = maxDate(
+            commitHighWatermark,
+            dateFromString(objectField(commit.commit, "committer")?.date),
+          );
         }
       }
     }
@@ -140,7 +182,9 @@ export class GitHubSourceConnector implements SourceConnector {
     };
   }
 
-  private async fetchOrganizationSourceObjects(context: ConnectorExecutionContext): Promise<ConnectorFetchResult> {
+  private async fetchOrganizationSourceObjects(
+    context: ConnectorExecutionContext,
+  ): Promise<ConnectorFetchResult> {
     const syncLog = logger.child({
       provider: "github",
       organizationId: context.organizationId,
@@ -149,16 +193,24 @@ export class GitHubSourceConnector implements SourceConnector {
       syncRunId: context.run.id,
     });
     if (context.scope.selectionMode === "selected") {
-      syncLog.debug("Skipping organization scope because its selected repository child scopes sync independently");
+      syncLog.debug(
+        "Skipping organization scope because its selected repository child scopes sync independently",
+      );
       return {
         objects: [],
         cursorUpdates: [],
-        metadata: { organization: context.scope.externalName, repositories: 0, selectionMode: "selected" },
+        metadata: {
+          organization: context.scope.externalName,
+          repositories: 0,
+          selectionMode: "selected",
+        },
       };
     }
 
     if (context.scope.selectionMode !== "all") {
-      throw new Error(`Unsupported GitHub organization selection mode: ${context.scope.selectionMode}`);
+      throw new Error(
+        `Unsupported GitHub organization selection mode: ${context.scope.selectionMode}`,
+      );
     }
 
     const token = context.credential.encryptedSecret.trim();
@@ -171,30 +223,41 @@ export class GitHubSourceConnector implements SourceConnector {
     const results: ConnectorFetchResult[] = [];
 
     syncLog.debug({ organization }, "Listing GitHub organization repositories");
-    for await (const repository of client.paginateObjects(`/orgs/${encodeURIComponent(organization)}/repos`, {
-      type: "all",
-      per_page: "100",
-    })) {
+    for await (const repository of client.paginateObjects(
+      `/orgs/${encodeURIComponent(organization)}/repos`,
+      {
+        type: "all",
+        per_page: "100",
+      },
+    )) {
       const fullName = stringField(repository.full_name);
       if (!fullName) {
         throw new Error("GitHub organization repository response is missing full_name");
       }
 
-      syncLog.debug({ organization, repository: fullName, repositoriesDiscovered: results.length + 1 }, "Syncing GitHub repository from organization scope");
-      results.push(await this.fetchSourceObjects({
-        ...context,
-        scope: {
-          ...context.scope,
-          scopeType: "github.repository",
-          externalId: stringField(repository.id) ?? fullName,
-          externalName: fullName,
-          selectionMode: "individual",
-          configJson: { repository: fullName },
-        },
-      }));
+      syncLog.debug(
+        { organization, repository: fullName, repositoriesDiscovered: results.length + 1 },
+        "Syncing GitHub repository from organization scope",
+      );
+      results.push(
+        await this.fetchSourceObjects({
+          ...context,
+          scope: {
+            ...context.scope,
+            scopeType: "github.repository",
+            externalId: stringField(repository.id) ?? fullName,
+            externalName: fullName,
+            selectionMode: "individual",
+            configJson: { repository: fullName },
+          },
+        }),
+      );
     }
 
-    syncLog.info({ organization, repositoriesDiscovered: results.length }, "Finished listing GitHub organization repositories");
+    syncLog.info(
+      { organization, repositoriesDiscovered: results.length },
+      "Finished listing GitHub organization repositories",
+    );
 
     return {
       objects: results.flatMap((result) => result.objects),
@@ -203,7 +266,12 @@ export class GitHubSourceConnector implements SourceConnector {
         organization,
         repositories: results.length,
         apiBaseUrl: this.apiBaseUrl,
-        requestsMade: client.requestsMade + results.reduce((total, result) => total + metadataNumber(result.metadata, "requestsMade"), 0),
+        requestsMade:
+          client.requestsMade +
+          results.reduce(
+            (total, result) => total + metadataNumber(result.metadata, "requestsMade"),
+            0,
+          ),
       },
     };
   }
@@ -227,7 +295,10 @@ class LegacyGitHubRestClient {
     return value;
   }
 
-  async *paginateObjects(path: string, query: Record<string, string> = {}): AsyncGenerator<GitHubObject> {
+  async *paginateObjects(
+    path: string,
+    query: Record<string, string> = {},
+  ): AsyncGenerator<GitHubObject> {
     let url: string | undefined = this.buildUrl(path, query);
 
     while (url) {
@@ -291,7 +362,11 @@ class LegacyGitHubRestClient {
 class GitHubIncomingObjectFactory {
   constructor(private readonly context: ConnectorExecutionContext) {}
 
-  create(objectType: GitHubSourceObjectType, externalId: string, rawJson: GitHubObject): IncomingSourceObject {
+  create(
+    objectType: GitHubSourceObjectType,
+    externalId: string,
+    rawJson: GitHubObject,
+  ): IncomingSourceObject {
     return {
       organizationId: this.context.organizationId,
       integrationId: this.context.integrationId,
@@ -308,9 +383,12 @@ class GitHubIncomingObjectFactory {
   }
 }
 
-function parseRepositoryScope(context: ConnectorExecutionContext): GitHubRepositoryScopeConfig & { name: string; path: string } {
+function parseRepositoryScope(
+  context: ConnectorExecutionContext,
+): GitHubRepositoryScopeConfig & { name: string; path: string } {
   const config = isJsonObject(context.scope.configJson) ? context.scope.configJson : {};
-  const repository = stringField(config.repository) ?? context.scope.externalName ?? context.scope.externalId;
+  const repository =
+    stringField(config.repository) ?? context.scope.externalName ?? context.scope.externalId;
 
   if (!repository || !/^[^/\s]+\/[^/\s]+$/.test(repository)) {
     throw new Error("GitHub repository scope must provide an owner/repo repository name");
@@ -343,7 +421,11 @@ function mergeCursorUpdates(updates: readonly ConnectorCursorUpdate[]): Connecto
   const merged = new Map<string, ConnectorCursorUpdate>();
   for (const update of updates) {
     const existing = merged.get(update.objectType);
-    if (!existing || (update.highWatermark && (!existing.highWatermark || update.highWatermark > existing.highWatermark))) {
+    if (
+      !existing ||
+      (update.highWatermark &&
+        (!existing.highWatermark || update.highWatermark > existing.highWatermark))
+    ) {
       merged.set(update.objectType, update);
     }
   }
@@ -354,11 +436,18 @@ function metadataNumber(metadata: JsonValue | undefined, key: string): number {
   return isJsonObject(metadata) && typeof metadata[key] === "number" ? metadata[key] : 0;
 }
 
-function latestCursor(context: ConnectorExecutionContext, objectType: GitHubSourceObjectType): Date | undefined {
+function latestCursor(
+  context: ConnectorExecutionContext,
+  objectType: GitHubSourceObjectType,
+): Date | undefined {
   let latest: Date | undefined;
 
   for (const cursor of context.cursors) {
-    if (cursor.provider !== "github" || cursor.objectType !== objectType || cursor.cursorKind !== "updated_at") {
+    if (
+      cursor.provider !== "github" ||
+      cursor.objectType !== objectType ||
+      cursor.cursorKind !== "updated_at"
+    ) {
       continue;
     }
 

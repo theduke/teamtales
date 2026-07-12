@@ -9,7 +9,19 @@ import type { ReportContext } from "@teamtales/common/domain";
 import { createApiServer } from "../../src/api/server.js";
 import { createApiToken } from "../../src/auth/index.js";
 import type { AppDatabase } from "../../src/db/index.js";
-import { activityEvents, integrationCredentials, integrations, organizationMemberships, organizations, people, providerResources, sourceObjects, syncScopes, users, workItems } from "../../src/db/schema.js";
+import {
+  activityEvents,
+  integrationCredentials,
+  integrations,
+  organizationMemberships,
+  organizations,
+  people,
+  providerResources,
+  sourceObjects,
+  syncScopes,
+  users,
+  workItems,
+} from "../../src/db/schema.js";
 import { saveCompleteAnalysisResult } from "../../src/persistence/index.js";
 import { processQueuedProviderSyncBatch } from "../../src/services/sync-runs.js";
 import { mysqlTestOptions, openTestDatabase } from "../helpers/mysql.js";
@@ -31,10 +43,16 @@ describe("TeamTales API", mysqlTestOptions, () => {
   });
 
   it("returns health status", async () => {
-    const response = await apiFetch<{ status: string; service: string; database: string }>(app.url, "/api/health");
+    const response = await apiFetch<{ status: string; service: string; database: string }>(
+      app.url,
+      "/api/health",
+    );
 
     assert.equal(response.status, 200);
-    assert.deepEqual(response.body, { ok: true, data: { status: "ok", service: "teamtales-api", database: "ok" } });
+    assert.deepEqual(response.body, {
+      ok: true,
+      data: { status: "ok", service: "teamtales-api", database: "ok" },
+    });
   });
 
   it("rejects protected routes before bootstrap", async () => {
@@ -56,20 +74,28 @@ describe("TeamTales API", mysqlTestOptions, () => {
         },
       },
     });
-    const listed = await apiFetch<{ items: Array<{ id: string; name: string; slug: string }> }>(app.url, "/api/organizations");
+    const listed = await apiFetch<{ items: Array<{ id: string; name: string; slug: string }> }>(
+      app.url,
+      "/api/organizations",
+    );
 
     assert.equal(created.status, 201);
     assert.equal(created.body.ok, true);
     assert.equal(created.body.ok && created.body.data.id, "org_api");
-    assert.equal(listed.body.ok && listed.body.data.items.some((organization) => organization.id === "org_api"), true);
+    assert.equal(
+      listed.body.ok &&
+        listed.body.data.items.some((organization) => organization.id === "org_api"),
+      true,
+    );
   });
 
   it("adds a PAT integration without returning plaintext", async () => {
     const token = "github_pat_secret_1234567890";
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async (input, init) => String(input).startsWith(app.url)
-      ? originalFetch(input, init)
-      : jsonResponse({ id: 1, login: "octocat" });
+    globalThis.fetch = async (input, init) =>
+      String(input).startsWith(app.url)
+        ? originalFetch(input, init)
+        : jsonResponse({ id: 1, login: "octocat" });
     try {
       const response = await apiFetch<Record<string, unknown>>(app.url, "/api/integrations/pat", {
         method: "POST",
@@ -87,7 +113,15 @@ describe("TeamTales API", mysqlTestOptions, () => {
       assert.equal(JSON.stringify(response.body).includes(token), false);
       assert.equal(response.body.ok && response.body.data.secretHint, "gith...7890");
 
-      const [row] = await app.database.db.select({ encryptedSecret: integrationCredentials.encryptedSecret }).from(integrationCredentials).where(eq(integrationCredentials.integrationId, response.body.ok ? String(response.body.data.id) : ""));
+      const [row] = await app.database.db
+        .select({ encryptedSecret: integrationCredentials.encryptedSecret })
+        .from(integrationCredentials)
+        .where(
+          eq(
+            integrationCredentials.integrationId,
+            response.body.ok ? String(response.body.data.id) : "",
+          ),
+        );
       assert.equal(row?.encryptedSecret.includes(token), false);
     } finally {
       globalThis.fetch = originalFetch;
@@ -102,60 +136,191 @@ describe("TeamTales API", mysqlTestOptions, () => {
       const path = new URL(url).pathname;
       if (path === "/user") return jsonResponse({ id: 1, login: "octocat", name: "Octocat" });
       if (path === "/user/orgs") return jsonResponse([{ id: 10, login: "acme", name: "Acme" }]);
-      if (path === "/user/repos") return jsonResponse([
-        { id: 101, full_name: "acme/widgets", owner: { id: 10, login: "acme", type: "Organization" }, archived: false, fork: false },
-        { id: 102, full_name: "octocat/private-tools", owner: { id: 1, login: "octocat", type: "User" }, archived: false, fork: false },
-      ]);
+      if (path === "/user/repos")
+        return jsonResponse([
+          {
+            id: 101,
+            full_name: "acme/widgets",
+            owner: { id: 10, login: "acme", type: "Organization" },
+            archived: false,
+            fork: false,
+          },
+          {
+            id: 102,
+            full_name: "octocat/private-tools",
+            owner: { id: 1, login: "octocat", type: "User" },
+            archived: false,
+            fork: false,
+          },
+        ]);
       return jsonResponse({ message: `Unexpected GitHub path ${path}` }, 404);
     };
     try {
-      const created = await apiFetch<{ id: string }>(app.url, "/api/integrations/pat", { method: "POST", body: { organizationId: "org_api", provider: "github", displayName: "Scoped GitHub", token: "github_scoped_token" } });
-      assert.equal(created.status, 201); const integrationId = created.body.ok ? created.body.data.id : "";
-      const discovered = await apiFetch<{ provider: string; discovery: { organizations: Array<{ id: string }>; repositories: Array<{ id: string }> } }>(app.url, `/api/integrations/${integrationId}/resources?organizationId=org_api`);
-      assert.equal(discovered.status, 200); assert.deepEqual(discovered.body.ok && discovered.body.data.discovery.organizations.map(item => item.id), ["10"]);
-      const saved = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { organizations: [{ organizationId: "10", mode: "selected", repositoryIds: ["101"] }], repositoryIds: ["102"] } } });
+      const created = await apiFetch<{ id: string }>(app.url, "/api/integrations/pat", {
+        method: "POST",
+        body: {
+          organizationId: "org_api",
+          provider: "github",
+          displayName: "Scoped GitHub",
+          token: "github_scoped_token",
+        },
+      });
+      assert.equal(created.status, 201);
+      const integrationId = created.body.ok ? created.body.data.id : "";
+      const discovered = await apiFetch<{
+        provider: string;
+        discovery: { organizations: Array<{ id: string }>; repositories: Array<{ id: string }> };
+      }>(app.url, `/api/integrations/${integrationId}/resources?organizationId=org_api`);
+      assert.equal(discovered.status, 200);
+      assert.deepEqual(
+        discovered.body.ok && discovered.body.data.discovery.organizations.map((item) => item.id),
+        ["10"],
+      );
+      const saved = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, {
+        method: "PUT",
+        body: {
+          organizationId: "org_api",
+          selection: {
+            organizations: [{ organizationId: "10", mode: "selected", repositoryIds: ["101"] }],
+            repositoryIds: ["102"],
+          },
+        },
+      });
       assert.equal(saved.status, 200);
-      let rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId));
-      const organization = rows.find(row => row.scopeType === "github.organization"); const child = rows.find(row => row.externalId === "101"); const standalone = rows.find(row => row.externalId === "102");
-      assert.equal(organization?.selectionMode, "selected"); assert.equal(child?.parentScopeId, organization?.id); assert.equal(standalone?.parentScopeId, null); assert.equal(standalone?.selectionMode, "individual"); assert.equal(rows.every(row => row.configJson === "{}"), true);
-      const resources = await app.database.db.select().from(providerResources).where(eq(providerResources.integrationId, integrationId));
-      const organizationResource = resources.find(resource => resource.resourceType === "github.organization"); const repositoryResource = resources.find(resource => resource.externalId === "101");
-      assert.equal(resources.length, 3); assert.equal(organization?.providerResourceId, organizationResource?.id); assert.equal(child?.providerResourceId, repositoryResource?.id); assert.equal(repositoryResource?.parentResourceId, organizationResource?.id);
-      const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { organizations: [{ organizationId: "10", mode: "all" }], repositoryIds: [] } } });
+      let rows = await app.database.db
+        .select()
+        .from(syncScopes)
+        .where(eq(syncScopes.integrationId, integrationId));
+      const organization = rows.find((row) => row.scopeType === "github.organization");
+      const child = rows.find((row) => row.externalId === "101");
+      const standalone = rows.find((row) => row.externalId === "102");
+      assert.equal(organization?.selectionMode, "selected");
+      assert.equal(child?.parentScopeId, organization?.id);
+      assert.equal(standalone?.parentScopeId, null);
+      assert.equal(standalone?.selectionMode, "individual");
+      assert.equal(
+        rows.every((row) => row.configJson === "{}"),
+        true,
+      );
+      const resources = await app.database.db
+        .select()
+        .from(providerResources)
+        .where(eq(providerResources.integrationId, integrationId));
+      const organizationResource = resources.find(
+        (resource) => resource.resourceType === "github.organization",
+      );
+      const repositoryResource = resources.find((resource) => resource.externalId === "101");
+      assert.equal(resources.length, 3);
+      assert.equal(organization?.providerResourceId, organizationResource?.id);
+      assert.equal(child?.providerResourceId, repositoryResource?.id);
+      assert.equal(repositoryResource?.parentResourceId, organizationResource?.id);
+      const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, {
+        method: "PUT",
+        body: {
+          organizationId: "org_api",
+          selection: { organizations: [{ organizationId: "10", mode: "all" }], repositoryIds: [] },
+        },
+      });
       assert.equal(modified.status, 200);
-      rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId));
-      assert.equal(rows.find(row => row.scopeType === "github.organization")?.selectionMode, "all");
-      assert.equal(rows.find(row => row.externalId === "101")?.enabled, 0); assert.equal(rows.find(row => row.externalId === "102")?.enabled, 0);
-    } finally { globalThis.fetch = originalFetch; }
+      rows = await app.database.db
+        .select()
+        .from(syncScopes)
+        .where(eq(syncScopes.integrationId, integrationId));
+      assert.equal(
+        rows.find((row) => row.scopeType === "github.organization")?.selectionMode,
+        "all",
+      );
+      assert.equal(rows.find((row) => row.externalId === "101")?.enabled, 0);
+      assert.equal(rows.find((row) => row.externalId === "102")?.enabled, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("creates and modifies Linear workspace team scopes", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (input, init) => {
-      const url = String(input); if (url.startsWith(app.url)) return originalFetch(input, init);
+      const url = String(input);
+      if (url.startsWith(app.url)) return originalFetch(input, init);
       const request = JSON.parse(String(init?.body ?? "{}")) as { query?: string };
-      if (request.query?.includes("LinearWorkspaceAndViewer")) return jsonResponse({ data: { viewer: { id: "viewer" }, organization: { id: "workspace_1", name: "Linear Workspace" } } });
-      if (request.query?.includes("LinearTeams")) return jsonResponse({ data: { teams: { nodes: [{ id: "team_1", name: "Engineering", key: "ENG" }, { id: "team_2", name: "Design", key: "DES" }], pageInfo: { hasNextPage: false } } } });
+      if (request.query?.includes("LinearWorkspaceAndViewer"))
+        return jsonResponse({
+          data: {
+            viewer: { id: "viewer" },
+            organization: { id: "workspace_1", name: "Linear Workspace" },
+          },
+        });
+      if (request.query?.includes("LinearTeams"))
+        return jsonResponse({
+          data: {
+            teams: {
+              nodes: [
+                { id: "team_1", name: "Engineering", key: "ENG" },
+                { id: "team_2", name: "Design", key: "DES" },
+              ],
+              pageInfo: { hasNextPage: false },
+            },
+          },
+        });
       return jsonResponse({ errors: [{ message: "Unexpected Linear query" }] }, 400);
     };
     try {
-      const created = await apiFetch<{ id: string }>(app.url, "/api/integrations/pat", { method: "POST", body: { organizationId: "org_api", provider: "linear", displayName: "Scoped Linear", token: "linear_scoped_token" } });
-      assert.equal(created.status, 201); const integrationId = created.body.ok ? created.body.data.id : "";
-      const saved = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { mode: "selected", teamIds: ["team_1"] } } });
+      const created = await apiFetch<{ id: string }>(app.url, "/api/integrations/pat", {
+        method: "POST",
+        body: {
+          organizationId: "org_api",
+          provider: "linear",
+          displayName: "Scoped Linear",
+          token: "linear_scoped_token",
+        },
+      });
+      assert.equal(created.status, 201);
+      const integrationId = created.body.ok ? created.body.data.id : "";
+      const saved = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, {
+        method: "PUT",
+        body: { organizationId: "org_api", selection: { mode: "selected", teamIds: ["team_1"] } },
+      });
       assert.equal(saved.status, 200);
-      let rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId)); const workspace = rows.find(row => row.scopeType === "linear.workspace");
-      assert.equal(workspace?.selectionMode, "selected"); assert.equal(rows.find(row => row.externalId === "team_1")?.parentScopeId, workspace?.id);
-      const resources = await app.database.db.select().from(providerResources).where(eq(providerResources.integrationId, integrationId)); const workspaceResource = resources.find(resource => resource.resourceType === "linear.workspace"); const teamResource = resources.find(resource => resource.externalId === "team_1");
-      assert.equal(resources.length, 3); assert.equal(workspace?.providerResourceId, workspaceResource?.id); assert.equal(teamResource?.parentResourceId, workspaceResource?.id);
-      const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, { method: "PUT", body: { organizationId: "org_api", selection: { mode: "all" } } });
+      let rows = await app.database.db
+        .select()
+        .from(syncScopes)
+        .where(eq(syncScopes.integrationId, integrationId));
+      const workspace = rows.find((row) => row.scopeType === "linear.workspace");
+      assert.equal(workspace?.selectionMode, "selected");
+      assert.equal(rows.find((row) => row.externalId === "team_1")?.parentScopeId, workspace?.id);
+      const resources = await app.database.db
+        .select()
+        .from(providerResources)
+        .where(eq(providerResources.integrationId, integrationId));
+      const workspaceResource = resources.find(
+        (resource) => resource.resourceType === "linear.workspace",
+      );
+      const teamResource = resources.find((resource) => resource.externalId === "team_1");
+      assert.equal(resources.length, 3);
+      assert.equal(workspace?.providerResourceId, workspaceResource?.id);
+      assert.equal(teamResource?.parentResourceId, workspaceResource?.id);
+      const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, {
+        method: "PUT",
+        body: { organizationId: "org_api", selection: { mode: "all" } },
+      });
       assert.equal(modified.status, 200);
-      rows = await app.database.db.select().from(syncScopes).where(eq(syncScopes.integrationId, integrationId)); assert.equal(rows.find(row => row.scopeType === "linear.workspace")?.selectionMode, "all"); assert.equal(rows.find(row => row.externalId === "team_1")?.enabled, 0);
-    } finally { globalThis.fetch = originalFetch; }
+      rows = await app.database.db
+        .select()
+        .from(syncScopes)
+        .where(eq(syncScopes.integrationId, integrationId));
+      assert.equal(rows.find((row) => row.scopeType === "linear.workspace")?.selectionMode, "all");
+      assert.equal(rows.find((row) => row.externalId === "team_1")?.enabled, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("adds and lists a sync scope", async () => {
-    const integrationsForOrg = await app.database.db.select({ id: integrations.id, displayName: integrations.displayName }).from(integrations).where(and(eq(integrations.organizationId, "org_api"), eq(integrations.provider, "github")));
-    const integration = integrationsForOrg.find(value => value.displayName === "Scoped GitHub");
+    const integrationsForOrg = await app.database.db
+      .select({ id: integrations.id, displayName: integrations.displayName })
+      .from(integrations)
+      .where(and(eq(integrations.organizationId, "org_api"), eq(integrations.provider, "github")));
+    const integration = integrationsForOrg.find((value) => value.displayName === "Scoped GitHub");
     const created = await apiFetch<Record<string, unknown>>(app.url, "/api/sync-scopes", {
       method: "POST",
       body: {
@@ -175,35 +340,45 @@ describe("TeamTales API", mysqlTestOptions, () => {
 
     assert.equal(created.status, 201);
     assert.equal(created.body.ok && created.body.data.externalName, "acme/widgets");
-    assert.equal(listed.body.ok && listed.body.data.items.some((scope) => scope.externalName === "acme/widgets"), true);
+    assert.equal(
+      listed.body.ok &&
+        listed.body.data.items.some((scope) => scope.externalName === "acme/widgets"),
+      true,
+    );
   });
 
   it("generates and persists a weekly report", async () => {
     await seedAnalysisContext(app.database.db);
 
-    const generated = await apiFetch<{ report: { id: string; bodyMarkdown: string }; inputs: unknown[] }>(
-      app.url,
-      "/api/reports/weekly",
-      {
-        method: "POST",
-        body: {
-          organizationId: "org_api",
-          periodStart: "2026-06-22",
-          periodEnd: "2026-06-29",
-          title: "Weekly API Report",
-          persist: true,
-        },
+    const generated = await apiFetch<{
+      report: { id: string; bodyMarkdown: string };
+      inputs: unknown[];
+    }>(app.url, "/api/reports/weekly", {
+      method: "POST",
+      body: {
+        organizationId: "org_api",
+        periodStart: "2026-06-22",
+        periodEnd: "2026-06-29",
+        title: "Weekly API Report",
+        persist: true,
       },
-    );
+    });
     const reports = await apiFetch<{ items: Array<{ id: string; title: string }> }>(
       app.url,
       "/api/organizations/org_api/reports",
     );
 
     assert.equal(generated.status, 201);
-    assert.match(generated.body.ok ? generated.body.data.report.bodyMarkdown : "", /^# Weekly API Report/);
+    assert.match(
+      generated.body.ok ? generated.body.data.report.bodyMarkdown : "",
+      /^# Weekly API Report/,
+    );
     generatedReportId = generated.body.ok ? generated.body.data.report.id : "";
-    assert.equal(reports.body.ok && reports.body.data.items.some((report) => report.title === "Weekly API Report"), true);
+    assert.equal(
+      reports.body.ok &&
+        reports.body.data.items.some((report) => report.title === "Weekly API Report"),
+      true,
+    );
     assert.equal(reports.body.ok && "bodyMarkdown" in reports.body.data.items[0]!, false);
   });
 
@@ -229,20 +404,27 @@ describe("TeamTales API", mysqlTestOptions, () => {
     });
     await seedActivity(app.database.db);
 
-    const generated = await apiFetch<{ report: { bodyMarkdown: string } }>(app.url, "/api/reports/weekly", {
-      method: "POST",
-      body: {
-        organizationId: "org_from_db",
-        organizationName: "DB Org",
-        periodStart: "2026-06-22",
-        periodEnd: "2026-06-29",
-        title: "Weekly DB Report",
-        persist: true,
+    const generated = await apiFetch<{ report: { bodyMarkdown: string } }>(
+      app.url,
+      "/api/reports/weekly",
+      {
+        method: "POST",
+        body: {
+          organizationId: "org_from_db",
+          organizationName: "DB Org",
+          periodStart: "2026-06-22",
+          periodEnd: "2026-06-29",
+          title: "Weekly DB Report",
+          persist: true,
+        },
       },
-    });
+    );
 
     assert.equal(generated.status, 201);
-    assert.match(generated.body.ok ? generated.body.data.report.bodyMarkdown : "", /activity.events: 1/);
+    assert.match(
+      generated.body.ok ? generated.body.data.report.bodyMarkdown : "",
+      /activity.events: 1/,
+    );
   });
 
   it("returns a dashboard envelope", async () => {
@@ -299,12 +481,18 @@ describe("TeamTales API", mysqlTestOptions, () => {
         headers instanceof Headers
           ? headers.get("authorization")
           : headers && !Array.isArray(headers)
-            ? ((headers as Record<string, string>).authorization ?? (headers as Record<string, string>).Authorization)
+            ? ((headers as Record<string, string>).authorization ??
+              (headers as Record<string, string>).Authorization)
             : undefined;
       assert.equal(authorization, "Bearer github_scoped_token");
       const parsed = new URL(url);
       if (parsed.pathname === "/repos/acme/widgets") {
-        return jsonResponse({ id: 101, name: "widgets", full_name: "acme/widgets", html_url: "https://github.com/acme/widgets" });
+        return jsonResponse({
+          id: 101,
+          name: "widgets",
+          full_name: "acme/widgets",
+          html_url: "https://github.com/acme/widgets",
+        });
       }
       if (parsed.pathname === "/repos/acme/widgets/pulls") {
         return jsonResponse([]);
@@ -313,25 +501,39 @@ describe("TeamTales API", mysqlTestOptions, () => {
     };
 
     try {
-      const response = await apiFetch<{ status: string; counters: { objectsFetched: number }; syncRunId: string }>(
-        app.url,
-        "/api/sync/github",
-        { method: "POST", body: { organizationId: "org_api" } },
-      );
+      const response = await apiFetch<{
+        status: string;
+        counters: { objectsFetched: number };
+        syncRunId: string;
+      }>(app.url, "/api/sync/github", { method: "POST", body: { organizationId: "org_api" } });
 
       assert.equal(response.status, 202);
       assert.equal(response.body.ok && response.body.data.status, "queued");
       const syncRunId = response.body.ok ? response.body.data.syncRunId : undefined;
       assert.ok(syncRunId);
-      const queued = await apiFetch<{ run: { status: string }; childRunCounts: Record<string, number> }>(app.url, `/api/sync-runs/${syncRunId}`);
+      const queued = await apiFetch<{
+        run: { status: string };
+        childRunCounts: Record<string, number>;
+      }>(app.url, `/api/sync-runs/${syncRunId}`);
       assert.equal(queued.status, 200);
       assert.equal(queued.body.ok && queued.body.data.run.status, "queued");
       await processQueuedProviderSyncBatch(app.database.db, key, { limit: 10 });
-      const completed = await apiFetch<{ run: { status: string } }>(app.url, `/api/sync-runs/${syncRunId}`);
+      const completed = await apiFetch<{ run: { status: string } }>(
+        app.url,
+        `/api/sync-runs/${syncRunId}`,
+      );
       assert.equal(completed.body.ok && completed.body.data.run.status, "completed");
       assert.equal(
         (
-          await app.database.db.select({ count: count() }).from(sourceObjects).where(and(eq(sourceObjects.organizationId, "org_api"), eq(sourceObjects.objectType, "github.repository")))
+          await app.database.db
+            .select({ count: count() })
+            .from(sourceObjects)
+            .where(
+              and(
+                eq(sourceObjects.organizationId, "org_api"),
+                eq(sourceObjects.objectType, "github.repository"),
+              ),
+            )
         )[0]?.count,
         1,
       );
@@ -347,7 +549,10 @@ describe("TeamTales API", mysqlTestOptions, () => {
       body: JSON.stringify({ name: "blocked" }),
     });
     assert.equal(response.status, 403);
-    assert.equal(((await response.json()) as { error: { code: string } }).error.code, "csrf_rejected");
+    assert.equal(
+      ((await response.json()) as { error: { code: string } }).error.code,
+      "csrf_rejected",
+    );
   });
 
   it("creates an API token and accepts it without CSRF headers", async () => {
@@ -370,15 +575,34 @@ describe("TeamTales API", mysqlTestOptions, () => {
 
   it("enforces active membership and mutation roles for API-token users", async () => {
     const now = new Date().toISOString();
-    await app.database.db.insert(users).values({ id: "user_viewer", displayName: "API Viewer", primaryEmail: "viewer@example.com", createdAt: now, updatedAt: now });
-    const token = (await createApiToken(app.database.db, "user_viewer", { name: "viewer test" })).token;
-
-    const forbiddenWithoutMembership = await apiFetch(app.url, "/api/organizations/org_api/reports", {
-      headers: { authorization: `Bearer ${token}` },
+    await app.database.db.insert(users).values({
+      id: "user_viewer",
+      displayName: "API Viewer",
+      primaryEmail: "viewer@example.com",
+      createdAt: now,
+      updatedAt: now,
     });
+    const token = (await createApiToken(app.database.db, "user_viewer", { name: "viewer test" }))
+      .token;
+
+    const forbiddenWithoutMembership = await apiFetch(
+      app.url,
+      "/api/organizations/org_api/reports",
+      {
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
     assert.equal(forbiddenWithoutMembership.status, 403);
 
-    await app.database.db.insert(organizationMemberships).values({ id: "membership_viewer", organizationId: "org_api", userId: "user_viewer", role: "viewer", status: "active", createdAt: now, updatedAt: now });
+    await app.database.db.insert(organizationMemberships).values({
+      id: "membership_viewer",
+      organizationId: "org_api",
+      userId: "user_viewer",
+      role: "viewer",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
     const forbiddenMutation = await apiFetch(app.url, "/api/integrations/pat", {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
@@ -393,7 +617,9 @@ describe("TeamTales API", mysqlTestOptions, () => {
   });
 
   it("logs out and logs back in with the password", async () => {
-    const loggedOut = await apiFetch<{ loggedOut: boolean }>(app.url, "/api/auth/logout", { method: "POST" });
+    const loggedOut = await apiFetch<{ loggedOut: boolean }>(app.url, "/api/auth/logout", {
+      method: "POST",
+    });
     assert.equal(loggedOut.status, 200);
     assert.equal((await apiFetch(app.url, "/api/organizations")).status, 401);
 
@@ -434,9 +660,31 @@ async function startApi() {
 }
 
 async function seedActivity(database: AppDatabase): Promise<void> {
-  await database.insert(people).values({ id: "person_db", organizationId: "org_from_db", displayName: "Database Person" });
-  await database.insert(workItems).values({ id: "work_db", organizationId: "org_from_db", provider: "github", sourceType: "pull_request", externalId: "42", title: "Database-backed work", status: "merged", workType: "github_pull_request", updatedAtSource: "2026-06-28T12:00:00.000Z" });
-  await database.insert(activityEvents).values({ id: "event_db", organizationId: "org_from_db", provider: "github", eventType: "pull_request.merged", actorPersonId: "person_db", workItemId: "work_db", occurredAt: "2026-06-28T12:00:00.000Z", title: "Merged database-backed work", metadataJson: "{}" });
+  await database
+    .insert(people)
+    .values({ id: "person_db", organizationId: "org_from_db", displayName: "Database Person" });
+  await database.insert(workItems).values({
+    id: "work_db",
+    organizationId: "org_from_db",
+    provider: "github",
+    sourceType: "pull_request",
+    externalId: "42",
+    title: "Database-backed work",
+    status: "merged",
+    workType: "github_pull_request",
+    updatedAtSource: "2026-06-28T12:00:00.000Z",
+  });
+  await database.insert(activityEvents).values({
+    id: "event_db",
+    organizationId: "org_from_db",
+    provider: "github",
+    eventType: "pull_request.merged",
+    actorPersonId: "person_db",
+    workItemId: "work_db",
+    occurredAt: "2026-06-28T12:00:00.000Z",
+    title: "Merged database-backed work",
+    metadataJson: "{}",
+  });
 }
 
 async function apiFetch<T>(

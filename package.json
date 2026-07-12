@@ -2,31 +2,36 @@
   "name": "teamtales",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "workspaces": [
     "packages/*"
   ],
+  "type": "module",
   "scripts": {
-    "cli": "npm run cli -w @teamtales/server --",
-    "dev": "npm run dev:all",
-    "dev:local": "sh -c 'set -a; . ./.env.dev; set +a; DATABASE_URL=mysql://teamtales:password@127.0.0.1:3306/teamtales TEAMTALES_PUBLIC_ORIGIN=http://127.0.0.1:9101 TEAMTALES_API_PORT=9100 npm run dev:all'",
-    "dev:server": "npm run dev:api -w @teamtales/server",
-    "dev:ui": "npm run dev -w @teamtales/ui",
-    "dev:all": "sh -c 'trap \"kill 0\" EXIT; npm run dev:server & npm run dev:ui & wait'",
-    "build": "npm run build -w @teamtales/ui && npm run build -w @teamtales/server",
+    "cli": "vp run @teamtales/server#cli",
+    "dev": "vp run -r --parallel dev",
+    "dev:local": "sh -c 'set -a; . ./.env.dev; set +a; DATABASE_URL=mysql://teamtales:password@127.0.0.1:3306/teamtales TEAMTALES_PUBLIC_ORIGIN=http://127.0.0.1:9101 TEAMTALES_API_PORT=9100 vp run -r --parallel dev'",
+    "dev:server": "vp run @teamtales/server#dev",
+    "dev:ui": "vp run @teamtales/ui#dev",
+    "dev:all": "vp run -r --parallel dev",
+    "build": "vp run -r build",
     "start": "node packages/server/dist/server.js",
-    "ui:dev": "npm run dev -w @teamtales/ui",
-    "ui:build": "npm run build -w @teamtales/ui",
+    "ui:dev": "vp run @teamtales/ui#dev",
+    "ui:build": "vp run @teamtales/ui#build",
     "db:up": "docker compose up -d --wait mysql",
     "db:down": "docker compose down",
-    "typecheck": "npm run typecheck --workspaces",
-    "schema:check": "npm run schema:check -w @teamtales/server",
-    "test": "npm test -w @teamtales/server --",
-    "check": "npm run typecheck && npm test -w @teamtales/server -- --test-reporter=spec && npm run build && npm run schema:check -w @teamtales/server"
+    "format": "vp fmt",
+    "format:check": "vp fmt --check",
+    "lint": "vp lint",
+    "typecheck": "vp run -r typecheck",
+    "schema:check": "vp run @teamtales/server#schema:check",
+    "test": "vp run @teamtales/server#test",
+    "check": "vp check && vp run -r typecheck && vp run @teamtales/server#test && vp run build && vp run @teamtales/server#schema:check"
   },
   "devDependencies": {
     "@types/node": "^24.13.2",
     "tsx": "^4.22.4",
-    "typescript": "^5.5.0"
-  }
+    "typescript": "^5.5.0",
+    "vite-plus": "0.2.4"
+  },
+  "packageManager": "npm@11.13.0"
 }

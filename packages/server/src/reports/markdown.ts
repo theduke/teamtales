@@ -4,7 +4,10 @@ export type WeeklyMarkdownReportOptions = {
   title?: string;
 };
 
-export function generateWeeklyMarkdownReport(context: ReportContext, options: WeeklyMarkdownReportOptions = {}): string {
+export function generateWeeklyMarkdownReport(
+  context: ReportContext,
+  options: WeeklyMarkdownReportOptions = {},
+): string {
   const title = options.title ?? `Weekly report: ${context.scope.name}`;
   const lines: string[] = [
     `# ${escapeMarkdownText(title)}`,
@@ -47,13 +50,20 @@ export function generateWeeklyMarkdownReport(context: ReportContext, options: We
     "",
   ];
 
-  return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+  return `${lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd()}\n`;
 }
 
 function summaryLine(context: ReportContext): string {
   const parts = [
     pluralize(context.highlights.length, "observed highlight"),
-    pluralize(context.people.length, "person with observed activity", "people with observed activity"),
+    pluralize(
+      context.people.length,
+      "person with observed activity",
+      "people with observed activity",
+    ),
     pluralize(context.workItems.length, "tracked work item"),
     pluralize(context.risks.length, "possible risk"),
   ];
@@ -102,24 +112,36 @@ function highlightLines(highlights: ReportContext["highlights"]): string[] {
 }
 
 function themeLines(context: ReportContext): string[] {
-  const completedCount = context.workItems.filter((item) => item.status === "completed" || item.status === "merged").length;
-  const activeCount = context.workItems.filter((item) => item.status === "open" || item.status === "in_progress").length;
+  const completedCount = context.workItems.filter(
+    (item) => item.status === "completed" || item.status === "merged",
+  ).length;
+  const activeCount = context.workItems.filter(
+    (item) => item.status === "open" || item.status === "in_progress",
+  ).length;
   const riskCount = context.risks.length;
   const lines: string[] = [];
 
   if (completedCount > 0) {
-    lines.push(`- Completion may be a theme: ${pluralize(completedCount, "tracked work item")} is marked completed or merged.`);
+    lines.push(
+      `- Completion may be a theme: ${pluralize(completedCount, "tracked work item")} is marked completed or merged.`,
+    );
   }
 
   if (activeCount > 0) {
-    lines.push(`- Active work may be a theme: ${pluralize(activeCount, "tracked work item")} remains open or in progress.`);
+    lines.push(
+      `- Active work may be a theme: ${pluralize(activeCount, "tracked work item")} remains open or in progress.`,
+    );
   }
 
   if (riskCount > 0) {
-    lines.push(`- Follow-up may be needed: ${pluralize(riskCount, "possible risk")} was included in the context.`);
+    lines.push(
+      `- Follow-up may be needed: ${pluralize(riskCount, "possible risk")} was included in the context.`,
+    );
   }
 
-  return lines.length > 0 ? lines : ["- No possible themes were derived from the provided context."];
+  return lines.length > 0
+    ? lines
+    : ["- No possible themes were derived from the provided context."];
 }
 
 function peopleLines(people: ReportContext["people"]): string[] {
@@ -127,14 +149,20 @@ function peopleLines(people: ReportContext["people"]): string[] {
     return ["- No people activity summaries were provided."];
   }
 
-  return [...people].sort((left, right) => left.displayName.localeCompare(right.displayName) || left.personId.localeCompare(right.personId)).map((person) => {
-    const metrics = Object.entries(person.metrics)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([name, value]) => `${name}: ${value}`)
-      .join(", ");
-    const metricsText = metrics === "" ? "" : ` Metrics: ${escapeMarkdownText(metrics)}.`;
-    return `- ${escapeMarkdownText(person.displayName)}: ${escapeMarkdownText(person.activitySummary)}${metricsText}${formatRefs(person.sourceRefs)}`;
-  });
+  return [...people]
+    .sort(
+      (left, right) =>
+        left.displayName.localeCompare(right.displayName) ||
+        left.personId.localeCompare(right.personId),
+    )
+    .map((person) => {
+      const metrics = Object.entries(person.metrics)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, value]) => `${name}: ${value}`)
+        .join(", ");
+      const metricsText = metrics === "" ? "" : ` Metrics: ${escapeMarkdownText(metrics)}.`;
+      return `- ${escapeMarkdownText(person.displayName)}: ${escapeMarkdownText(person.activitySummary)}${metricsText}${formatRefs(person.sourceRefs)}`;
+    });
 }
 
 function workItemLines(workItems: ReportContext["workItems"]): string[] {
@@ -143,7 +171,10 @@ function workItemLines(workItems: ReportContext["workItems"]): string[] {
   }
 
   return [...workItems].sort(compareWorkItems).map((item) => {
-    const title = item.url === "" ? escapeMarkdownText(item.title) : `[${escapeMarkdownText(item.title)}](${item.url})`;
+    const title =
+      item.url === ""
+        ? escapeMarkdownText(item.title)
+        : `[${escapeMarkdownText(item.title)}](${item.url})`;
     const facts = item.summaryFacts.map(escapeMarkdownText).join("; ");
     return `- ${title}: ${item.provider}, ${item.status}${facts === "" ? "" : `. Facts: ${facts}`}`;
   });
@@ -160,15 +191,31 @@ function riskLines(risks: ReportContext["risks"]): string[] {
 }
 
 function compareMetrics(left: Metric, right: Metric): number {
-  return left.name.localeCompare(right.name) || formatDimensions(left.dimensions).localeCompare(formatDimensions(right.dimensions));
+  return (
+    left.name.localeCompare(right.name) ||
+    formatDimensions(left.dimensions).localeCompare(formatDimensions(right.dimensions))
+  );
 }
 
-function compareByTitleAndRefs<T extends { title: string; sourceRefs: readonly string[] }>(left: T, right: T): number {
-  return left.title.localeCompare(right.title) || left.sourceRefs.join("\u0000").localeCompare(right.sourceRefs.join("\u0000"));
+function compareByTitleAndRefs<T extends { title: string; sourceRefs: readonly string[] }>(
+  left: T,
+  right: T,
+): number {
+  return (
+    left.title.localeCompare(right.title) ||
+    left.sourceRefs.join("\u0000").localeCompare(right.sourceRefs.join("\u0000"))
+  );
 }
 
-function compareWorkItems(left: ReportContext["workItems"][number], right: ReportContext["workItems"][number]): number {
-  return left.provider.localeCompare(right.provider) || left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
+function compareWorkItems(
+  left: ReportContext["workItems"][number],
+  right: ReportContext["workItems"][number],
+): number {
+  return (
+    left.provider.localeCompare(right.provider) ||
+    left.title.localeCompare(right.title) ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 function formatDimensions(dimensions: Record<string, unknown> | undefined): string {

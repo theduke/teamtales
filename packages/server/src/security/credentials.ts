@@ -1,4 +1,10 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 
 const algorithm = "aes-256-gcm";
 const encryptedSecretPrefix = "v1:aes-256-gcm";
@@ -29,8 +35,14 @@ export interface CreateIntegrationCredentialOptions {
   expiresAt?: Date;
 }
 
-export function createIntegrationCredentialRecord(options: CreateIntegrationCredentialOptions): IntegrationCredentialRecord {
-  const encrypted = encryptCredentialSecret(options.plaintextSecret, options.encryptionKey, options.expiresAt);
+export function createIntegrationCredentialRecord(
+  options: CreateIntegrationCredentialOptions,
+): IntegrationCredentialRecord {
+  const encrypted = encryptCredentialSecret(
+    options.plaintextSecret,
+    options.encryptionKey,
+    options.expiresAt,
+  );
 
   return {
     id: options.id,
@@ -39,7 +51,11 @@ export function createIntegrationCredentialRecord(options: CreateIntegrationCred
   };
 }
 
-export function encryptCredentialSecret(plaintextSecret: string, encryptionKey: string | Buffer, expiresAt?: Date): EncryptedCredential {
+export function encryptCredentialSecret(
+  plaintextSecret: string,
+  encryptionKey: string | Buffer,
+  expiresAt?: Date,
+): EncryptedCredential {
   if (plaintextSecret.length === 0) {
     throw new Error("Credential secret must not be empty");
   }
@@ -51,17 +67,31 @@ export function encryptCredentialSecret(plaintextSecret: string, encryptionKey: 
   const authTag = cipher.getAuthTag();
 
   return {
-    encryptedSecret: [encryptedSecretPrefix, base64UrlEncode(iv), base64UrlEncode(authTag), base64UrlEncode(ciphertext)].join(":"),
+    encryptedSecret: [
+      encryptedSecretPrefix,
+      base64UrlEncode(iv),
+      base64UrlEncode(authTag),
+      base64UrlEncode(ciphertext),
+    ].join(":"),
     secretHint: createTokenHint(plaintextSecret),
     expiresAt,
   };
 }
 
-export function decryptCredentialSecret(stored: StoredEncryptedCredential | string, encryptionKey: string | Buffer): string {
+export function decryptCredentialSecret(
+  stored: StoredEncryptedCredential | string,
+  encryptionKey: string | Buffer,
+): string {
   const encryptedSecret = typeof stored === "string" ? stored : stored.encryptedSecret;
-  const [version, cipherName, encodedIv, encodedAuthTag, encodedCiphertext] = encryptedSecret.split(":");
+  const [version, cipherName, encodedIv, encodedAuthTag, encodedCiphertext] =
+    encryptedSecret.split(":");
 
-  if (`${version}:${cipherName}` !== encryptedSecretPrefix || !encodedIv || !encodedAuthTag || !encodedCiphertext) {
+  if (
+    `${version}:${cipherName}` !== encryptedSecretPrefix ||
+    !encodedIv ||
+    !encodedAuthTag ||
+    !encodedCiphertext
+  ) {
     throw new Error("Unsupported encrypted credential format");
   }
 
@@ -69,7 +99,10 @@ export function decryptCredentialSecret(stored: StoredEncryptedCredential | stri
   const decipher = createDecipheriv(algorithm, key, base64UrlDecode(encodedIv));
   decipher.setAuthTag(base64UrlDecode(encodedAuthTag));
 
-  return Buffer.concat([decipher.update(base64UrlDecode(encodedCiphertext)), decipher.final()]).toString("utf8");
+  return Buffer.concat([
+    decipher.update(base64UrlDecode(encodedCiphertext)),
+    decipher.final(),
+  ]).toString("utf8");
 }
 
 export function createTokenHint(secret: string): string {
@@ -98,7 +131,10 @@ export function redactText(input: string, secrets: readonly string[] = []): stri
     .replace(/\b(ghp|github_pat|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b/g, redacted)
     .replace(/\blin_api_[A-Za-z0-9]{16,}\b/g, redacted)
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b/gi, `Bearer ${redacted}`)
-    .replace(/\b(token|access_token|authorization)\s*[:=]\s*["']?[^"'\s,}]{8,}/gi, `$1=${redacted}`);
+    .replace(
+      /\b(token|access_token|authorization)\s*[:=]\s*["']?[^"'\s,}]{8,}/gi,
+      `$1=${redacted}`,
+    );
 }
 
 export function redactLogValue(value: unknown, secrets: readonly string[] = []): unknown {
@@ -137,7 +173,9 @@ export function assertCredentialMatchesHint(secret: string, hint: string): void 
 }
 
 function normalizeEncryptionKey(encryptionKey: string | Buffer): Buffer {
-  const key = Buffer.isBuffer(encryptionKey) ? Buffer.from(encryptionKey) : decodeKeyString(encryptionKey);
+  const key = Buffer.isBuffer(encryptionKey)
+    ? Buffer.from(encryptionKey)
+    : decodeKeyString(encryptionKey);
 
   if (key.byteLength !== 32) {
     throw new Error("Credential encryption key must be 32 bytes");

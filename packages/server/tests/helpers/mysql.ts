@@ -16,7 +16,11 @@ export async function openTestDatabase(): Promise<OpenDatabaseResult> {
   return openDatabase({ env: { DATABASE_URL: testDatabaseUrl }, runMigrations: true });
 }
 
-export async function cleanupOrganization(opened: OpenDatabaseResult, organizationId: string, userIds: string[] = []): Promise<void> {
+export async function cleanupOrganization(
+  opened: OpenDatabaseResult,
+  organizationId: string,
+  userIds: string[] = [],
+): Promise<void> {
   await opened.db.delete(organizations).where(eq(organizations.id, organizationId));
   for (const userId of userIds) await opened.db.delete(users).where(eq(users.id, userId));
 }

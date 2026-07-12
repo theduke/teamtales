@@ -33,7 +33,9 @@ function serializeCanonicalJson(value: JsonValue): string {
   }
 
   if (typeof value === "object") {
-    const entries = Object.entries(value).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+    const entries = Object.entries(value).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    );
     return `{${entries
       .map(([key, nestedValue]) => `${JSON.stringify(key)}:${serializeCanonicalJson(nestedValue)}`)
       .join(",")}}`;

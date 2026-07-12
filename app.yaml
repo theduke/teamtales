@@ -3,11 +3,11 @@ app_id: da_RLmILtvUlJN5
 owner: theduke
 package: .
 domains:
-- teamtales.wasmer.app
+  - teamtales.wasmer.app
 env:
-  PORT: '8080'
+  PORT: "8080"
   TEAMTALES_API_HOST: 0.0.0.0
-  TEAMTALES_COOKIE_SECURE: 'true'
+  TEAMTALES_COOKIE_SECURE: "true"
 capabilities:
   database:
     engine: mysql
@@ -19,7 +19,7 @@ annotations:
       start: node packages/server/dist/server.js
     extra_dependencies: []
     install_requires_all_files: true
-    node_version: '24'
+    node_version: "24"
     optimize_node_dependencies: true
     package_manager: npm
     port: 8080

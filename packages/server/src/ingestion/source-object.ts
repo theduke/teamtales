@@ -84,7 +84,10 @@ export interface SourceObjectUnchangedPlan {
   values: Pick<PersistedSourceObject, "lastSeenAt" | "sourceState">;
 }
 
-export type SourceObjectUpsertPlan = SourceObjectInsertPlan | SourceObjectUpdatePlan | SourceObjectUnchangedPlan;
+export type SourceObjectUpsertPlan =
+  | SourceObjectInsertPlan
+  | SourceObjectUpdatePlan
+  | SourceObjectUnchangedPlan;
 
 export function sourceObjectConflictKey(identity: SourceObjectIdentity): string {
   return [

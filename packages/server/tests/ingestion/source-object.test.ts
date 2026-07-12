@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { planSourceObjectUpsert, sourceObjectConflictKey, type IncomingSourceObject, type PersistedSourceObject } from "../../src/ingestion/source-object.js";
+import {
+  planSourceObjectUpsert,
+  sourceObjectConflictKey,
+  type IncomingSourceObject,
+  type PersistedSourceObject,
+} from "../../src/ingestion/source-object.js";
 
 const now = new Date("2026-06-29T10:00:00.000Z");
 
@@ -46,7 +51,11 @@ describe("source object upsert planning", () => {
       updatedAt: now,
     };
 
-    const plan = planSourceObjectUpsert({ ...incoming, rawJson: { state: "open", title: "Ship widgets", id: 42 } }, existing, now);
+    const plan = planSourceObjectUpsert(
+      { ...incoming, rawJson: { state: "open", title: "Ship widgets", id: 42 } },
+      existing,
+      now,
+    );
 
     assert.equal(plan.action, "unchanged");
     if (plan.action !== "unchanged") {
@@ -71,7 +80,11 @@ describe("source object upsert planning", () => {
     };
 
     const changedAt = new Date("2026-06-29T11:00:00.000Z");
-    const plan = planSourceObjectUpsert({ ...incoming, rawJson: { id: 42, title: "Ship widgets", state: "merged" } }, existing, changedAt);
+    const plan = planSourceObjectUpsert(
+      { ...incoming, rawJson: { id: 42, title: "Ship widgets", state: "merged" } },
+      existing,
+      changedAt,
+    );
 
     assert.equal(plan.action, "update");
     if (plan.action !== "update") {
@@ -83,6 +96,9 @@ describe("source object upsert planning", () => {
   });
 
   it("builds a stable conflict key", () => {
-    assert.equal(sourceObjectConflictKey(incoming), "org_1:int_1:scope_1:github:github.pull_request:42");
+    assert.equal(
+      sourceObjectConflictKey(incoming),
+      "org_1:int_1:scope_1:github:github.pull_request:42",
+    );
   });
 });

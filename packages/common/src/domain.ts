@@ -25,11 +25,7 @@ export type WorkItemStatus =
   | "stale"
   | "unknown";
 
-export type WorkType =
-  | "github_pull_request"
-  | "github_issue"
-  | "linear_issue"
-  | "linear_project";
+export type WorkType = "github_pull_request" | "github_issue" | "linear_issue" | "linear_project";
 
 export type ActivityEvent = {
   id: string;

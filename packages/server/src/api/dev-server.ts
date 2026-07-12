@@ -15,7 +15,9 @@ export async function startDevServer(env: NodeJS.ProcessEnv = process.env): Prom
   });
 
   const shutdown = (): void => {
-    server.close(() => { void database.close().finally(() => process.exit(0)); });
+    server.close(() => {
+      void database.close().finally(() => process.exit(0));
+    });
   };
 
   process.once("SIGINT", shutdown);

@@ -19,13 +19,19 @@ import {
   workItemId,
 } from "./common.js";
 
-export function normalizeLinearIssue(raw: SourceRecord, context: NormalizationContext = {}): WorkItemNormalizationResult {
+export function normalizeLinearIssue(
+  raw: SourceRecord,
+  context: NormalizationContext = {},
+): WorkItemNormalizationResult {
   const externalId = requiredString(raw, ["id", "identifier", "number"], "Linear issue");
   const title = requiredTitle(raw, "Linear issue");
   const url = stringField(raw, "url");
   const createdAt = firstString(stringField(raw, "createdAt"), stringField(raw, "created_at"));
   const updatedAt = firstString(stringField(raw, "updatedAt"), stringField(raw, "updated_at"));
-  const completedAt = firstString(stringField(raw, "completedAt"), stringField(raw, "completed_at"));
+  const completedAt = firstString(
+    stringField(raw, "completedAt"),
+    stringField(raw, "completed_at"),
+  );
   const startedAt = firstString(stringField(raw, "startedAt"), stringField(raw, "started_at"));
   const teamId = context.linearTeamId ?? nestedString(raw, ["team", "id"]);
   const projectId = context.linearProjectId ?? nestedString(raw, ["project", "id"]);
@@ -53,73 +59,105 @@ export function normalizeLinearIssue(raw: SourceRecord, context: NormalizationCo
   const events: ActivityEvent[] = [];
   const actor = actorId("linear", objectField(raw, "creator"));
   if (createdAt) {
-    events.push(linearEvent("linear.issue_created", externalId, createdAt, title, {
-      actorPersonId: actor,
-      workItemId: id,
-      linearTeamId: teamId,
-      linearProjectId: projectId,
-      url,
-      sourceRef: source,
-      metadata: issueMetadata(raw),
-    }));
+    events.push(
+      linearEvent("linear.issue_created", externalId, createdAt, title, {
+        actorPersonId: actor,
+        workItemId: id,
+        linearTeamId: teamId,
+        linearProjectId: projectId,
+        url,
+        sourceRef: source,
+        metadata: issueMetadata(raw),
+      }),
+    );
   }
 
   events.push(...linearIssueHistoryEvents(raw, id, teamId, projectId, source));
 
   if (completedAt && !hasExactCompletedHistory(raw)) {
-    events.push(linearEvent("linear.issue_completed", externalId, completedAt, `Observed as completed: ${title}`, {
-      workItemId: id,
-      linearTeamId: teamId,
-      linearProjectId: projectId,
-      url,
-      sourceRef: source,
-      metadata: {
-        ...issueMetadata(raw),
-        conservative: true,
-        reason: "Linear current state includes completion, but no exact transition history was provided.",
-      },
-    }));
+    events.push(
+      linearEvent(
+        "linear.issue_completed",
+        externalId,
+        completedAt,
+        `Observed as completed: ${title}`,
+        {
+          workItemId: id,
+          linearTeamId: teamId,
+          linearProjectId: projectId,
+          url,
+          sourceRef: source,
+          metadata: {
+            ...issueMetadata(raw),
+            conservative: true,
+            reason:
+              "Linear current state includes completion, but no exact transition history was provided.",
+          },
+        },
+      ),
+    );
   }
 
   if (updatedAt && updatedAt !== createdAt && updatedAt !== completedAt) {
-    events.push(linearEvent("linear.issue_updated", externalId, updatedAt, title, {
-      workItemId: id,
-      linearTeamId: teamId,
-      linearProjectId: projectId,
-      url,
-      sourceRef: source,
-      metadata: issueMetadata(raw),
-    }));
+    events.push(
+      linearEvent("linear.issue_updated", externalId, updatedAt, title, {
+        workItemId: id,
+        linearTeamId: teamId,
+        linearProjectId: projectId,
+        url,
+        sourceRef: source,
+        metadata: issueMetadata(raw),
+      }),
+    );
   }
 
   return { workItem, events: dedupeEvents(events) };
 }
 
-export function normalizeLinearComment(raw: SourceRecord, context: NormalizationContext = {}): ActivityEvent {
+export function normalizeLinearComment(
+  raw: SourceRecord,
+  context: NormalizationContext = {},
+): ActivityEvent {
   const externalId = requiredString(raw, ["id"], "Linear comment");
-  const occurredAt = requiredString(raw, ["createdAt", "created_at", "updatedAt", "updated_at"], "Linear comment");
+  const occurredAt = requiredString(
+    raw,
+    ["createdAt", "created_at", "updatedAt", "updated_at"],
+    "Linear comment",
+  );
 
-  return linearEvent("linear.issue_commented", externalId, occurredAt, "Commented on Linear issue", {
-    actorPersonId: actorId("linear", objectField(raw, "user")),
-    workItemId: context.workItemId,
-    linearTeamId: context.linearTeamId,
-    linearProjectId: context.linearProjectId,
-    body: stringField(raw, "body"),
-    url: stringField(raw, "url"),
-    sourceRef: sourceRef("linear.comment", externalId, context.sourceObjectId),
-    metadata: {
-      issueId: nestedString(raw, ["issue", "id"]),
+  return linearEvent(
+    "linear.issue_commented",
+    externalId,
+    occurredAt,
+    "Commented on Linear issue",
+    {
+      actorPersonId: actorId("linear", objectField(raw, "user")),
+      workItemId: context.workItemId,
+      linearTeamId: context.linearTeamId,
+      linearProjectId: context.linearProjectId,
+      body: stringField(raw, "body"),
+      url: stringField(raw, "url"),
+      sourceRef: sourceRef("linear.comment", externalId, context.sourceObjectId),
+      metadata: {
+        issueId: nestedString(raw, ["issue", "id"]),
+      },
     },
-  });
+  );
 }
 
-export function normalizeLinearProject(raw: SourceRecord, context: NormalizationContext = {}): WorkItemNormalizationResult {
+export function normalizeLinearProject(
+  raw: SourceRecord,
+  context: NormalizationContext = {},
+): WorkItemNormalizationResult {
   const externalId = requiredString(raw, ["id"], "Linear project");
   const title = requiredTitle(raw, "Linear project");
   const url = stringField(raw, "url");
   const createdAt = firstString(stringField(raw, "createdAt"), stringField(raw, "created_at"));
   const updatedAt = firstString(stringField(raw, "updatedAt"), stringField(raw, "updated_at"));
-  const completedAt = firstString(stringField(raw, "completedAt"), stringField(raw, "completed_at"));
+  const completedAt = firstString(
+    stringField(raw, "completedAt"),
+    stringField(raw, "completed_at"),
+  );
   const teamId = context.linearTeamId ?? nestedString(raw, ["team", "id"]);
   const source = sourceRef("linear.project", externalId, context.sourceObjectId);
   const id = workItemId("linear", "linear_project", externalId);
@@ -141,34 +179,47 @@ export function normalizeLinearProject(raw: SourceRecord, context: Normalization
 
   const events: ActivityEvent[] = [];
   if (createdAt) {
-    events.push(linearEvent("linear.project_created", externalId, createdAt, title, {
-      workItemId: id,
-      linearTeamId: teamId,
-      linearProjectId: externalId,
-      url,
-      sourceRef: source,
-    }));
+    events.push(
+      linearEvent("linear.project_created", externalId, createdAt, title, {
+        workItemId: id,
+        linearTeamId: teamId,
+        linearProjectId: externalId,
+        url,
+        sourceRef: source,
+      }),
+    );
   }
   if (completedAt) {
-    events.push(linearEvent("linear.project_completed", externalId, completedAt, `Observed as completed: ${title}`, {
-      workItemId: id,
-      linearTeamId: teamId,
-      linearProjectId: externalId,
-      url,
-      sourceRef: source,
-      metadata: {
-        conservative: true,
-        reason: "Linear current project state includes completion, but no exact transition history was provided.",
-      },
-    }));
+    events.push(
+      linearEvent(
+        "linear.project_completed",
+        externalId,
+        completedAt,
+        `Observed as completed: ${title}`,
+        {
+          workItemId: id,
+          linearTeamId: teamId,
+          linearProjectId: externalId,
+          url,
+          sourceRef: source,
+          metadata: {
+            conservative: true,
+            reason:
+              "Linear current project state includes completion, but no exact transition history was provided.",
+          },
+        },
+      ),
+    );
   } else if (updatedAt && updatedAt !== createdAt) {
-    events.push(linearEvent("linear.project_updated", externalId, updatedAt, title, {
-      workItemId: id,
-      linearTeamId: teamId,
-      linearProjectId: externalId,
-      url,
-      sourceRef: source,
-    }));
+    events.push(
+      linearEvent("linear.project_updated", externalId, updatedAt, title, {
+        workItemId: id,
+        linearTeamId: teamId,
+        linearProjectId: externalId,
+        url,
+        sourceRef: source,
+      }),
+    );
   }
 
   return { workItem, events };
@@ -185,14 +236,27 @@ function linearIssueHistoryEvents(
     .filter((history) => isStatusHistory(history))
     .map((history) => {
       const externalId = requiredString(history, ["id"], "Linear issue history");
-      const occurredAt = requiredString(history, ["createdAt", "created_at"], "Linear issue history");
-      const toState = firstString(stringField(history, "toState"), stringField(history, "to"), nestedString(history, ["to", "name"]));
+      const occurredAt = requiredString(
+        history,
+        ["createdAt", "created_at"],
+        "Linear issue history",
+      );
+      const toState = firstString(
+        stringField(history, "toState"),
+        stringField(history, "to"),
+        nestedString(history, ["to", "name"]),
+      );
       const title = toState ? `Status changed to ${toState}` : "Status changed";
       const issueId = requiredString(raw, ["id", "identifier", "number"], "Linear issue");
-      const eventType = isCompletedState(history) ? "linear.issue_completed" : "linear.issue_status_changed";
+      const eventType = isCompletedState(history)
+        ? "linear.issue_completed"
+        : "linear.issue_status_changed";
 
       return linearEvent(eventType, externalId, occurredAt, title, {
-        actorPersonId: actorId("linear", objectField(history, "actor") ?? objectField(history, "user")),
+        actorPersonId: actorId(
+          "linear",
+          objectField(history, "actor") ?? objectField(history, "user"),
+        ),
         workItemId: workId,
         linearTeamId: teamId,
         linearProjectId: projectId,
@@ -200,7 +264,11 @@ function linearIssueHistoryEvents(
         sourceRef: source,
         metadata: {
           issueId,
-          fromState: firstString(stringField(history, "fromState"), stringField(history, "from"), nestedString(history, ["from", "name"])),
+          fromState: firstString(
+            stringField(history, "fromState"),
+            stringField(history, "from"),
+            nestedString(history, ["from", "name"]),
+          ),
           toState,
           exactHistory: true,
         },
@@ -222,18 +290,27 @@ function isStatusHistory(history: SourceRecord): boolean {
 }
 
 function isCompletedState(history: SourceRecord): boolean {
-  const toState = firstString(stringField(history, "toState"), stringField(history, "to"), nestedString(history, ["to", "type"]));
+  const toState = firstString(
+    stringField(history, "toState"),
+    stringField(history, "to"),
+    nestedString(history, ["to", "type"]),
+  );
   return toState === "completed" || toState === "Done" || toState === "done";
 }
 
 function hasExactCompletedHistory(raw: SourceRecord): boolean {
-  return historyRecords(raw).some((history) => isStatusHistory(history) && isCompletedState(history));
+  return historyRecords(raw).some(
+    (history) => isStatusHistory(history) && isCompletedState(history),
+  );
 }
 
 function issueMetadata(raw: SourceRecord): Record<string, unknown> {
   return {
     identifier: stringField(raw, "identifier"),
-    stateName: firstString(nestedString(raw, ["state", "name"]), nestedString(raw, ["workflowState", "name"])),
+    stateName: firstString(
+      nestedString(raw, ["state", "name"]),
+      nestedString(raw, ["workflowState", "name"]),
+    ),
     assigneeId: nestedString(raw, ["assignee", "id"]),
   };
 }

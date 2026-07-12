@@ -49,18 +49,25 @@ export async function createOrganizationWithOwner(
 ): Promise<CreatedOrganizationResult> {
   return withTransaction(database, async (transaction) => {
     const now = new Date().toISOString();
-    await transaction.insert(organizations).values({ ...input.organization, createdAt: now, updatedAt: now });
-    await transaction.insert(users).values({
-      id: input.owner.id,
-      displayName: input.owner.displayName,
-      primaryEmail: input.owner.primaryEmail ?? null,
-      createdAt: now,
-      updatedAt: now,
-    }).onDuplicateKeyUpdate({ set: {
-      displayName: input.owner.displayName,
-      primaryEmail: sql`coalesce(${users.primaryEmail}, values(primary_email))`,
-      updatedAt: now,
-    } });
+    await transaction
+      .insert(organizations)
+      .values({ ...input.organization, createdAt: now, updatedAt: now });
+    await transaction
+      .insert(users)
+      .values({
+        id: input.owner.id,
+        displayName: input.owner.displayName,
+        primaryEmail: input.owner.primaryEmail ?? null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          displayName: input.owner.displayName,
+          primaryEmail: sql`coalesce(${users.primaryEmail}, values(primary_email))`,
+          updatedAt: now,
+        },
+      });
     await transaction.insert(organizationMemberships).values({
       id: input.membershipId,
       organizationId: input.organization.id,
@@ -74,7 +81,11 @@ export async function createOrganizationWithOwner(
     return {
       organization: await requireOrganization(transaction, input.organization.id),
       owner: await requireUser(transaction, input.owner.id),
-      membership: await requireOrganizationMembership(transaction, input.organization.id, input.owner.id),
+      membership: await requireOrganizationMembership(
+        transaction,
+        input.organization.id,
+        input.owner.id,
+      ),
     };
   });
 }
@@ -83,22 +94,35 @@ export async function getOrganization(
   database: PersistenceDatabase,
   organizationId: string,
 ): Promise<OrganizationRecord | undefined> {
-  const [row] = await database.select().from(organizations).where(eq(organizations.id, organizationId)).limit(1);
+  const [row] = await database
+    .select()
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .limit(1);
   return row ? mapOrganization(row) : undefined;
 }
 
-export async function requireOrganization(database: PersistenceDatabase, organizationId: string): Promise<OrganizationRecord> {
+export async function requireOrganization(
+  database: PersistenceDatabase,
+  organizationId: string,
+): Promise<OrganizationRecord> {
   const organization = await getOrganization(database, organizationId);
   if (!organization) throw new Error(`Organization not found: ${organizationId}`);
   return organization;
 }
 
-export async function getUser(database: PersistenceDatabase, userId: string): Promise<UserRecord | undefined> {
+export async function getUser(
+  database: PersistenceDatabase,
+  userId: string,
+): Promise<UserRecord | undefined> {
   const [row] = await database.select().from(users).where(eq(users.id, userId)).limit(1);
   return row ? mapUser(row) : undefined;
 }
 
-export async function requireUser(database: PersistenceDatabase, userId: string): Promise<UserRecord> {
+export async function requireUser(
+  database: PersistenceDatabase,
+  userId: string,
+): Promise<UserRecord> {
   const user = await getUser(database, userId);
   if (!user) throw new Error(`User not found: ${userId}`);
   return user;
@@ -109,10 +133,16 @@ export async function getOrganizationMembership(
   organizationId: string,
   userId: string,
 ): Promise<OrganizationMembershipRecord | undefined> {
-  const [row] = await database.select().from(organizationMemberships).where(and(
-    eq(organizationMemberships.organizationId, organizationId),
-    eq(organizationMemberships.userId, userId),
-  )).limit(1);
+  const [row] = await database
+    .select()
+    .from(organizationMemberships)
+    .where(
+      and(
+        eq(organizationMemberships.organizationId, organizationId),
+        eq(organizationMemberships.userId, userId),
+      ),
+    )
+    .limit(1);
   return row ? mapMembership(row) : undefined;
 }
 
@@ -146,11 +176,13 @@ export async function requireIntegrationInOrganization(
   organizationId: string,
   integrationId: string,
 ): Promise<void> {
-  const [row] = await database.select({ id: integrations.id }).from(integrations).where(and(
-    eq(integrations.id, integrationId),
-    eq(integrations.organizationId, organizationId),
-  )).limit(1);
-  if (!row) throw new Error(`Integration not found in organization ${organizationId}: ${integrationId}`);
+  const [row] = await database
+    .select({ id: integrations.id })
+    .from(integrations)
+    .where(and(eq(integrations.id, integrationId), eq(integrations.organizationId, organizationId)))
+    .limit(1);
+  if (!row)
+    throw new Error(`Integration not found in organization ${organizationId}: ${integrationId}`);
 }
 
 function mapOrganization(row: typeof organizations.$inferSelect): OrganizationRecord {
@@ -161,6 +193,12 @@ function mapUser(row: typeof users.$inferSelect): UserRecord {
   return row;
 }
 
-function mapMembership(row: typeof organizationMemberships.$inferSelect): OrganizationMembershipRecord {
-  return { ...row, role: row.role as OrganizationRole, status: row.status as "active" | "inactive" };
+function mapMembership(
+  row: typeof organizationMemberships.$inferSelect,
+): OrganizationMembershipRecord {
+  return {
+    ...row,
+    role: row.role as OrganizationRole,
+    status: row.status as "active" | "inactive",
+  };
 }

@@ -41,7 +41,11 @@ interface CliResult {
   exitCode: number;
 }
 
-export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJS.ProcessEnv = process.env): Promise<CliResult> {
+export async function runCli(
+  argv: readonly string[],
+  io: CliIo = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<CliResult> {
   const out = io.stdout ?? ((message) => process.stdout.write(`${message}\n`));
   const err = io.stderr ?? ((message) => process.stderr.write(`${message}\n`));
 
@@ -55,9 +59,14 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
     }
 
     const commandName = parsed.command.join(" ");
-    if (!supportedCommands.has(commandName)) throw new Error(`Unknown command: ${parsed.command.join(" ")}`);
+    if (!supportedCommands.has(commandName))
+      throw new Error(`Unknown command: ${parsed.command.join(" ")}`);
 
-    const opened = await openCliDatabase(parsed, env, commandName === "init-db" || commandName === "migrate");
+    const opened = await openCliDatabase(
+      parsed,
+      env,
+      commandName === "init-db" || commandName === "migrate",
+    );
     try {
       let result: Record<string, unknown>;
       switch (commandName) {
@@ -82,7 +91,12 @@ export async function runCli(argv: readonly string[], io: CliIo = {}, env: NodeJ
           break;
         case "sync github":
         case "sync linear":
-          result = await runProviderSync(opened.db, commandProvider(parsed.command[1]), parsed, env);
+          result = await runProviderSync(
+            opened.db,
+            commandProvider(parsed.command[1]),
+            parsed,
+            env,
+          );
           break;
         case "sync worker":
           result = await runSyncWorker(opened.db, parsed, env);
@@ -125,7 +139,10 @@ function migrateDatabase(parsed: ParsedArgs, env: NodeJS.ProcessEnv): Record<str
   };
 }
 
-async function createOrganization(database: AppDatabase, parsed: ParsedArgs): Promise<Record<string, unknown>> {
+async function createOrganization(
+  database: AppDatabase,
+  parsed: ParsedArgs,
+): Promise<Record<string, unknown>> {
   const created = await createOrganizationService(database, {
     id: optionalString(parsed, "id"),
     name: requiredOption(parsed, "name"),
@@ -144,29 +161,46 @@ async function createOrganization(database: AppDatabase, parsed: ParsedArgs): Pr
   };
 }
 
-async function setUserPassword(database: AppDatabase, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+async function setUserPassword(
+  database: AppDatabase,
+  parsed: ParsedArgs,
+  env: NodeJS.ProcessEnv,
+): Promise<Record<string, unknown>> {
   const userId = requiredOption(parsed, "user-id");
   const password = readSecret(parsed, "password", "password-file", "password-env", env);
   await setPassword(database, userId, password);
   return { userId, passwordUpdated: true };
 }
 
-async function resetUserPasswordForOperations(database: AppDatabase, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+async function resetUserPasswordForOperations(
+  database: AppDatabase,
+  parsed: ParsedArgs,
+  env: NodeJS.ProcessEnv,
+): Promise<Record<string, unknown>> {
   const user = requiredOption(parsed, "user");
   const password = readSecret(parsed, "password", "password-file", "password-env", env);
   const userId = await resetUserPassword(database, user, password);
   return { userId, passwordUpdated: true };
 }
 
-async function addPersonalAccessTokenIntegration(database: AppDatabase, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+async function addPersonalAccessTokenIntegration(
+  database: AppDatabase,
+  parsed: ParsedArgs,
+  env: NodeJS.ProcessEnv,
+): Promise<Record<string, unknown>> {
   const provider = parseProvider(requiredOption(parsed, "provider"));
   const organizationId = requiredOption(parsed, "organization-id");
   const displayName = optionalString(parsed, "name") ?? `${provider} PAT`;
-  const integrationId = optionalString(parsed, "id") ?? stableId("integration", organizationId, provider, displayName);
-  const credentialId = optionalString(parsed, "credential-id") ?? stableId("credential", integrationId);
+  const integrationId =
+    optionalString(parsed, "id") ?? stableId("integration", organizationId, provider, displayName);
+  const credentialId =
+    optionalString(parsed, "credential-id") ?? stableId("credential", integrationId);
   const token = readSecret(parsed, "token", "token-file", "token-env", env);
   const encryptionKey = optionalString(parsed, "encryption-key") ?? env.TEAMTALES_CREDENTIAL_KEY;
-  if (!encryptionKey) throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
+  if (!encryptionKey)
+    throw new Error(
+      "Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.",
+    );
 
   const integration = await addPersonalAccessTokenIntegrationService(database, {
     id: integrationId,
@@ -189,14 +223,21 @@ async function addPersonalAccessTokenIntegration(database: AppDatabase, parsed: 
   };
 }
 
-async function addSyncScope(database: AppDatabase, parsed: ParsedArgs): Promise<Record<string, unknown>> {
+async function addSyncScope(
+  database: AppDatabase,
+  parsed: ParsedArgs,
+): Promise<Record<string, unknown>> {
   const provider = parseProvider(requiredOption(parsed, "provider"));
   const organizationId = requiredOption(parsed, "organization-id");
   const integrationId = requiredOption(parsed, "integration-id");
   const scopeType = requiredOption(parsed, "type");
   const externalName = requiredOption(parsed, "name");
-  const scopeId = optionalString(parsed, "id") ?? stableId("scope", organizationId, integrationId, scopeType, externalName);
-  const config = optionalString(parsed, "config-json") ? parseJsonObject(requiredOption(parsed, "config-json")) : {};
+  const scopeId =
+    optionalString(parsed, "id") ??
+    stableId("scope", organizationId, integrationId, scopeType, externalName);
+  const config = optionalString(parsed, "config-json")
+    ? parseJsonObject(requiredOption(parsed, "config-json"))
+    : {};
   const scope = await addSyncScopeService(database, {
     id: scopeId,
     organizationId,
@@ -221,9 +262,17 @@ async function addSyncScope(database: AppDatabase, parsed: ParsedArgs): Promise<
   };
 }
 
-async function runProviderSync(database: AppDatabase, provider: Provider, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+async function runProviderSync(
+  database: AppDatabase,
+  provider: Provider,
+  parsed: ParsedArgs,
+  env: NodeJS.ProcessEnv,
+): Promise<Record<string, unknown>> {
   const encryptionKey = optionalString(parsed, "encryption-key") ?? env.TEAMTALES_CREDENTIAL_KEY;
-  if (!encryptionKey) throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
+  if (!encryptionKey)
+    throw new Error(
+      "Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.",
+    );
   return enqueueProviderSyncService(database, {
     provider,
     organizationId: optionalString(parsed, "organization-id"),
@@ -233,17 +282,33 @@ async function runProviderSync(database: AppDatabase, provider: Provider, parsed
   });
 }
 
-async function runSyncWorker(database: AppDatabase, parsed: ParsedArgs, env: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+async function runSyncWorker(
+  database: AppDatabase,
+  parsed: ParsedArgs,
+  env: NodeJS.ProcessEnv,
+): Promise<Record<string, unknown>> {
   const encryptionKey = optionalString(parsed, "encryption-key") ?? env.TEAMTALES_CREDENTIAL_KEY;
-  if (!encryptionKey) throw new Error("Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.");
-  return { processed: await processQueuedProviderSyncBatch(database, encryptionKey, { limit: Number(optionalString(parsed, "limit") ?? "10") }) };
+  if (!encryptionKey)
+    throw new Error(
+      "Missing credential encryption key. Use --encryption-key or TEAMTALES_CREDENTIAL_KEY.",
+    );
+  return {
+    processed: await processQueuedProviderSyncBatch(database, encryptionKey, {
+      limit: Number(optionalString(parsed, "limit") ?? "10"),
+    }),
+  };
 }
 
-async function generateWeeklyReport(database: AppDatabase, parsed: ParsedArgs): Promise<Record<string, unknown>> {
+async function generateWeeklyReport(
+  database: AppDatabase,
+  parsed: ParsedArgs,
+): Promise<Record<string, unknown>> {
   const fixture = optionalString(parsed, "fixture");
   const output = optionalString(parsed, "output");
   const persist = getBoolean(parsed, "persist");
-  const contextSource = fixture ? reportContextFromFixture(fixture, parsed) : await reportContextFromDatabase(database, parsed);
+  const contextSource = fixture
+    ? reportContextFromFixture(fixture, parsed)
+    : await reportContextFromDatabase(database, parsed);
   const generated = await generateWeeklyReportService(database, {
     analysisReportContextId: contextSource.analysisReportContextId,
     context: contextSource.context,
@@ -257,24 +322,42 @@ async function generateWeeklyReport(database: AppDatabase, parsed: ParsedArgs): 
   }
   return {
     reportId: persist ? generated.report.id : undefined,
-    analysisReportContextId: persist ? generated.analysisReportContextId : contextSource.analysisReportContextId,
+    analysisReportContextId: persist
+      ? generated.analysisReportContextId
+      : contextSource.analysisReportContextId,
     output,
     markdown: output ? undefined : generated.markdown,
   };
 }
 
-function reportContextFromFixture(filename: string, parsed: ParsedArgs): { context: ReportContext; analysisReportContextId?: string } {
+function reportContextFromFixture(
+  filename: string,
+  parsed: ParsedArgs,
+): { context: ReportContext; analysisReportContextId?: string } {
   const value = JSON.parse(readFileSync(filename, "utf8")) as unknown;
   if (isRecord(value) && isRecord(value.context)) {
     return {
       context: value.context as ReportContext,
-      analysisReportContextId: typeof value.analysisReportContextId === "string" ? value.analysisReportContextId : undefined,
+      analysisReportContextId:
+        typeof value.analysisReportContextId === "string"
+          ? value.analysisReportContextId
+          : undefined,
     };
   }
-  if (isRecord(value) && Array.isArray(value.events) && Array.isArray(value.workItems) && Array.isArray(value.people)) {
+  if (
+    isRecord(value) &&
+    Array.isArray(value.events) &&
+    Array.isArray(value.workItems) &&
+    Array.isArray(value.people)
+  ) {
     return { context: buildReportContext(value as unknown as AnalysisInput) };
   }
-  if (isRecord(value) && Array.isArray(value.events) && Array.isArray(value.work_items) && Array.isArray(value.people)) {
+  if (
+    isRecord(value) &&
+    Array.isArray(value.events) &&
+    Array.isArray(value.work_items) &&
+    Array.isArray(value.people)
+  ) {
     return {
       context: buildReportContext({
         organization: requiredOrganization(parsed),
@@ -291,7 +374,10 @@ function reportContextFromFixture(filename: string, parsed: ParsedArgs): { conte
   throw new Error("Fixture must be a ReportContext, { context }, or AnalysisInput-like JSON.");
 }
 
-async function reportContextFromDatabase(database: AppDatabase, parsed: ParsedArgs): Promise<{ context: ReportContext; analysisReportContextId?: string }> {
+async function reportContextFromDatabase(
+  database: AppDatabase,
+  parsed: ParsedArgs,
+): Promise<{ context: ReportContext; analysisReportContextId?: string }> {
   const organization = requiredOrganization(parsed);
   const scope = requiredScope(parsed);
   const period = requiredPeriod(parsed);
@@ -317,12 +403,18 @@ function requiredScope(parsed: ParsedArgs): AnalysisInput["scope"] {
   return {
     type: (optionalString(parsed, "scope-type") ?? "organization") as ReportScopeType,
     id: optionalString(parsed, "scope-id") ?? requiredOption(parsed, "organization-id"),
-    name: optionalString(parsed, "scope-name") ?? optionalString(parsed, "scope-id") ?? requiredOption(parsed, "organization-id"),
+    name:
+      optionalString(parsed, "scope-name") ??
+      optionalString(parsed, "scope-id") ??
+      requiredOption(parsed, "organization-id"),
   };
 }
 
 function requiredPeriod(parsed: ParsedArgs): AnalysisInput["period"] {
-  return { start: requiredOption(parsed, "period-start"), end: requiredOption(parsed, "period-end") };
+  return {
+    start: requiredOption(parsed, "period-start"),
+    end: requiredOption(parsed, "period-end"),
+  };
 }
 
 function cliEnvironment(parsed: ParsedArgs, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -378,12 +470,19 @@ function getBoolean(parsed: ParsedArgs, key: string): boolean {
   return parsed.options.get(key) === true;
 }
 
-function readSecret(parsed: ParsedArgs, valueKey: string, fileKey: string, envKey: string, env: NodeJS.ProcessEnv): string {
+function readSecret(
+  parsed: ParsedArgs,
+  valueKey: string,
+  fileKey: string,
+  envKey: string,
+  env: NodeJS.ProcessEnv,
+): string {
   const direct = optionalString(parsed, valueKey);
   const file = optionalString(parsed, fileKey);
   const envName = optionalString(parsed, envKey);
   const sources = [direct, file, envName].filter((value) => value !== undefined);
-  if (sources.length !== 1) throw new Error(`Provide exactly one of --${valueKey}, --${fileKey}, or --${envKey}.`);
+  if (sources.length !== 1)
+    throw new Error(`Provide exactly one of --${valueKey}, --${fileKey}, or --${envKey}.`);
   if (direct !== undefined) return direct;
   if (file !== undefined) return readFileSync(file, "utf8").trim();
   const secret = env[envName as string];
@@ -407,9 +506,17 @@ function stableId(prefix: string, ...parts: string[]): string {
 }
 
 function isReportContext(value: unknown): value is ReportContext {
-  return isRecord(value) && isRecord(value.organization) && isRecord(value.scope) && isRecord(value.period) &&
-    Array.isArray(value.metrics) && Array.isArray(value.highlights) && Array.isArray(value.people) &&
-    Array.isArray(value.workItems) && Array.isArray(value.risks);
+  return (
+    isRecord(value) &&
+    isRecord(value.organization) &&
+    isRecord(value.scope) &&
+    isRecord(value.period) &&
+    Array.isArray(value.metrics) &&
+    Array.isArray(value.highlights) &&
+    Array.isArray(value.people) &&
+    Array.isArray(value.workItems) &&
+    Array.isArray(value.risks)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

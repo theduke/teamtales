@@ -161,7 +161,7 @@ it is not the unit-of-work queue.
 
 1. Authorize the organization and resolve the requested scope/integration.
 2. Create a root `sync_runs` row with `run_kind = orchestration`, `status =
-   queued`.
+queued`.
 3. Refresh the selected parent inventory where required (e.g. list GitHub org
    repositories); persist `provider_resources` transactionally per page.
 4. Calculate the effective executable resource set from selection + inventory.
@@ -238,8 +238,14 @@ type SyncRunSummaryDto = {
   parentSyncRunId?: string;
   provider: Provider;
   integrationId: string;
-  status: "queued" | "running" | "succeeded" | "failed" | "blocked" |
-    "completed" | "completed_with_errors";
+  status:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "blocked"
+    | "completed"
+    | "completed_with_errors";
   runKind: "orchestration" | "resource";
   resource?: ProviderResourceSummaryDto;
   queuedAt: string;

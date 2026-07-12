@@ -16,9 +16,25 @@ export type SyncRunType =
   | "repair_sync"
   | "reconciliation_sync";
 
-export type SyncRunStatus = "queued" | "pending" | "running" | "succeeded" | "completed" | "completed_with_errors" | "failed" | "blocked" | "canceled";
+export type SyncRunStatus =
+  | "queued"
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "completed"
+  | "completed_with_errors"
+  | "failed"
+  | "blocked"
+  | "canceled";
 
-export type SyncRunItemAction = "inserted" | "updated" | "unchanged" | "deleted" | "inaccessible" | "skipped" | "failed";
+export type SyncRunItemAction =
+  | "inserted"
+  | "updated"
+  | "unchanged"
+  | "deleted"
+  | "inaccessible"
+  | "skipped"
+  | "failed";
 
 export type CursorKind = "updated_at" | "created_at" | "opaque" | "page_token";
 

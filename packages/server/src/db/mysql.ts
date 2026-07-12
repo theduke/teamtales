@@ -11,18 +11,36 @@ export type AppDatabase = MySql2Database<typeof schema>;
 export type MySqlTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 export type DbExecutor = AppDatabase | MySqlTransaction;
 
-export interface OpenDatabaseOptions { env?: NodeJS.ProcessEnv; runMigrations?: boolean; migrationsFolder?: string }
-export interface OpenDatabaseResult { db: AppDatabase; close(): Promise<void> }
+export interface OpenDatabaseOptions {
+  env?: NodeJS.ProcessEnv;
+  runMigrations?: boolean;
+  migrationsFolder?: string;
+}
+export interface OpenDatabaseResult {
+  db: AppDatabase;
+  close(): Promise<void>;
+}
 
 export function mysqlConnectionOptions(env: NodeJS.ProcessEnv = process.env): PoolOptions {
-  if (env.DATABASE_URL) return { uri: env.DATABASE_URL, connectionLimit: 10, enableKeepAlive: true };
+  if (env.DATABASE_URL)
+    return { uri: env.DATABASE_URL, connectionLimit: 10, enableKeepAlive: true };
   const host = env.DB_HOST;
   const user = env.DB_USERNAME ?? env.DB_USER;
   const database = env.DB_NAME;
-  if (!host || !user || !database) throw new Error("Set DATABASE_URL or DB_HOST, DB_USER/DB_USERNAME, and DB_NAME for MySQL.");
+  if (!host || !user || !database)
+    throw new Error("Set DATABASE_URL or DB_HOST, DB_USER/DB_USERNAME, and DB_NAME for MySQL.");
   const port = Number(env.DB_PORT ?? "3306");
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("DB_PORT must be a valid TCP port.");
-  return { host, port, user, password: env.DB_PASSWORD ?? "", database, connectionLimit: 10, enableKeepAlive: true };
+  if (!Number.isInteger(port) || port < 1 || port > 65_535)
+    throw new Error("DB_PORT must be a valid TCP port.");
+  return {
+    host,
+    port,
+    user,
+    password: env.DB_PASSWORD ?? "",
+    database,
+    connectionLimit: 10,
+    enableKeepAlive: true,
+  };
 }
 
 export function resolveMigrationsFolder(cwd = process.cwd(), moduleUrl = import.meta.url): string {
@@ -32,8 +50,9 @@ export function resolveMigrationsFolder(cwd = process.cwd(), moduleUrl = import.
     fileURLToPath(new URL("../../drizzle", moduleUrl)),
     fileURLToPath(new URL("../drizzle", moduleUrl)),
   ];
-  const folder = candidates.find(candidate => existsSync(candidate));
-  if (!folder) throw new Error(`Could not find Drizzle migrations. Checked: ${candidates.join(", ")}`);
+  const folder = candidates.find((candidate) => existsSync(candidate));
+  if (!folder)
+    throw new Error(`Could not find Drizzle migrations. Checked: ${candidates.join(", ")}`);
   return folder;
 }
 
@@ -54,7 +73,9 @@ export async function openDatabase(options: OpenDatabaseOptions = {}): Promise<O
     try {
       const migrationDb = drizzle({ client: migrationPool, schema, mode: "default" });
       const migrationsFolder = options.migrationsFolder ?? resolveMigrationsFolder();
-      await migrationPool.query("CREATE TABLE IF NOT EXISTS `__drizzle_migrations` (`id` int NOT NULL AUTO_INCREMENT, `hash` text NOT NULL, `created_at` bigint, `name` text NOT NULL, PRIMARY KEY (`id`))");
+      await migrationPool.query(
+        "CREATE TABLE IF NOT EXISTS `__drizzle_migrations` (`id` int NOT NULL AUTO_INCREMENT, `hash` text NOT NULL, `created_at` bigint, `name` text NOT NULL, PRIMARY KEY (`id`))",
+      );
       await migrate(migrationDb, { migrationsFolder });
     } finally {
       await migrationPool.end();

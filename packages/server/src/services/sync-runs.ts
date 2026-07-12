@@ -1,13 +1,5 @@
-import type {
-  JsonObject,
-  JsonValue,
-  TriggerSyncResponseDto,
-} from "@teamtales/common/api";
-import type {
-  ActivityEvent,
-  Provider,
-  WorkItem,
-} from "@teamtales/common/domain";
+import type { JsonObject, JsonValue, TriggerSyncResponseDto } from "@teamtales/common/api";
+import type { ActivityEvent, Provider, WorkItem } from "@teamtales/common/domain";
 import { and, asc, desc, eq, isNull, lte, or } from "drizzle-orm";
 
 import { logger } from "../api/logger.js";
@@ -87,15 +79,59 @@ export async function enqueueProviderSyncService(
   const timestamp = now.toISOString();
   const rootId = stableId("sync_run", "orchestration", scope.id, timestamp);
   const resources = await executableResources(database, scope);
-  await database.transaction(async transaction => {
-    await transaction.insert(syncRuns).values({ id: rootId, organizationId: scope.organizationId, integrationId: scope.integrationId, syncScopeId: scope.id, provider: scope.provider, runType: "manual_resync", runKind: "orchestration", status: "queued", queuedAt: timestamp, startedAt: timestamp, createdAt: timestamp, updatedAt: timestamp });
+  await database.transaction(async (transaction) => {
+    await transaction.insert(syncRuns).values({
+      id: rootId,
+      organizationId: scope.organizationId,
+      integrationId: scope.integrationId,
+      syncScopeId: scope.id,
+      provider: scope.provider,
+      runType: "manual_resync",
+      runKind: "orchestration",
+      status: "queued",
+      queuedAt: timestamp,
+      startedAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
     for (const resource of resources) {
       const childId = stableId("sync_run", rootId, resource.id);
-      await transaction.insert(syncRuns).values({ id: childId, organizationId: scope.organizationId, integrationId: scope.integrationId, syncScopeId: scope.id, providerResourceId: resource.id, parentSyncRunId: rootId, provider: scope.provider, runType: "manual_resync", runKind: "resource", status: "queued", queuedAt: timestamp, startedAt: timestamp, createdAt: timestamp, updatedAt: timestamp });
-      await transaction.update(providerResources).set({ syncStatus: "queued", currentSyncRunId: childId, updatedAt: timestamp }).where(eq(providerResources.id, resource.id));
+      await transaction.insert(syncRuns).values({
+        id: childId,
+        organizationId: scope.organizationId,
+        integrationId: scope.integrationId,
+        syncScopeId: scope.id,
+        providerResourceId: resource.id,
+        parentSyncRunId: rootId,
+        provider: scope.provider,
+        runType: "manual_resync",
+        runKind: "resource",
+        status: "queued",
+        queuedAt: timestamp,
+        startedAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await transaction
+        .update(providerResources)
+        .set({ syncStatus: "queued", currentSyncRunId: childId, updatedAt: timestamp })
+        .where(eq(providerResources.id, resource.id));
     }
   });
-  return { provider: scope.provider, status: "queued", syncRunId: rootId, message: `Queued ${resources.length} resource sync(s).`, counters: { objectsFetched: 0, objectsInserted: 0, objectsUpdated: 0, objectsUnchanged: 0, objectsFailed: 0, activityEventsEmitted: 0 } };
+  return {
+    provider: scope.provider,
+    status: "queued",
+    syncRunId: rootId,
+    message: `Queued ${resources.length} resource sync(s).`,
+    counters: {
+      objectsFetched: 0,
+      objectsInserted: 0,
+      objectsUpdated: 0,
+      objectsUnchanged: 0,
+      objectsFailed: 0,
+      activityEventsEmitted: 0,
+    },
+  };
 }
 
 export async function processQueuedProviderSyncBatch(
@@ -105,37 +141,120 @@ export async function processQueuedProviderSyncBatch(
 ): Promise<number> {
   const now = options.now ?? new Date();
   const timestamp = now.toISOString();
-  const rows = await database.select().from(syncRuns).where(and(eq(syncRuns.status, "queued"), eq(syncRuns.runKind, "resource"), or(lte(syncRuns.nextAttemptAt, timestamp), isNull(syncRuns.nextAttemptAt)))).orderBy(asc(syncRuns.queuedAt), asc(syncRuns.id)).limit(options.limit ?? 10);
+  const rows = await database
+    .select()
+    .from(syncRuns)
+    .where(
+      and(
+        eq(syncRuns.status, "queued"),
+        eq(syncRuns.runKind, "resource"),
+        or(lte(syncRuns.nextAttemptAt, timestamp), isNull(syncRuns.nextAttemptAt)),
+      ),
+    )
+    .orderBy(asc(syncRuns.queuedAt), asc(syncRuns.id))
+    .limit(options.limit ?? 10);
   for (const row of rows) {
     if (!row.providerResourceId || !row.syncScopeId) continue;
-    const [resource] = await database.select().from(providerResources).where(eq(providerResources.id, row.providerResourceId)).limit(1);
-    const [scopeRow] = await database.select().from(syncScopes).where(eq(syncScopes.id, row.syncScopeId)).limit(1);
+    const [resource] = await database
+      .select()
+      .from(providerResources)
+      .where(eq(providerResources.id, row.providerResourceId))
+      .limit(1);
+    const [scopeRow] = await database
+      .select()
+      .from(syncScopes)
+      .where(eq(syncScopes.id, row.syncScopeId))
+      .limit(1);
     if (!resource || !scopeRow) continue;
     const scope = toExecutionScope(scopeRow, resource);
-    await runProviderSyncService(database, { provider: row.provider as Provider, encryptionKey, existingRunId: row.id, providerResourceId: resource.id, scopeOverride: scope, now });
+    await runProviderSyncService(database, {
+      provider: row.provider as Provider,
+      encryptionKey,
+      existingRunId: row.id,
+      providerResourceId: resource.id,
+      scopeOverride: scope,
+      now,
+    });
   }
-  await refreshParentRunStatuses(database, rows.map(row => row.parentSyncRunId).filter((value): value is string => Boolean(value)), now);
+  await refreshParentRunStatuses(
+    database,
+    rows.map((row) => row.parentSyncRunId).filter((value): value is string => Boolean(value)),
+    now,
+  );
   return rows.length;
 }
 
 async function executableResources(database: AppDatabase, scope: SyncScope) {
   const type = scope.provider === "github" ? "github.repository" : scope.scopeType;
-  const clauses = [eq(providerResources.integrationId, scope.integrationId), eq(providerResources.resourceType, type), eq(providerResources.discoveryState, "active")];
-  if (scope.scopeType === "github.organization" && scope.selectionMode === "all" && scope.providerResourceId) clauses.push(eq(providerResources.parentResourceId, scope.providerResourceId));
-  else if (scope.providerResourceId && scope.selectionMode !== "all") clauses.push(eq(providerResources.id, scope.providerResourceId));
-  return database.select().from(providerResources).where(and(...clauses)).orderBy(asc(providerResources.displayName));
+  const clauses = [
+    eq(providerResources.integrationId, scope.integrationId),
+    eq(providerResources.resourceType, type),
+    eq(providerResources.discoveryState, "active"),
+  ];
+  if (
+    scope.scopeType === "github.organization" &&
+    scope.selectionMode === "all" &&
+    scope.providerResourceId
+  )
+    clauses.push(eq(providerResources.parentResourceId, scope.providerResourceId));
+  else if (scope.providerResourceId && scope.selectionMode !== "all")
+    clauses.push(eq(providerResources.id, scope.providerResourceId));
+  return database
+    .select()
+    .from(providerResources)
+    .where(and(...clauses))
+    .orderBy(asc(providerResources.displayName));
 }
 
-function toExecutionScope(scope: typeof syncScopes.$inferSelect, resource: typeof providerResources.$inferSelect): SyncScope {
-  return { id: scope.id, organizationId: scope.organizationId, integrationId: scope.integrationId, provider: scope.provider as Provider, scopeType: resource.resourceType as SyncScope["scopeType"], externalId: resource.externalId, externalName: resource.displayName, parentScopeId: scope.parentScopeId ?? undefined, selectionMode: "individual", configJson: resource.resourceType === "github.repository" ? { repository: resource.displayName } : JSON.parse(scope.configJson) as JsonObject, enabled: true, createdAt: dateFromString(scope.createdAt) ?? new Date(0), updatedAt: dateFromString(scope.updatedAt) ?? new Date(0) };
+function toExecutionScope(
+  scope: typeof syncScopes.$inferSelect,
+  resource: typeof providerResources.$inferSelect,
+): SyncScope {
+  return {
+    id: scope.id,
+    organizationId: scope.organizationId,
+    integrationId: scope.integrationId,
+    provider: scope.provider as Provider,
+    scopeType: resource.resourceType as SyncScope["scopeType"],
+    externalId: resource.externalId,
+    externalName: resource.displayName,
+    parentScopeId: scope.parentScopeId ?? undefined,
+    selectionMode: "individual",
+    configJson:
+      resource.resourceType === "github.repository"
+        ? { repository: resource.displayName }
+        : (JSON.parse(scope.configJson) as JsonObject),
+    enabled: true,
+    createdAt: dateFromString(scope.createdAt) ?? new Date(0),
+    updatedAt: dateFromString(scope.updatedAt) ?? new Date(0),
+  };
 }
 
-async function refreshParentRunStatuses(database: AppDatabase, parentIds: readonly string[], now: Date): Promise<void> {
+async function refreshParentRunStatuses(
+  database: AppDatabase,
+  parentIds: readonly string[],
+  now: Date,
+): Promise<void> {
   for (const parentId of new Set(parentIds)) {
-    const children = await database.select({ status: syncRuns.status }).from(syncRuns).where(eq(syncRuns.parentSyncRunId, parentId));
-    const pending = children.some(child => child.status === "queued" || child.status === "running");
-    const failed = children.some(child => child.status === "failed" || child.status === "blocked");
-    if (!pending) await database.update(syncRuns).set({ status: failed ? "completed_with_errors" : "completed", finishedAt: now.toISOString(), updatedAt: now.toISOString() }).where(eq(syncRuns.id, parentId));
+    const children = await database
+      .select({ status: syncRuns.status })
+      .from(syncRuns)
+      .where(eq(syncRuns.parentSyncRunId, parentId));
+    const pending = children.some(
+      (child) => child.status === "queued" || child.status === "running",
+    );
+    const failed = children.some(
+      (child) => child.status === "failed" || child.status === "blocked",
+    );
+    if (!pending)
+      await database
+        .update(syncRuns)
+        .set({
+          status: failed ? "completed_with_errors" : "completed",
+          finishedAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        })
+        .where(eq(syncRuns.id, parentId));
   }
 }
 
@@ -161,7 +280,7 @@ export async function runProviderSyncService(
     syncScopeId: input.syncScopeId,
   });
   syncLog.debug("Resolving provider sync scope");
-  const scope = input.scopeOverride ?? await readSyncScope(database, input);
+  const scope = input.scopeOverride ?? (await readSyncScope(database, input));
   const scopeLog = logger.child({
     provider: input.provider,
     organizationId: scope.organizationId,
@@ -171,11 +290,7 @@ export async function runProviderSyncService(
     selectionMode: scope.selectionMode,
   });
   scopeLog.debug("Reading provider sync credential");
-  const credential = await readLatestCredential(
-    database,
-    scope.integrationId,
-    input.encryptionKey,
-  );
+  const credential = await readLatestCredential(database, scope.integrationId, input.encryptionKey);
   const now = input.now ?? new Date();
   const runId = input.existingRunId ?? stableId("sync_run", scope.id, now.toISOString());
   const run = input.existingRunId
@@ -195,9 +310,7 @@ export async function runProviderSyncService(
       cursors,
       credential,
     };
-    const fetched = await connectorForProvider(
-      input.provider,
-    ).fetchSourceObjects(connectorContext);
+    const fetched = await connectorForProvider(input.provider).fetchSourceObjects(connectorContext);
     runLog.debug(
       { objectsFetched: fetched.objects.length, cursorUpdates: fetched.cursorUpdates.length },
       "Persisting provider sync results",
@@ -220,10 +333,9 @@ export async function runProviderSyncService(
       counters: persisted.counters,
     };
   } catch (error) {
-    const message = redactText(
-      error instanceof Error ? error.message : String(error),
-      [credential.encryptedSecret],
-    );
+    const message = redactText(error instanceof Error ? error.message : String(error), [
+      credential.encryptedSecret,
+    ]);
     runLog.error({ error: { message } }, "Provider sync failed");
     await finishFailedSyncRun(database, runId, now, message, input.providerResourceId);
     return {
@@ -252,11 +364,7 @@ async function persistFetchResult(
   providerResourceId?: string,
 ): Promise<RunProviderSyncServiceResult> {
   return database.transaction(async (transaction) => {
-    const persistedSourceObjects = await upsertSourceObjects(
-      transaction,
-      fetched.objects,
-      now,
-    );
+    const persistedSourceObjects = await upsertSourceObjects(transaction, fetched.objects, now);
     const normalized = normalizeSourceObjects(persistedSourceObjects);
 
     await upsertWorkItems(
@@ -265,11 +373,7 @@ async function persistFetchResult(
       normalized.workItems,
       normalized.workItemSourceObjectIds,
     );
-    await upsertPeopleForEvents(
-      transaction,
-      scope.organizationId,
-      normalized.events,
-    );
+    await upsertPeopleForEvents(transaction, scope.organizationId, normalized.events);
     await upsertActivityEvents(
       transaction,
       scope.organizationId,
@@ -280,15 +384,10 @@ async function persistFetchResult(
 
     const counters = {
       objectsFetched: fetched.objects.length,
-      objectsInserted: persistedSourceObjects.filter(
-        (object) => object.action === "insert",
-      ).length,
-      objectsUpdated: persistedSourceObjects.filter(
-        (object) => object.action === "update",
-      ).length,
-      objectsUnchanged: persistedSourceObjects.filter(
-        (object) => object.action === "unchanged",
-      ).length,
+      objectsInserted: persistedSourceObjects.filter((object) => object.action === "insert").length,
+      objectsUpdated: persistedSourceObjects.filter((object) => object.action === "update").length,
+      objectsUnchanged: persistedSourceObjects.filter((object) => object.action === "unchanged")
+        .length,
       objectsFailed: 0,
       activityEventsEmitted: normalized.events.length,
     };
@@ -304,27 +403,18 @@ async function persistFetchResult(
   });
 }
 
-function connectorForProvider(
-  provider: Provider,
-): GitHubSourceConnector | LinearSourceConnector {
-  return provider === "github"
-    ? new GitHubSourceConnector()
-    : new LinearSourceConnector();
+function connectorForProvider(provider: Provider): GitHubSourceConnector | LinearSourceConnector {
+  return provider === "github" ? new GitHubSourceConnector() : new LinearSourceConnector();
 }
 
 async function readSyncScope(
   database: AppDatabase,
   input: RunProviderSyncServiceInput,
 ): Promise<SyncScope> {
-  const clauses = [
-    eq(syncScopes.provider, input.provider),
-    eq(syncScopes.enabled, 1),
-  ];
+  const clauses = [eq(syncScopes.provider, input.provider), eq(syncScopes.enabled, 1)];
   if (input.syncScopeId) clauses.push(eq(syncScopes.id, input.syncScopeId));
-  if (input.integrationId)
-    clauses.push(eq(syncScopes.integrationId, input.integrationId));
-  if (input.organizationId)
-    clauses.push(eq(syncScopes.organizationId, input.organizationId));
+  if (input.integrationId) clauses.push(eq(syncScopes.integrationId, input.integrationId));
+  if (input.organizationId) clauses.push(eq(syncScopes.organizationId, input.organizationId));
 
   const [row] = await database
     .select()
@@ -334,9 +424,7 @@ async function readSyncScope(
     .limit(1);
 
   if (!row) {
-    throw new Error(
-      `No enabled ${input.provider} sync scope matched the request.`,
-    );
+    throw new Error(`No enabled ${input.provider} sync scope matched the request.`);
   }
 
   return {
@@ -365,10 +453,7 @@ async function readLatestCredential(
     .select()
     .from(integrationCredentials)
     .where(eq(integrationCredentials.integrationId, integrationId))
-    .orderBy(
-      desc(integrationCredentials.createdAt),
-      desc(integrationCredentials.id),
-    )
+    .orderBy(desc(integrationCredentials.createdAt), desc(integrationCredentials.id))
     .limit(1);
 
   if (!row) {
@@ -398,20 +483,18 @@ async function createSyncRun(
   providerResourceId?: string,
 ): Promise<SyncRun> {
   const timestamp = now.toISOString();
-  await database
-    .insert(syncRuns)
-    .values({
-      id: runId,
-      organizationId: scope.organizationId,
-      integrationId: scope.integrationId,
-      syncScopeId: scope.id,
-      ...(providerResourceId ? { providerResourceId } : {}),
-      provider: scope.provider,
-      runType: "manual_resync",
-      status: "running",
-      startedAt: timestamp,
-      createdAt: timestamp,
-    });
+  await database.insert(syncRuns).values({
+    id: runId,
+    organizationId: scope.organizationId,
+    integrationId: scope.integrationId,
+    syncScopeId: scope.id,
+    ...(providerResourceId ? { providerResourceId } : {}),
+    provider: scope.provider,
+    runType: "manual_resync",
+    status: "running",
+    startedAt: timestamp,
+    createdAt: timestamp,
+  });
   await database
     .update(syncScopes)
     .set({ lastAttemptAt: timestamp, updatedAt: timestamp })
@@ -443,11 +526,50 @@ async function claimExistingSyncRun(
   now: Date,
 ): Promise<SyncRun> {
   const timestamp = now.toISOString();
-  const [existing] = await database.select({ parentSyncRunId: syncRuns.parentSyncRunId, providerResourceId: syncRuns.providerResourceId }).from(syncRuns).where(eq(syncRuns.id, runId)).limit(1);
-  await database.update(syncRuns).set({ status: "running", startedAt: timestamp, leaseExpiresAt: null, updatedAt: timestamp }).where(eq(syncRuns.id, runId));
-  if (existing?.parentSyncRunId) await database.update(syncRuns).set({ status: "running", updatedAt: timestamp }).where(eq(syncRuns.id, existing.parentSyncRunId));
-  if (existing?.providerResourceId) await database.update(providerResources).set({ syncStatus: "running", currentSyncRunId: runId, lastSyncStartedAt: timestamp, updatedAt: timestamp }).where(eq(providerResources.id, existing.providerResourceId));
-  return { id: runId, organizationId: scope.organizationId, integrationId: scope.integrationId, syncScopeId: scope.id, provider: scope.provider, runType: "manual_resync", status: "running", startedAt: now, objectsFetched: 0, objectsInserted: 0, objectsUpdated: 0, objectsUnchanged: 0, objectsFailed: 0, activityEventsEmitted: 0, createdAt: now };
+  const [existing] = await database
+    .select({
+      parentSyncRunId: syncRuns.parentSyncRunId,
+      providerResourceId: syncRuns.providerResourceId,
+    })
+    .from(syncRuns)
+    .where(eq(syncRuns.id, runId))
+    .limit(1);
+  await database
+    .update(syncRuns)
+    .set({ status: "running", startedAt: timestamp, leaseExpiresAt: null, updatedAt: timestamp })
+    .where(eq(syncRuns.id, runId));
+  if (existing?.parentSyncRunId)
+    await database
+      .update(syncRuns)
+      .set({ status: "running", updatedAt: timestamp })
+      .where(eq(syncRuns.id, existing.parentSyncRunId));
+  if (existing?.providerResourceId)
+    await database
+      .update(providerResources)
+      .set({
+        syncStatus: "running",
+        currentSyncRunId: runId,
+        lastSyncStartedAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .where(eq(providerResources.id, existing.providerResourceId));
+  return {
+    id: runId,
+    organizationId: scope.organizationId,
+    integrationId: scope.integrationId,
+    syncScopeId: scope.id,
+    provider: scope.provider,
+    runType: "manual_resync",
+    status: "running",
+    startedAt: now,
+    objectsFetched: 0,
+    objectsInserted: 0,
+    objectsUpdated: 0,
+    objectsUnchanged: 0,
+    objectsFailed: 0,
+    activityEventsEmitted: 0,
+    createdAt: now,
+  };
 }
 
 async function readSyncCursors(
@@ -458,7 +580,11 @@ async function readSyncCursors(
   const rows = await database
     .select()
     .from(syncCursors)
-    .where(providerResourceId ? eq(syncCursors.providerResourceId, providerResourceId) : eq(syncCursors.syncScopeId, scope.id))
+    .where(
+      providerResourceId
+        ? eq(syncCursors.providerResourceId, providerResourceId)
+        : eq(syncCursors.syncScopeId, scope.id),
+    )
     .orderBy(asc(syncCursors.objectType), asc(syncCursors.cursorKind));
   return rows.map((row) => ({
     ...row,
@@ -498,29 +624,27 @@ async function upsertSourceObjects(
 
     if (plan.action === "insert") {
       const timestamp = now.toISOString();
-      await database
-        .insert(sourceObjects)
-        .values({
-          id,
-          organizationId: incoming.organizationId,
-          integrationId: incoming.integrationId,
-          syncScopeId: incoming.syncScopeId,
-          provider: incoming.provider,
-          objectType: incoming.objectType,
-          externalId: incoming.externalId,
-          externalUrl: incoming.externalUrl,
-          externalCreatedAt: incoming.externalCreatedAt?.toISOString(),
-          externalUpdatedAt: incoming.externalUpdatedAt?.toISOString(),
-          externalDeletedAt: incoming.externalDeletedAt?.toISOString(),
-          rawJson: JSON.stringify(incoming.rawJson),
-          contentHash: plan.contentHash,
-          firstSeenAt: timestamp,
-          lastSeenAt: timestamp,
-          lastChangedAt: timestamp,
-          sourceState: incoming.sourceState ?? "active",
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
+      await database.insert(sourceObjects).values({
+        id,
+        organizationId: incoming.organizationId,
+        integrationId: incoming.integrationId,
+        syncScopeId: incoming.syncScopeId,
+        provider: incoming.provider,
+        objectType: incoming.objectType,
+        externalId: incoming.externalId,
+        externalUrl: incoming.externalUrl,
+        externalCreatedAt: incoming.externalCreatedAt?.toISOString(),
+        externalUpdatedAt: incoming.externalUpdatedAt?.toISOString(),
+        externalDeletedAt: incoming.externalDeletedAt?.toISOString(),
+        rawJson: JSON.stringify(incoming.rawJson),
+        contentHash: plan.contentHash,
+        firstSeenAt: timestamp,
+        lastSeenAt: timestamp,
+        lastChangedAt: timestamp,
+        sourceState: incoming.sourceState ?? "active",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
     } else if (plan.action === "update") {
       const timestamp = now.toISOString();
       await database
@@ -562,8 +686,7 @@ async function upsertSourceObjects(
       contentHash: hashCanonicalJson(incoming.rawJson),
       firstSeenAt: existing?.firstSeenAt ?? now,
       lastSeenAt: now,
-      lastChangedAt:
-        plan.action === "unchanged" ? (existing?.lastChangedAt ?? now) : now,
+      lastChangedAt: plan.action === "unchanged" ? (existing?.lastChangedAt ?? now) : now,
       sourceState: incoming.sourceState ?? "active",
       externalUrl: incoming.externalUrl,
       externalCreatedAt: incoming.externalCreatedAt,
@@ -620,9 +743,7 @@ async function readExistingSourceObject(
   };
 }
 
-function normalizeSourceObjects(
-  sourceObjects: readonly SourceObjectRow[],
-): NormalizedBatch {
+function normalizeSourceObjects(sourceObjects: readonly SourceObjectRow[]): NormalizedBatch {
   const workItems: WorkItem[] = [];
   const events: ActivityEvent[] = [];
   const eventSourceObjectIds = new Map<string, string>();
@@ -632,25 +753,12 @@ function normalizeSourceObjects(
     const context = normalizationContext(source);
 
     if (source.objectType === "github.pull_request") {
-      const result = normalizeGitHubPullRequest(
-        asRecord(source.rawJson),
-        context,
-      );
-      addWorkItem(
-        result.workItem,
-        source.id,
-        workItems,
-        workItemSourceObjectIds,
-      );
+      const result = normalizeGitHubPullRequest(asRecord(source.rawJson), context);
+      addWorkItem(result.workItem, source.id, workItems, workItemSourceObjectIds);
       addEvents(result.events, source.id, events, eventSourceObjectIds);
     } else if (source.objectType === "github.issue") {
       const result = normalizeGitHubIssue(asRecord(source.rawJson), context);
-      addWorkItem(
-        result.workItem,
-        source.id,
-        workItems,
-        workItemSourceObjectIds,
-      );
+      addWorkItem(result.workItem, source.id, workItems, workItemSourceObjectIds);
       addEvents(result.events, source.id, events, eventSourceObjectIds);
     } else if (source.objectType === "github.pull_request_review") {
       addEvents(
@@ -682,21 +790,11 @@ function normalizeSourceObjects(
       );
     } else if (source.objectType === "linear.issue") {
       const result = normalizeLinearIssue(asRecord(source.rawJson), context);
-      addWorkItem(
-        result.workItem,
-        source.id,
-        workItems,
-        workItemSourceObjectIds,
-      );
+      addWorkItem(result.workItem, source.id, workItems, workItemSourceObjectIds);
       addEvents(result.events, source.id, events, eventSourceObjectIds);
     } else if (source.objectType === "linear.project") {
       const result = normalizeLinearProject(asRecord(source.rawJson), context);
-      addWorkItem(
-        result.workItem,
-        source.id,
-        workItems,
-        workItemSourceObjectIds,
-      );
+      addWorkItem(result.workItem, source.id, workItems, workItemSourceObjectIds);
       addEvents(result.events, source.id, events, eventSourceObjectIds);
     } else if (source.objectType === "linear.comment") {
       addEvents(
@@ -719,8 +817,7 @@ function normalizationContext(source: SourceObjectRow): {
   linearProjectId?: string;
 } {
   const raw = asRecord(source.rawJson);
-  const repositoryId =
-    source.provider === "github" ? source.syncScopeId : undefined;
+  const repositoryId = source.provider === "github" ? source.syncScopeId : undefined;
 
   if (source.objectType === "linear.comment") {
     const issue = recordField(raw, "issue");
@@ -804,9 +901,7 @@ async function upsertPeopleForEvents(
   events: readonly ActivityEvent[],
 ): Promise<void> {
   for (const personId of new Set(
-    events
-      .map((event) => event.actorPersonId)
-      .filter((value): value is string => Boolean(value)),
+    events.map((event) => event.actorPersonId).filter((value): value is string => Boolean(value)),
   )) {
     await database
       .insert(people)
@@ -863,20 +958,15 @@ async function upsertCursors(
   providerResourceId?: string,
 ): Promise<void> {
   for (const cursor of fetched.cursorUpdates) {
-    const cursorId = stableId(
-      "sync_cursor",
-      scope.id,
-      cursor.objectType,
-      "updated_at",
-    );
+    const cursorId = stableId("sync_cursor", scope.id, cursor.objectType, "updated_at");
     await database
       .insert(syncCursors)
       .values({
         id: cursorId,
         organizationId: scope.organizationId,
         integrationId: scope.integrationId,
-                  syncScopeId: scope.id,
-                  ...(providerResourceId ? { providerResourceId } : {}),
+        syncScopeId: scope.id,
+        ...(providerResourceId ? { providerResourceId } : {}),
         provider: scope.provider,
         objectType: cursor.objectType,
         cursorKind: "updated_at",
@@ -889,8 +979,7 @@ async function upsertCursors(
       })
       .onDuplicateKeyUpdate({
         set: {
-          cursorValue:
-            cursor.cursorValue ?? cursor.highWatermark?.toISOString(),
+          cursorValue: cursor.cursorValue ?? cursor.highWatermark?.toISOString(),
           highWatermark: cursor.highWatermark?.toISOString(),
           lastSuccessAt: now.toISOString(),
           lastAttemptAt: now.toISOString(),
@@ -918,10 +1007,21 @@ async function finishSucceededSyncRun(
     .set({
       lastSuccessAt: timestamp,
       lastAttemptAt: timestamp,
-              updatedAt: timestamp,
-            })
-            .where(eq(syncScopes.id, scopeId));
-  if (providerResourceId) await database.update(providerResources).set({ syncStatus: "succeeded", currentSyncRunId: null, lastSyncSucceededAt: timestamp, lastSyncError: null, consecutiveFailureCount: 0, updatedAt: timestamp }).where(eq(providerResources.id, providerResourceId));
+      updatedAt: timestamp,
+    })
+    .where(eq(syncScopes.id, scopeId));
+  if (providerResourceId)
+    await database
+      .update(providerResources)
+      .set({
+        syncStatus: "succeeded",
+        currentSyncRunId: null,
+        lastSyncSucceededAt: timestamp,
+        lastSyncError: null,
+        consecutiveFailureCount: 0,
+        updatedAt: timestamp,
+      })
+      .where(eq(providerResources.id, providerResourceId));
 }
 
 async function finishFailedSyncRun(
@@ -931,26 +1031,45 @@ async function finishFailedSyncRun(
   error: string,
   providerResourceId?: string,
 ): Promise<void> {
-  const [run] = await database.select({ attempt: syncRuns.attempt }).from(syncRuns).where(eq(syncRuns.id, runId)).limit(1);
+  const [run] = await database
+    .select({ attempt: syncRuns.attempt })
+    .from(syncRuns)
+    .where(eq(syncRuns.id, runId))
+    .limit(1);
   const terminal = (run?.attempt ?? 1) >= 3;
   const retryAt = new Date(now.getTime() + 60_000).toISOString();
   await database
-          .update(syncRuns)
-          .set({
-                status: terminal ? "failed" : "queued",
-                ...(terminal ? { finishedAt: now.toISOString() } : { nextAttemptAt: retryAt, queuedAt: now.toISOString(), attempt: (run?.attempt ?? 1) + 1 }),
-                objectsFailed: 1,
-                error,
-                leaseExpiresAt: null,
+    .update(syncRuns)
+    .set({
+      status: terminal ? "failed" : "queued",
+      ...(terminal
+        ? { finishedAt: now.toISOString() }
+        : {
+            nextAttemptAt: retryAt,
+            queuedAt: now.toISOString(),
+            attempt: (run?.attempt ?? 1) + 1,
+          }),
+      objectsFailed: 1,
+      error,
+      leaseExpiresAt: null,
     })
-          .where(eq(syncRuns.id, runId));
-  if (providerResourceId) await database.update(providerResources).set({ syncStatus: terminal ? "failed" : "queued", ...(terminal ? { currentSyncRunId: null } : { nextAttemptAt: retryAt }), lastSyncFailedAt: now.toISOString(), lastSyncError: error, consecutiveFailureCount: (run?.attempt ?? 1), updatedAt: now.toISOString() }).where(eq(providerResources.id, providerResourceId));
+    .where(eq(syncRuns.id, runId));
+  if (providerResourceId)
+    await database
+      .update(providerResources)
+      .set({
+        syncStatus: terminal ? "failed" : "queued",
+        ...(terminal ? { currentSyncRunId: null } : { nextAttemptAt: retryAt }),
+        lastSyncFailedAt: now.toISOString(),
+        lastSyncError: error,
+        consecutiveFailureCount: run?.attempt ?? 1,
+        updatedAt: now.toISOString(),
+      })
+      .where(eq(providerResources.id, providerResourceId));
 }
 
 function asRecord(value: JsonValue): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
 function recordField(
@@ -963,10 +1082,7 @@ function recordField(
     : undefined;
 }
 
-function stringField(
-  record: Record<string, unknown>,
-  key: string,
-): string | undefined {
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -982,9 +1098,7 @@ function nestedString(
     }
     current = (current as Record<string, unknown>)[key];
   }
-  return typeof current === "string" && current.length > 0
-    ? current
-    : undefined;
+  return typeof current === "string" && current.length > 0 ? current : undefined;
 }
 
 function dateFromString(value: string | undefined): Date | undefined {

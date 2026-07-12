@@ -2,26 +2,26 @@
   "name": "@teamtales/server",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "bin": {
     "teamtales": "./src/cli/index.ts"
   },
+  "type": "module",
+  "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
-  "types": "./src/index.ts",
   "scripts": {
-    "dev": "npm run dev:api",
-    "dev:api": "tsx src/api/dev-server.ts",
-    "api:dev": "npm run dev:api",
-    "cli": "tsx src/cli/index.ts",
+    "dev": "vp exec tsx watch src/api/dev-server.ts",
+    "dev:api": "vp exec tsx watch src/api/dev-server.ts",
+    "api:dev": "vp exec tsx watch src/api/dev-server.ts",
+    "cli": "vp exec tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
     "schema:check": "drizzle-kit check --config drizzle.config.ts",
-    "build": "esbuild src/api/production-server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
+    "build": "vp exec esbuild src/api/production-server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
     "start": "node dist/server.js",
     "drizzle:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "test": "tsx --test tests/**/*.test.ts",
-    "check": "npm run typecheck && npm run schema:check"
+    "test": "vp exec tsx --test tests/**/*.test.ts",
+    "check": "vp check && vp run typecheck && vp run schema:check"
   },
   "dependencies": {
     "@teamtales/common": "file:../common",

@@ -65,14 +65,18 @@ class BrowserTeamtalesApiClient {
   }
 
   getDashboard(organizationId: string): Promise<DashboardDto> {
-    return request<DashboardDto>(`/api/dashboard?organizationId=${encodeURIComponent(organizationId)}`);
+    return request<DashboardDto>(
+      `/api/dashboard?organizationId=${encodeURIComponent(organizationId)}`,
+    );
   }
 
   listOrganizations(): Promise<PageDto<OrganizationSummaryDto>> {
     return request<PageDto<OrganizationSummaryDto>>("/api/organizations");
   }
 
-  createOrganization(requestBody: BrowserCreateOrganizationRequest): Promise<CreateOrganizationResponseDto> {
+  createOrganization(
+    requestBody: BrowserCreateOrganizationRequest,
+  ): Promise<CreateOrganizationResponseDto> {
     return request<CreateOrganizationResponseDto>("/api/organizations", jsonPost(requestBody));
   }
 
@@ -82,16 +86,29 @@ class BrowserTeamtalesApiClient {
     );
   }
 
-  addPatIntegration(requestBody: BrowserAddPatIntegrationRequest): Promise<AddPatIntegrationResponseDto> {
+  addPatIntegration(
+    requestBody: BrowserAddPatIntegrationRequest,
+  ): Promise<AddPatIntegrationResponseDto> {
     return request<AddPatIntegrationResponseDto>("/api/integrations/pat", jsonPost(requestBody));
   }
 
-  listIntegrationResources(integrationId: string, organizationId: string): Promise<ListIntegrationResourcesResponseDto> {
-    return request<ListIntegrationResourcesResponseDto>(`/api/integrations/${encodeURIComponent(integrationId)}/resources?organizationId=${encodeURIComponent(organizationId)}`);
+  listIntegrationResources(
+    integrationId: string,
+    organizationId: string,
+  ): Promise<ListIntegrationResourcesResponseDto> {
+    return request<ListIntegrationResourcesResponseDto>(
+      `/api/integrations/${encodeURIComponent(integrationId)}/resources?organizationId=${encodeURIComponent(organizationId)}`,
+    );
   }
 
-  setSyncScopeSelection(integrationId: string, requestBody: SetSyncScopeSelectionRequestDto): Promise<SetSyncScopeSelectionResponseDto> {
-    return request<SetSyncScopeSelectionResponseDto>(`/api/integrations/${encodeURIComponent(integrationId)}/sync-scopes`, jsonPut(requestBody));
+  setSyncScopeSelection(
+    integrationId: string,
+    requestBody: SetSyncScopeSelectionRequestDto,
+  ): Promise<SetSyncScopeSelectionResponseDto> {
+    return request<SetSyncScopeSelectionResponseDto>(
+      `/api/integrations/${encodeURIComponent(integrationId)}/sync-scopes`,
+      jsonPut(requestBody),
+    );
   }
 
   listSyncScopes(organizationId: string): Promise<PageDto<SyncScopeDto>> {
@@ -105,7 +122,9 @@ class BrowserTeamtalesApiClient {
   }
 
   listReports(organizationId: string): Promise<PageDto<ReportSummaryDto>> {
-    return request<PageDto<ReportSummaryDto>>(`/api/organizations/${encodeURIComponent(organizationId)}/reports`);
+    return request<PageDto<ReportSummaryDto>>(
+      `/api/organizations/${encodeURIComponent(organizationId)}/reports`,
+    );
   }
 
   getReport(reportId: string, organizationId: string): Promise<ReportDetailDto> {
@@ -114,25 +133,40 @@ class BrowserTeamtalesApiClient {
     );
   }
 
-  generateWeeklyReport(requestBody: GenerateWeeklyReportRequestDto): Promise<GenerateReportResponseDto> {
+  generateWeeklyReport(
+    requestBody: GenerateWeeklyReportRequestDto,
+  ): Promise<GenerateReportResponseDto> {
     return request<GenerateReportResponseDto>("/api/reports/weekly", jsonPost(requestBody));
   }
 
-  triggerSync(provider: Provider, requestBody: TriggerSyncRequestDto = {}): Promise<TriggerSyncResponseDto> {
-    return request<TriggerSyncResponseDto>(`/api/sync/${encodeURIComponent(provider)}`, jsonPost(requestBody));
+  triggerSync(
+    provider: Provider,
+    requestBody: TriggerSyncRequestDto = {},
+  ): Promise<TriggerSyncResponseDto> {
+    return request<TriggerSyncResponseDto>(
+      `/api/sync/${encodeURIComponent(provider)}`,
+      jsonPost(requestBody),
+    );
   }
 
   getSyncRun(syncRunId: string): Promise<SyncRunProgressDto> {
     return request<SyncRunProgressDto>(`/api/sync-runs/${encodeURIComponent(syncRunId)}`);
   }
 
-  listSyncRunResources(syncRunId: string, cursor?: string): Promise<PageDto<SyncRunResourceProgressDto>> {
+  listSyncRunResources(
+    syncRunId: string,
+    cursor?: string,
+  ): Promise<PageDto<SyncRunResourceProgressDto>> {
     const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-    return request<PageDto<SyncRunResourceProgressDto>>(`/api/sync-runs/${encodeURIComponent(syncRunId)}/resources${query}`);
+    return request<PageDto<SyncRunResourceProgressDto>>(
+      `/api/sync-runs/${encodeURIComponent(syncRunId)}/resources${query}`,
+    );
   }
 
   getOrganizationSyncStatus(organizationId: string): Promise<OrganizationSyncStatusDto> {
-    return request<OrganizationSyncStatusDto>(`/api/organizations/${encodeURIComponent(organizationId)}/sync-status`);
+    return request<OrganizationSyncStatusDto>(
+      `/api/organizations/${encodeURIComponent(organizationId)}/sync-status`,
+    );
   }
 
   getCurrentUser(): Promise<AuthSession> {
@@ -175,4 +209,6 @@ function jsonPost(body: unknown): RequestInit {
   };
 }
 
-function jsonPut(body: unknown): RequestInit { return { method: "PUT", body: JSON.stringify(body) }; }
+function jsonPut(body: unknown): RequestInit {
+  return { method: "PUT", body: JSON.stringify(body) };
+}

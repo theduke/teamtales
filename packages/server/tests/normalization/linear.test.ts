@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { normalizeLinearComment, normalizeLinearIssue, normalizeLinearProject } from "../../src/normalization/index.js";
+import {
+  normalizeLinearComment,
+  normalizeLinearIssue,
+  normalizeLinearProject,
+} from "../../src/normalization/index.js";
 
 describe("Linear normalization", () => {
   it("uses conservative completion wording for current-only issue state", () => {
@@ -41,10 +45,17 @@ describe("Linear normalization", () => {
     });
 
     const eventTypes = result.events.map((event) => event.eventType);
-    assert.deepEqual(eventTypes, ["linear.issue_created", "linear.issue_completed", "linear.issue_updated"]);
+    assert.deepEqual(eventTypes, [
+      "linear.issue_created",
+      "linear.issue_completed",
+      "linear.issue_updated",
+    ]);
     assert.equal(result.events[1]?.title, "Observed as completed: Finish onboarding checklist");
     assert.equal(result.events[1]?.metadata?.["conservative"], true);
-    assert.equal(result.events.some((event) => event.eventType === "linear.issue_status_changed"), false);
+    assert.equal(
+      result.events.some((event) => event.eventType === "linear.issue_status_changed"),
+      false,
+    );
   });
 
   it("emits exact status changes only when Linear history is provided", () => {
@@ -67,7 +78,9 @@ describe("Linear normalization", () => {
       ],
     });
 
-    const completedEvents = result.events.filter((event) => event.eventType === "linear.issue_completed");
+    const completedEvents = result.events.filter(
+      (event) => event.eventType === "linear.issue_completed",
+    );
     assert.equal(completedEvents.length, 1);
     assert.equal(completedEvents[0]?.title, "Status changed to Done");
     assert.equal(completedEvents[0]?.actorPersonId, "linear:user:user_carol");
@@ -101,7 +114,10 @@ describe("Linear normalization", () => {
 
     assert.equal(project.workItem.sourceType, "linear_project");
     assert.equal(project.workItem.status, "completed");
-    assert.deepEqual(project.events.map((event) => event.eventType), ["linear.project_created", "linear.project_completed"]);
+    assert.deepEqual(
+      project.events.map((event) => event.eventType),
+      ["linear.project_created", "linear.project_completed"],
+    );
     assert.equal(project.events[1]?.metadata?.["conservative"], true);
   });
 });

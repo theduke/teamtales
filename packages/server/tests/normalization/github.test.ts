@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { normalizeGitHubPullRequest, normalizeGitHubPullRequestReview } from "../../src/normalization/index.js";
+import {
+  normalizeGitHubPullRequest,
+  normalizeGitHubPullRequestReview,
+} from "../../src/normalization/index.js";
 
 describe("GitHub normalization", () => {
   it("normalizes a merged pull request into a work item and exact lifecycle events", () => {

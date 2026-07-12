@@ -17,7 +17,10 @@ import {
   workItemId,
 } from "./common.js";
 
-export function normalizeGitHubPullRequest(raw: SourceRecord, context: NormalizationContext = {}): WorkItemNormalizationResult {
+export function normalizeGitHubPullRequest(
+  raw: SourceRecord,
+  context: NormalizationContext = {},
+): WorkItemNormalizationResult {
   const externalId = requiredString(raw, ["id", "node_id", "number"], "GitHub pull request");
   const number = numberField(raw, "number");
   const title = requiredTitle(raw, "GitHub pull request");
@@ -50,40 +53,49 @@ export function normalizeGitHubPullRequest(raw: SourceRecord, context: Normaliza
   const events: ActivityEvent[] = [];
 
   if (createdAt) {
-    events.push(githubEvent("github.pr_opened", externalId, createdAt, title, {
-      actorPersonId: actor,
-      workItemId: id,
-      repositoryId: context.repositoryId,
-      url,
-      sourceRef: source,
-      metadata: number === undefined ? undefined : { number },
-    }));
+    events.push(
+      githubEvent("github.pr_opened", externalId, createdAt, title, {
+        actorPersonId: actor,
+        workItemId: id,
+        repositoryId: context.repositoryId,
+        url,
+        sourceRef: source,
+        metadata: number === undefined ? undefined : { number },
+      }),
+    );
   }
 
   if (mergedAt) {
-    events.push(githubEvent("github.pr_merged", externalId, mergedAt, title, {
-      actorPersonId: actorId("github", objectField(raw, "merged_by")) ?? actor,
-      workItemId: id,
-      repositoryId: context.repositoryId,
-      url,
-      sourceRef: source,
-      metadata: number === undefined ? undefined : { number },
-    }));
+    events.push(
+      githubEvent("github.pr_merged", externalId, mergedAt, title, {
+        actorPersonId: actorId("github", objectField(raw, "merged_by")) ?? actor,
+        workItemId: id,
+        repositoryId: context.repositoryId,
+        url,
+        sourceRef: source,
+        metadata: number === undefined ? undefined : { number },
+      }),
+    );
   } else if (closedAt && stringField(raw, "state") === "closed") {
-    events.push(githubEvent("github.pr_closed", externalId, closedAt, title, {
-      actorPersonId: actor,
-      workItemId: id,
-      repositoryId: context.repositoryId,
-      url,
-      sourceRef: source,
-      metadata: number === undefined ? undefined : { number },
-    }));
+    events.push(
+      githubEvent("github.pr_closed", externalId, closedAt, title, {
+        actorPersonId: actor,
+        workItemId: id,
+        repositoryId: context.repositoryId,
+        url,
+        sourceRef: source,
+        metadata: number === undefined ? undefined : { number },
+      }),
+    );
   }
 
   return { workItem, events };
 }
 
-export function normalizeGitHubIssue(raw: SourceRecord, context: NormalizationContext = {}): WorkItemNormalizationResult {
+export function normalizeGitHubIssue(
+  raw: SourceRecord,
+  context: NormalizationContext = {},
+): WorkItemNormalizationResult {
   const externalId = requiredString(raw, ["id", "node_id", "number"], "GitHub issue");
   const number = numberField(raw, "number");
   const title = requiredTitle(raw, "GitHub issue");
@@ -114,32 +126,43 @@ export function normalizeGitHubIssue(raw: SourceRecord, context: NormalizationCo
   const actor = actorId("github", objectField(raw, "user"));
   const events: ActivityEvent[] = [];
   if (createdAt) {
-    events.push(githubEvent("github.issue_opened", externalId, createdAt, title, {
-      actorPersonId: actor,
-      workItemId: id,
-      repositoryId: context.repositoryId,
-      url,
-      sourceRef: source,
-      metadata: number === undefined ? undefined : { number },
-    }));
+    events.push(
+      githubEvent("github.issue_opened", externalId, createdAt, title, {
+        actorPersonId: actor,
+        workItemId: id,
+        repositoryId: context.repositoryId,
+        url,
+        sourceRef: source,
+        metadata: number === undefined ? undefined : { number },
+      }),
+    );
   }
   if (closedAt && stringField(raw, "state") === "closed") {
-    events.push(githubEvent("github.issue_closed", externalId, closedAt, title, {
-      actorPersonId: actor,
-      workItemId: id,
-      repositoryId: context.repositoryId,
-      url,
-      sourceRef: source,
-      metadata: number === undefined ? undefined : { number },
-    }));
+    events.push(
+      githubEvent("github.issue_closed", externalId, closedAt, title, {
+        actorPersonId: actor,
+        workItemId: id,
+        repositoryId: context.repositoryId,
+        url,
+        sourceRef: source,
+        metadata: number === undefined ? undefined : { number },
+      }),
+    );
   }
 
   return { workItem, events };
 }
 
-export function normalizeGitHubPullRequestReview(raw: SourceRecord, context: NormalizationContext = {}): ActivityEvent {
+export function normalizeGitHubPullRequestReview(
+  raw: SourceRecord,
+  context: NormalizationContext = {},
+): ActivityEvent {
   const externalId = requiredString(raw, ["id", "node_id"], "GitHub pull request review");
-  const occurredAt = requiredString(raw, ["submitted_at", "created_at", "updated_at"], "GitHub pull request review");
+  const occurredAt = requiredString(
+    raw,
+    ["submitted_at", "created_at", "updated_at"],
+    "GitHub pull request review",
+  );
   const title = reviewTitle(raw);
 
   return githubEvent("github.pr_reviewed", externalId, occurredAt, title, {
@@ -155,26 +178,42 @@ export function normalizeGitHubPullRequestReview(raw: SourceRecord, context: Nor
   });
 }
 
-export function normalizeGitHubPullRequestComment(raw: SourceRecord, context: NormalizationContext = {}): ActivityEvent {
+export function normalizeGitHubPullRequestComment(
+  raw: SourceRecord,
+  context: NormalizationContext = {},
+): ActivityEvent {
   const externalId = requiredString(raw, ["id", "node_id"], "GitHub pull request comment");
-  const occurredAt = requiredString(raw, ["created_at", "updated_at"], "GitHub pull request comment");
+  const occurredAt = requiredString(
+    raw,
+    ["created_at", "updated_at"],
+    "GitHub pull request comment",
+  );
   const body = stringField(raw, "body");
 
-  return githubEvent("github.pr_review_commented", externalId, occurredAt, "Reviewed pull request code", {
-    actorPersonId: actorId("github", objectField(raw, "user")),
-    workItemId: context.workItemId,
-    repositoryId: context.repositoryId,
-    body,
-    url: stringField(raw, "html_url"),
-    sourceRef: sourceRef("github.pull_request_comment", externalId, context.sourceObjectId),
-    metadata: {
-      path: stringField(raw, "path"),
-      pullRequestUrl: stringField(raw, "pull_request_url"),
+  return githubEvent(
+    "github.pr_review_commented",
+    externalId,
+    occurredAt,
+    "Reviewed pull request code",
+    {
+      actorPersonId: actorId("github", objectField(raw, "user")),
+      workItemId: context.workItemId,
+      repositoryId: context.repositoryId,
+      body,
+      url: stringField(raw, "html_url"),
+      sourceRef: sourceRef("github.pull_request_comment", externalId, context.sourceObjectId),
+      metadata: {
+        path: stringField(raw, "path"),
+        pullRequestUrl: stringField(raw, "pull_request_url"),
+      },
     },
-  });
+  );
 }
 
-export function normalizeGitHubIssueComment(raw: SourceRecord, context: NormalizationContext = {}): ActivityEvent {
+export function normalizeGitHubIssueComment(
+  raw: SourceRecord,
+  context: NormalizationContext = {},
+): ActivityEvent {
   const externalId = requiredString(raw, ["id", "node_id"], "GitHub issue comment");
   const occurredAt = requiredString(raw, ["created_at", "updated_at"], "GitHub issue comment");
   const body = stringField(raw, "body");
@@ -192,20 +231,30 @@ export function normalizeGitHubIssueComment(raw: SourceRecord, context: Normaliz
   });
 }
 
-export function normalizeGitHubCommit(raw: SourceRecord, context: NormalizationContext = {}): ActivityEvent {
+export function normalizeGitHubCommit(
+  raw: SourceRecord,
+  context: NormalizationContext = {},
+): ActivityEvent {
   const externalId = requiredString(raw, ["sha", "node_id"], "GitHub commit");
   const commit = objectField(raw, "commit");
   const author = commit ? objectField(commit, "author") : undefined;
-  const occurredAt = stringField(author ?? {}, "date") ?? requiredString(raw, ["created_at"], "GitHub commit");
+  const occurredAt =
+    stringField(author ?? {}, "date") ?? requiredString(raw, ["created_at"], "GitHub commit");
   const message = commit ? stringField(commit, "message") : undefined;
 
-  return githubEvent("github.commit_authored", externalId, occurredAt, firstLine(message) ?? "Authored commit", {
-    actorPersonId: actorId("github", objectField(raw, "author")),
-    repositoryId: context.repositoryId,
-    body: message,
-    url: stringField(raw, "html_url"),
-    sourceRef: sourceRef("github.commit", externalId, context.sourceObjectId),
-  });
+  return githubEvent(
+    "github.commit_authored",
+    externalId,
+    occurredAt,
+    firstLine(message) ?? "Authored commit",
+    {
+      actorPersonId: actorId("github", objectField(raw, "author")),
+      repositoryId: context.repositoryId,
+      body: message,
+      url: stringField(raw, "html_url"),
+      sourceRef: sourceRef("github.commit", externalId, context.sourceObjectId),
+    },
+  );
 }
 
 function githubEvent(

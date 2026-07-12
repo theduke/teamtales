@@ -45,20 +45,37 @@ export async function resolveReportContext(
 
   const scope = resolveScope(input);
   const [storedOrganizationName, events, freshness] = await Promise.all([
-    input.organizationName ? Promise.resolve(input.organizationName) : readOrganizationName(database, input.organizationId),
+    input.organizationName
+      ? Promise.resolve(input.organizationName)
+      : readOrganizationName(database, input.organizationId),
     readActivityEvents(database, input.organizationId, input.periodStart, input.periodEnd, scope),
     databaseFreshness(database, input.organizationId),
   ]);
-  const workItemIds = new Set(events.map((event) => event.workItemId).filter((id): id is string => id !== undefined));
-  const personIds = new Set(events.map((event) => event.actorPersonId).filter((id): id is string => id !== undefined));
+  const workItemIds = new Set(
+    events.map((event) => event.workItemId).filter((id): id is string => id !== undefined),
+  );
+  const personIds = new Set(
+    events.map((event) => event.actorPersonId).filter((id): id is string => id !== undefined),
+  );
   const [selectedWorkItems, selectedPeople] = await Promise.all([
-    readWorkItems(database, input.organizationId, scope.type === "organization" ? undefined : workItemIds),
-    readPeople(database, input.organizationId, scope.type === "organization" ? undefined : personIds),
+    readWorkItems(
+      database,
+      input.organizationId,
+      scope.type === "organization" ? undefined : workItemIds,
+    ),
+    readPeople(
+      database,
+      input.organizationId,
+      scope.type === "organization" ? undefined : personIds,
+    ),
   ]);
 
   return {
     context: buildReportContext({
-      organization: { id: input.organizationId, name: storedOrganizationName ?? input.organizationId },
+      organization: {
+        id: input.organizationId,
+        name: storedOrganizationName ?? input.organizationId,
+      },
       scope,
       period: { start: input.periodStart, end: input.periodEnd },
       freshness,
@@ -106,24 +123,29 @@ export async function readActivityEvents(
   const scopedColumn = scopeEventColumn(scope);
   if (scope && scopedColumn) clauses.push(eq(scopedColumn, scope.id));
 
-  const rows = await database.select().from(activityEvents).where(and(...clauses))
+  const rows = await database
+    .select()
+    .from(activityEvents)
+    .where(and(...clauses))
     .orderBy(asc(activityEvents.occurredAt), asc(activityEvents.id));
-  return rows.map((row) => stripUndefined({
-    id: row.id,
-    provider: row.provider as Provider,
-    eventType: row.eventType,
-    actorPersonId: row.actorPersonId ?? undefined,
-    workItemId: row.workItemId ?? undefined,
-    repositoryId: row.repositoryId ?? undefined,
-    linearTeamId: row.linearTeamId ?? undefined,
-    linearProjectId: row.linearProjectId ?? undefined,
-    occurredAt: row.occurredAt,
-    title: row.title,
-    body: row.body ?? undefined,
-    url: row.url ?? undefined,
-    sourceRef: row.sourceObjectId ? `source_object:${row.sourceObjectId}` : undefined,
-    metadata: parseJsonObject(row.metadataJson),
-  }));
+  return rows.map((row) =>
+    stripUndefined({
+      id: row.id,
+      provider: row.provider as Provider,
+      eventType: row.eventType,
+      actorPersonId: row.actorPersonId ?? undefined,
+      workItemId: row.workItemId ?? undefined,
+      repositoryId: row.repositoryId ?? undefined,
+      linearTeamId: row.linearTeamId ?? undefined,
+      linearProjectId: row.linearProjectId ?? undefined,
+      occurredAt: row.occurredAt,
+      title: row.title,
+      body: row.body ?? undefined,
+      url: row.url ?? undefined,
+      sourceRef: row.sourceObjectId ? `source_object:${row.sourceObjectId}` : undefined,
+      metadata: parseJsonObject(row.metadataJson),
+    }),
+  );
 }
 
 export async function readWorkItems(
@@ -135,21 +157,26 @@ export async function readWorkItems(
   const clauses: SQL[] = [eq(workItems.organizationId, organizationId)];
   if (workItemIds) clauses.push(inArray(workItems.id, [...workItemIds]));
 
-  const rows = await database.select().from(workItems).where(and(...clauses))
+  const rows = await database
+    .select()
+    .from(workItems)
+    .where(and(...clauses))
     .orderBy(asc(workItems.updatedAtSource), asc(workItems.id));
-  return rows.map((row) => stripUndefined({
-    id: row.id,
-    provider: row.provider as Provider,
-    sourceType: row.workType as WorkItem["sourceType"],
-    externalId: row.externalId,
-    title: row.title,
-    url: row.url ?? undefined,
-    status: row.status as WorkItem["status"],
-    createdAtSource: row.createdAtSource ?? undefined,
-    updatedAtSource: row.updatedAtSource ?? undefined,
-    startedAt: row.startedAt ?? undefined,
-    completedAt: row.completedAt ?? undefined,
-  }));
+  return rows.map((row) =>
+    stripUndefined({
+      id: row.id,
+      provider: row.provider as Provider,
+      sourceType: row.workType as WorkItem["sourceType"],
+      externalId: row.externalId,
+      title: row.title,
+      url: row.url ?? undefined,
+      status: row.status as WorkItem["status"],
+      createdAtSource: row.createdAtSource ?? undefined,
+      updatedAtSource: row.updatedAtSource ?? undefined,
+      startedAt: row.startedAt ?? undefined,
+      completedAt: row.completedAt ?? undefined,
+    }),
+  );
 }
 
 export async function readPeople(
@@ -160,8 +187,11 @@ export async function readPeople(
   if (personIds?.size === 0) return [];
   const clauses: SQL[] = [eq(people.organizationId, organizationId)];
   if (personIds) clauses.push(inArray(people.id, [...personIds]));
-  const rows = await database.select({ id: people.id, displayName: people.displayName }).from(people)
-    .where(and(...clauses)).orderBy(asc(people.displayName), asc(people.id));
+  const rows = await database
+    .select({ id: people.id, displayName: people.displayName })
+    .from(people)
+    .where(and(...clauses))
+    .orderBy(asc(people.displayName), asc(people.id));
   return rows;
 }
 
@@ -169,21 +199,33 @@ export async function databaseFreshness(
   database: PersistenceDatabase,
   organizationId: string,
 ): Promise<AnalysisInput["freshness"]> {
-  const rows = await database.select({ provider: syncScopes.provider, lastSuccessAt: syncScopes.lastSuccessAt })
-    .from(syncScopes).where(eq(syncScopes.organizationId, organizationId)).orderBy(asc(syncScopes.provider));
+  const rows = await database
+    .select({ provider: syncScopes.provider, lastSuccessAt: syncScopes.lastSuccessAt })
+    .from(syncScopes)
+    .where(eq(syncScopes.organizationId, organizationId))
+    .orderBy(asc(syncScopes.provider));
   const freshness: { github?: string; linear?: string; warnings: string[] } = { warnings: [] };
   for (const row of rows) {
-    if ((row.provider === "github" || row.provider === "linear") && row.lastSuccessAt &&
-        (!freshness[row.provider] || row.lastSuccessAt > freshness[row.provider]!)) {
+    if (
+      (row.provider === "github" || row.provider === "linear") &&
+      row.lastSuccessAt &&
+      (!freshness[row.provider] || row.lastSuccessAt > freshness[row.provider]!)
+    ) {
       freshness[row.provider] = row.lastSuccessAt;
     }
   }
   return freshness;
 }
 
-async function readOrganizationName(database: PersistenceDatabase, organizationId: string): Promise<string | undefined> {
-  const [row] = await database.select({ name: organizations.name }).from(organizations)
-    .where(eq(organizations.id, organizationId)).limit(1);
+async function readOrganizationName(
+  database: PersistenceDatabase,
+  organizationId: string,
+): Promise<string | undefined> {
+  const [row] = await database
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .limit(1);
   return row?.name;
 }
 
@@ -197,12 +239,17 @@ function resolveScope(input: ResolveReportContextInput): ScopeRef {
 
 function scopeEventColumn(scope: ScopeRef | undefined) {
   switch (scope?.type) {
-    case "github_repository": return activityEvents.repositoryId;
-    case "linear_team": return activityEvents.linearTeamId;
-    case "linear_project": return activityEvents.linearProjectId;
-    case "person": return activityEvents.actorPersonId;
+    case "github_repository":
+      return activityEvents.repositoryId;
+    case "linear_team":
+      return activityEvents.linearTeamId;
+    case "linear_project":
+      return activityEvents.linearProjectId;
+    case "person":
+      return activityEvents.actorPersonId;
     case "organization":
-    case undefined: return undefined;
+    case undefined:
+      return undefined;
   }
 }
 

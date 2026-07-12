@@ -12,7 +12,12 @@ import {
   sourceObjects,
   workItems,
 } from "../db/schema.js";
-import { jsonStringify, parseJsonObject, type PersistenceDatabase, withTransaction } from "./database.js";
+import {
+  jsonStringify,
+  parseJsonObject,
+  type PersistenceDatabase,
+  withTransaction,
+} from "./database.js";
 
 export type ReportType = "weekly" | "monthly" | "quarterly" | "custom";
 export type ReportStatus = "draft" | "completed" | "failed";
@@ -58,11 +63,22 @@ export interface SaveCompleteReportResultInput {
   inputs: readonly Omit<ReportInputRecord, "reportId">[];
 }
 
-export interface SavedReportResult { report: ReportRecord; inputs: ReportInputRecord[] }
+export interface SavedReportResult {
+  report: ReportRecord;
+  inputs: ReportInputRecord[];
+}
 
-export async function insertReport(database: PersistenceDatabase, report: ReportRecord): Promise<ReportRecord> {
-  await requireReferencedAnalysisContext(database, report.organizationId, report.analysisReportContextId);
-  if (report.createdByUserId) await requireUserMembership(database, report.organizationId, report.createdByUserId);
+export async function insertReport(
+  database: PersistenceDatabase,
+  report: ReportRecord,
+): Promise<ReportRecord> {
+  await requireReferencedAnalysisContext(
+    database,
+    report.organizationId,
+    report.analysisReportContextId,
+  );
+  if (report.createdByUserId)
+    await requireUserMembership(database, report.organizationId, report.createdByUserId);
 
   await database.insert(reports).values({
     id: report.id,
@@ -83,7 +99,10 @@ export async function insertReport(database: PersistenceDatabase, report: Report
   return requireReport(database, report.id);
 }
 
-export async function insertReportInput(database: PersistenceDatabase, input: ReportInputRecord): Promise<ReportInputRecord> {
+export async function insertReportInput(
+  database: PersistenceDatabase,
+  input: ReportInputRecord,
+): Promise<ReportInputRecord> {
   const report = await requireReport(database, input.reportId);
   await requireReportInputReference(database, report.organizationId, input);
   await database.insert(reportInputs).values({
@@ -110,7 +129,10 @@ export async function saveCompleteReportResult(
   });
 }
 
-export async function getReport(database: PersistenceDatabase, id: string): Promise<ReportRecord | undefined> {
+export async function getReport(
+  database: PersistenceDatabase,
+  id: string,
+): Promise<ReportRecord | undefined> {
   const [row] = await database.select().from(reports).where(eq(reports.id, id)).limit(1);
   return row ? mapReport(row) : undefined;
 }
@@ -120,20 +142,31 @@ export async function getReportForOrganization(
   organizationId: string,
   id: string,
 ): Promise<ReportRecord | undefined> {
-  const [row] = await database.select().from(reports).where(and(
-    eq(reports.organizationId, organizationId), eq(reports.id, id),
-  )).limit(1);
+  const [row] = await database
+    .select()
+    .from(reports)
+    .where(and(eq(reports.organizationId, organizationId), eq(reports.id, id)))
+    .limit(1);
   return row ? mapReport(row) : undefined;
 }
 
-export async function requireReport(database: PersistenceDatabase, id: string): Promise<ReportRecord> {
+export async function requireReport(
+  database: PersistenceDatabase,
+  id: string,
+): Promise<ReportRecord> {
   const report = await getReport(database, id);
   if (!report) throw new Error(`Report not found: ${id}`);
   return report;
 }
 
-export async function listReportInputs(database: PersistenceDatabase, reportId: string): Promise<ReportInputRecord[]> {
-  const rows = await database.select().from(reportInputs).where(eq(reportInputs.reportId, reportId))
+export async function listReportInputs(
+  database: PersistenceDatabase,
+  reportId: string,
+): Promise<ReportInputRecord[]> {
+  const rows = await database
+    .select()
+    .from(reportInputs)
+    .where(eq(reportInputs.reportId, reportId))
     .orderBy(asc(reportInputs.id));
   return rows.map(mapReportInput);
 }
@@ -143,14 +176,19 @@ export async function listReportInputsForOrganization(
   organizationId: string,
   reportId: string,
 ): Promise<ReportInputRecord[]> {
-  const rows = await database.select({ input: reportInputs }).from(reportInputs)
+  const rows = await database
+    .select({ input: reportInputs })
+    .from(reportInputs)
     .innerJoin(reports, eq(reports.id, reportInputs.reportId))
     .where(and(eq(reports.organizationId, organizationId), eq(reportInputs.reportId, reportId)))
     .orderBy(asc(reportInputs.id));
   return rows.map(({ input }) => mapReportInput(input));
 }
 
-export async function requireReportInput(database: PersistenceDatabase, id: string): Promise<ReportInputRecord> {
+export async function requireReportInput(
+  database: PersistenceDatabase,
+  id: string,
+): Promise<ReportInputRecord> {
   const [row] = await database.select().from(reportInputs).where(eq(reportInputs.id, id)).limit(1);
   if (!row) throw new Error(`Report input not found: ${id}`);
   return mapReportInput(row);
@@ -161,19 +199,40 @@ async function requireReferencedAnalysisContext(
   organizationId: string,
   contextId: string,
 ): Promise<void> {
-  const [row] = await database.select({ id: analysisReportContexts.id }).from(analysisReportContexts).where(and(
-    eq(analysisReportContexts.organizationId, organizationId), eq(analysisReportContexts.id, contextId),
-  )).limit(1);
-  if (!row) throw new Error(`Analysis report context not found in organization ${organizationId}: ${contextId}`);
+  const [row] = await database
+    .select({ id: analysisReportContexts.id })
+    .from(analysisReportContexts)
+    .where(
+      and(
+        eq(analysisReportContexts.organizationId, organizationId),
+        eq(analysisReportContexts.id, contextId),
+      ),
+    )
+    .limit(1);
+  if (!row)
+    throw new Error(
+      `Analysis report context not found in organization ${organizationId}: ${contextId}`,
+    );
 }
 
-async function requireUserMembership(database: PersistenceDatabase, organizationId: string, userId: string): Promise<void> {
-  const [row] = await database.select({ id: organizationMemberships.id }).from(organizationMemberships).where(and(
-    eq(organizationMemberships.organizationId, organizationId),
-    eq(organizationMemberships.userId, userId),
-    eq(organizationMemberships.status, "active"),
-  )).limit(1);
-  if (!row) throw new Error(`Active organization membership not found: ${organizationId}/${userId}`);
+async function requireUserMembership(
+  database: PersistenceDatabase,
+  organizationId: string,
+  userId: string,
+): Promise<void> {
+  const [row] = await database
+    .select({ id: organizationMemberships.id })
+    .from(organizationMemberships)
+    .where(
+      and(
+        eq(organizationMemberships.organizationId, organizationId),
+        eq(organizationMemberships.userId, userId),
+        eq(organizationMemberships.status, "active"),
+      ),
+    )
+    .limit(1);
+  if (!row)
+    throw new Error(`Active organization membership not found: ${organizationId}/${userId}`);
 }
 
 async function requireReportInputReference(
@@ -183,16 +242,117 @@ async function requireReportInputReference(
 ): Promise<void> {
   let exists = false;
   switch (input.inputType) {
-    case "analysis_report_context": exists = Boolean((await database.select({ id: analysisReportContexts.id }).from(analysisReportContexts).where(and(eq(analysisReportContexts.organizationId, organizationId), eq(analysisReportContexts.id, input.inputId))).limit(1))[0]); break;
-    case "analysis_metric": exists = Boolean((await database.select({ id: analysisMetrics.id }).from(analysisMetrics).where(and(eq(analysisMetrics.organizationId, organizationId), eq(analysisMetrics.id, input.inputId))).limit(1))[0]); break;
-    case "analysis_highlight": exists = Boolean((await database.select({ id: analysisHighlights.id }).from(analysisHighlights).where(and(eq(analysisHighlights.organizationId, organizationId), eq(analysisHighlights.id, input.inputId))).limit(1))[0]); break;
-    case "activity_event": exists = Boolean((await database.select({ id: activityEvents.id }).from(activityEvents).where(and(eq(activityEvents.organizationId, organizationId), eq(activityEvents.id, input.inputId))).limit(1))[0]); break;
-    case "work_item": exists = Boolean((await database.select({ id: workItems.id }).from(workItems).where(and(eq(workItems.organizationId, organizationId), eq(workItems.id, input.inputId))).limit(1))[0]); break;
-    case "source_object": exists = Boolean((await database.select({ id: sourceObjects.id }).from(sourceObjects).where(and(eq(sourceObjects.organizationId, organizationId), eq(sourceObjects.id, input.inputId))).limit(1))[0]); break;
-    case "previous_report": exists = Boolean((await database.select({ id: reports.id }).from(reports).where(and(eq(reports.organizationId, organizationId), eq(reports.id, input.inputId))).limit(1))[0]); break;
-    default: return;
+    case "analysis_report_context":
+      exists = Boolean(
+        (
+          await database
+            .select({ id: analysisReportContexts.id })
+            .from(analysisReportContexts)
+            .where(
+              and(
+                eq(analysisReportContexts.organizationId, organizationId),
+                eq(analysisReportContexts.id, input.inputId),
+              ),
+            )
+            .limit(1)
+        )[0],
+      );
+      break;
+    case "analysis_metric":
+      exists = Boolean(
+        (
+          await database
+            .select({ id: analysisMetrics.id })
+            .from(analysisMetrics)
+            .where(
+              and(
+                eq(analysisMetrics.organizationId, organizationId),
+                eq(analysisMetrics.id, input.inputId),
+              ),
+            )
+            .limit(1)
+        )[0],
+      );
+      break;
+    case "analysis_highlight":
+      exists = Boolean(
+        (
+          await database
+            .select({ id: analysisHighlights.id })
+            .from(analysisHighlights)
+            .where(
+              and(
+                eq(analysisHighlights.organizationId, organizationId),
+                eq(analysisHighlights.id, input.inputId),
+              ),
+            )
+            .limit(1)
+        )[0],
+      );
+      break;
+    case "activity_event":
+      exists = Boolean(
+        (
+          await database
+            .select({ id: activityEvents.id })
+            .from(activityEvents)
+            .where(
+              and(
+                eq(activityEvents.organizationId, organizationId),
+                eq(activityEvents.id, input.inputId),
+              ),
+            )
+            .limit(1)
+        )[0],
+      );
+      break;
+    case "work_item":
+      exists = Boolean(
+        (
+          await database
+            .select({ id: workItems.id })
+            .from(workItems)
+            .where(
+              and(eq(workItems.organizationId, organizationId), eq(workItems.id, input.inputId)),
+            )
+            .limit(1)
+        )[0],
+      );
+      break;
+    case "source_object":
+      exists = Boolean(
+        (
+          await database
+            .select({ id: sourceObjects.id })
+            .from(sourceObjects)
+            .where(
+              and(
+                eq(sourceObjects.organizationId, organizationId),
+                eq(sourceObjects.id, input.inputId),
+              ),
+            )
+            .limit(1)
+        )[0],
+      );
+      break;
+    case "previous_report":
+      exists = Boolean(
+        (
+          await database
+            .select({ id: reports.id })
+            .from(reports)
+            .where(and(eq(reports.organizationId, organizationId), eq(reports.id, input.inputId)))
+            .limit(1)
+        )[0],
+      );
+      break;
+    default:
+      return;
   }
-  if (!exists) throw new Error(`${input.inputType} input not found in organization ${organizationId}: ${input.inputId}`);
+  if (!exists)
+    throw new Error(
+      `${input.inputType} input not found in organization ${organizationId}: ${input.inputId}`,
+    );
 }
 
 function mapReport(row: typeof reports.$inferSelect): ReportRecord {
