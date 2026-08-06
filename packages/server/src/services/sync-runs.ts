@@ -427,6 +427,7 @@ async function runGitHubOrganizationDiscoveryStep(
       error instanceof Error ? error.message : String(error),
       resourceId(discoveryRun),
       retryAt,
+      dateFromString(discoveryRun.startedAt) ?? now,
     );
   } finally {
     lease.stop();
@@ -950,7 +951,19 @@ export async function runProviderSyncService(
     );
     const retryAt = error instanceof GitHubRateLimitError ? error.retryAt : undefined;
     runLog.error({ err: error, retryAt: retryAt?.toISOString() }, "Provider sync failed");
-    await finishFailedSyncRun(database, runId, now, message, providerResourceId, retryAt);
+    const markedFailed = await finishFailedSyncRun(
+      database,
+      runId,
+      now,
+      message,
+      providerResourceId,
+      retryAt,
+      run.startedAt,
+    );
+    if (!markedFailed) {
+      runLog.warn("Provider sync lost its claim lease while handling a failure");
+      return queuedSyncResult(input.provider, runId, "running", "Another worker owns this sync run.");
+    }
     return {
       provider: input.provider,
       status: "failed",
@@ -1781,43 +1794,68 @@ async function finishFailedSyncRun(
   error: string,
   providerResourceId?: string,
   retryAt?: Date,
-): Promise<void> {
-  const [run] = await database
-    .select({ attempt: syncRuns.attempt, provider: syncRuns.provider })
-    .from(syncRuns)
-    .where(eq(syncRuns.id, runId))
-    .limit(1);
-  const terminal = (run?.attempt ?? 1) >= 3;
-  const retryTimestamp = (
-    retryAt && retryAt > now ? retryAt : new Date(now.getTime() + 60_000)
-  ).toISOString();
-  await database
-    .update(syncRuns)
-    .set({
-      status: terminal ? "failed" : "queued",
-      ...(terminal
-        ? { finishedAt: now.toISOString(), nextAttemptAt: null }
-        : {
-            nextAttemptAt: retryTimestamp,
-            queuedAt: now.toISOString(),
-            attempt: (run?.attempt ?? 1) + 1,
-          }),
-      objectsFailed: 1,
-      error,
-      leaseExpiresAt: null,
-    })
-    .where(eq(syncRuns.id, runId));
-  if (providerResourceId)
-    await updateResourceLifecycle(database, run?.provider ?? "linear", [providerResourceId], {
-      syncStatus: terminal ? "failed" : "queued",
-      ...(terminal
-        ? { currentSyncRunId: null, nextAttemptAt: null }
-        : { currentSyncRunId: null, nextAttemptAt: retryTimestamp }),
-      lastSyncFailedAt: now.toISOString(),
-      lastSyncError: error,
-      consecutiveFailureCount: run?.attempt ?? 1,
-      updatedAt: now.toISOString(),
-    });
+  claimStartedAt?: Date,
+): Promise<boolean> {
+  return database.transaction(async (transaction) => {
+    const [run] = await transaction
+      .select({
+        attempt: syncRuns.attempt,
+        provider: syncRuns.provider,
+        status: syncRuns.status,
+        startedAt: syncRuns.startedAt,
+      })
+      .from(syncRuns)
+      .where(eq(syncRuns.id, runId))
+      .limit(1);
+    if (
+      !run ||
+      (claimStartedAt &&
+        (run.status !== "running" || run.startedAt !== claimStartedAt.toISOString()))
+    ) {
+      return false;
+    }
+    const terminal = run.attempt >= 3;
+    const retryTimestamp = (
+      retryAt && retryAt > now ? retryAt : new Date(now.getTime() + 60_000)
+    ).toISOString();
+    const result = await transaction
+      .update(syncRuns)
+      .set({
+        status: terminal ? "failed" : "queued",
+        ...(terminal
+          ? { finishedAt: now.toISOString(), nextAttemptAt: null }
+          : {
+              nextAttemptAt: retryTimestamp,
+              queuedAt: now.toISOString(),
+              attempt: run.attempt + 1,
+            }),
+        objectsFailed: 1,
+        error,
+        leaseExpiresAt: null,
+      })
+      .where(
+        claimStartedAt
+          ? and(
+              eq(syncRuns.id, runId),
+              eq(syncRuns.status, "running"),
+              eq(syncRuns.startedAt, claimStartedAt.toISOString()),
+            )
+          : eq(syncRuns.id, runId),
+      );
+    if (updatedRows(result) !== 1) return false;
+    if (providerResourceId)
+      await updateResourceLifecycle(transaction, run.provider, [providerResourceId], {
+        syncStatus: terminal ? "failed" : "queued",
+        ...(terminal
+          ? { currentSyncRunId: null, nextAttemptAt: null }
+          : { currentSyncRunId: null, nextAttemptAt: retryTimestamp }),
+        lastSyncFailedAt: now.toISOString(),
+        lastSyncError: error,
+        consecutiveFailureCount: run.attempt,
+        updatedAt: now.toISOString(),
+      });
+    return true;
+  });
 }
 
 /** Mark a claimed queue row terminal when its immutable execution references are gone. */
