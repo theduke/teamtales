@@ -9,7 +9,6 @@ import type { SyncCursor } from "./sync.js";
 import { fetchConnection, LinearGraphqlClient } from "../providers/linear-client.js";
 
 const linearGraphqlEndpoint = "https://api.linear.app/graphql";
-const pageSize = 100;
 
 export const linearMvpObjectTypes = [
   "linear.workspace",
@@ -34,24 +33,7 @@ export interface LinearTeamScopeConfig {
   includeProjects?: boolean;
 }
 
-interface LinearGraphqlPage<TNode extends JsonValueObject> {
-  nodes: TNode[];
-  pageInfo: {
-    hasNextPage: boolean;
-    endCursor?: string | null;
-  };
-}
-
 type JsonValueObject = { [key: string]: JsonValue };
-
-type LinearConnectionName =
-  | "users"
-  | "teams"
-  | "projects"
-  | "workflowStates"
-  | "issueLabels"
-  | "issues"
-  | "comments";
 
 type WorkspaceAndViewerResponse = {
   viewer?: JsonValueObject | null;
@@ -213,90 +195,6 @@ export class LinearSourceConnector implements SourceConnector {
       cursorUpdates,
       metadata,
     };
-  }
-}
-
-class LegacyLinearGraphqlClient {
-  constructor(private readonly personalAccessToken: string) {
-    if (personalAccessToken.trim().length === 0) {
-      throw new Error("Linear personal access token is required");
-    }
-  }
-
-  async query<TData>(query: string, variables: JsonValueObject = {}): Promise<TData> {
-    const response = await fetch(linearGraphqlEndpoint, {
-      method: "POST",
-      headers: {
-        authorization: this.personalAccessToken,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ query, variables }),
-    });
-
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch (error) {
-      throw new Error(
-        `Linear GraphQL returned non-JSON response with status ${response.status}: ${errorMessage(error)}`,
-      );
-    }
-
-    if (!response.ok) {
-      throw new Error(
-        `Linear GraphQL request failed with status ${response.status}: ${graphqlErrorSummary(payload)}`,
-      );
-    }
-
-    if (!isRecord(payload)) {
-      throw new Error("Linear GraphQL returned an invalid response envelope");
-    }
-
-    const errors = Array.isArray(payload.errors) ? payload.errors : [];
-    if (errors.length > 0) {
-      throw new Error(`Linear GraphQL errors: ${errors.map(graphqlErrorMessage).join("; ")}`);
-    }
-
-    if (!isRecord(payload.data)) {
-      throw new Error("Linear GraphQL response did not include data");
-    }
-
-    return payload.data as TData;
-  }
-}
-
-async function legacyFetchConnection<TNode extends JsonValueObject>(
-  client: LegacyLinearGraphqlClient,
-  connectionName: LinearConnectionName,
-  query: string,
-  variables: JsonValueObject = {},
-): Promise<TNode[]> {
-  const nodes: TNode[] = [];
-  let after: string | undefined;
-
-  for (;;) {
-    const data = await client.query<
-      Record<LinearConnectionName, LinearGraphqlPage<TNode> | undefined>
-    >(query, {
-      ...variables,
-      first: pageSize,
-      after: after ?? null,
-    });
-    const page = data[connectionName];
-    if (!page || !Array.isArray(page.nodes) || !isRecord(page.pageInfo)) {
-      throw new Error(`Linear GraphQL response did not include ${connectionName} page data`);
-    }
-
-    nodes.push(...page.nodes);
-
-    if (!page.pageInfo.hasNextPage) {
-      return nodes;
-    }
-
-    after = page.pageInfo.endCursor ?? undefined;
-    if (!after) {
-      throw new Error(`Linear GraphQL ${connectionName} page is missing endCursor`);
-    }
   }
 }
 
@@ -496,31 +394,6 @@ function stripUndefinedJson(record: Record<string, JsonValue | undefined>): Json
 
 function isRecord(value: unknown): value is JsonValueObject {
   return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function graphqlErrorSummary(payload: unknown): string {
-  if (!isRecord(payload) || !Array.isArray(payload.errors)) {
-    return "no GraphQL error details";
-  }
-  return payload.errors.map(graphqlErrorMessage).join("; ");
-}
-
-function graphqlErrorMessage(error: unknown): string {
-  if (!isRecord(error)) {
-    return String(error);
-  }
-
-  const message = typeof error.message === "string" ? error.message : "unknown GraphQL error";
-  const path = Array.isArray(error.path) ? ` at ${error.path.join(".")}` : "";
-  const code =
-    isRecord(error.extensions) && typeof error.extensions.code === "string"
-      ? ` (${error.extensions.code})`
-      : "";
-  return `${message}${path}${code}`;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 const pageInfoFragment = `

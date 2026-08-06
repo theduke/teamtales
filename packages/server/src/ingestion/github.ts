@@ -291,88 +291,6 @@ export class GitHubSourceConnector implements SourceConnector {
   }
 }
 
-class LegacyGitHubRestClient {
-  requestsMade = 0;
-
-  constructor(
-    private readonly fetchImpl: FetchLike,
-    private readonly apiBaseUrl: string,
-    private readonly token: string,
-  ) {}
-
-  async getObject(path: string, query: Record<string, string> = {}): Promise<GitHubObject> {
-    const value = await this.getJson(path, query);
-    if (!isJsonObject(value)) {
-      throw new Error(`GitHub API returned a non-object response for ${path}`);
-    }
-
-    return value;
-  }
-
-  async *paginateObjects(
-    path: string,
-    query: Record<string, string> = {},
-  ): AsyncGenerator<GitHubObject> {
-    let url: string | undefined = this.buildUrl(path, query);
-
-    while (url) {
-      const response = await this.request(url);
-      const value = await response.json();
-      if (!Array.isArray(value)) {
-        throw new Error(`GitHub API returned a non-array response for ${path}`);
-      }
-
-      for (const item of value) {
-        if (!isJsonObject(item)) {
-          throw new Error(`GitHub API returned a non-object item for ${path}`);
-        }
-
-        yield item;
-      }
-
-      url = nextLink(response.headers.get("link"));
-    }
-  }
-
-  private async getJson(path: string, query: Record<string, string>): Promise<JsonValue> {
-    const response = await this.request(this.buildUrl(path, query));
-    const value = await response.json();
-    if (!isJsonValue(value)) {
-      throw new Error(`GitHub API returned a non-JSON response for ${path}`);
-    }
-
-    return value;
-  }
-
-  private async request(url: string): Promise<Response> {
-    this.requestsMade += 1;
-
-    const response = await this.fetchImpl(url, {
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${this.token}`,
-        "user-agent": "teamtales-github-sync",
-        "x-github-api-version": "2022-11-28",
-      },
-    });
-
-    if (response.ok) {
-      return response;
-    }
-
-    throw await githubApiError(response);
-  }
-
-  private buildUrl(path: string, query: Record<string, string>): string {
-    const url = new URL(path, `${this.apiBaseUrl}/`);
-    for (const [key, value] of Object.entries(query)) {
-      url.searchParams.set(key, value);
-    }
-
-    return url.toString();
-  }
-}
-
 class GitHubIncomingObjectFactory {
   constructor(private readonly context: ConnectorExecutionContext) {}
 
@@ -529,46 +447,6 @@ function objectField(value: JsonValue | undefined, key: string): GitHubObject | 
 
   const nested = value[key];
   return isJsonObject(nested) ? nested : undefined;
-}
-
-function nextLink(linkHeader: string | null): string | undefined {
-  if (!linkHeader) {
-    return undefined;
-  }
-
-  for (const part of linkHeader.split(",")) {
-    const match = /^\s*<([^>]+)>;\s*rel="([^"]+)"\s*$/.exec(part);
-    if (match?.[2] === "next") {
-      return match[1];
-    }
-  }
-
-  return undefined;
-}
-
-async function githubApiError(response: Response): Promise<Error> {
-  const rateLimitRemaining = response.headers.get("x-ratelimit-remaining");
-  const rateLimitReset = response.headers.get("x-ratelimit-reset");
-  const body = await safeErrorBody(response);
-  const prefix =
-    response.status === 403 && rateLimitRemaining === "0"
-      ? `GitHub API rate limit exceeded${rateLimitReset ? ` until ${new Date(Number(rateLimitReset) * 1000).toISOString()}` : ""}`
-      : `GitHub API request failed with ${response.status} ${response.statusText}`;
-
-  return new Error(body ? `${prefix}: ${body}` : prefix);
-}
-
-async function safeErrorBody(response: Response): Promise<string | undefined> {
-  try {
-    const value = await response.json();
-    if (isJsonObject(value) && typeof value.message === "string") {
-      return value.message;
-    }
-
-    return undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function isJsonObject(value: unknown): value is GitHubObject {
