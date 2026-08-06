@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { integrations, organizationMemberships, organizations, users } from "../db/schema.js";
 import { type PersistenceDatabase, withTransaction } from "./database.js";
+import type { MySqlTransaction } from "../db/mysql.js";
 
 export type OrganizationRole = "owner" | "admin" | "member" | "viewer";
 
@@ -47,47 +48,54 @@ export async function createOrganizationWithOwner(
   database: PersistenceDatabase,
   input: CreateOrganizationInput,
 ): Promise<CreatedOrganizationResult> {
-  return withTransaction(database, async (transaction) => {
-    const now = new Date().toISOString();
-    await transaction
-      .insert(organizations)
-      .values({ ...input.organization, createdAt: now, updatedAt: now });
-    await transaction
-      .insert(users)
-      .values({
-        id: input.owner.id,
-        displayName: input.owner.displayName,
-        primaryEmail: input.owner.primaryEmail ?? null,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onDuplicateKeyUpdate({
-        set: {
-          displayName: input.owner.displayName,
-          primaryEmail: sql`coalesce(${users.primaryEmail}, values(primary_email))`,
-          updatedAt: now,
-        },
-      });
-    await transaction.insert(organizationMemberships).values({
-      id: input.membershipId,
-      organizationId: input.organization.id,
-      userId: input.owner.id,
-      role: "owner",
-      status: "active",
+  return withTransaction(database, (transaction) =>
+    createOrganizationWithOwnerInTransaction(transaction, input),
+  );
+}
+
+export async function createOrganizationWithOwnerInTransaction(
+  transaction: MySqlTransaction,
+  input: CreateOrganizationInput,
+): Promise<CreatedOrganizationResult> {
+  const now = new Date().toISOString();
+  await transaction
+    .insert(organizations)
+    .values({ ...input.organization, createdAt: now, updatedAt: now });
+  await transaction
+    .insert(users)
+    .values({
+      id: input.owner.id,
+      displayName: input.owner.displayName,
+      primaryEmail: input.owner.primaryEmail ?? null,
       createdAt: now,
       updatedAt: now,
+    })
+    .onDuplicateKeyUpdate({
+      set: {
+        displayName: input.owner.displayName,
+        primaryEmail: sql`coalesce(${users.primaryEmail}, values(primary_email))`,
+        updatedAt: now,
+      },
     });
-
-    return {
-      organization: await requireOrganization(transaction, input.organization.id),
-      owner: await requireUser(transaction, input.owner.id),
-      membership: await requireOrganizationMembership(
-        transaction,
-        input.organization.id,
-        input.owner.id,
-      ),
-    };
+  await transaction.insert(organizationMemberships).values({
+    id: input.membershipId,
+    organizationId: input.organization.id,
+    userId: input.owner.id,
+    role: "owner",
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
   });
+
+  return {
+    organization: await requireOrganization(transaction, input.organization.id),
+    owner: await requireUser(transaction, input.owner.id),
+    membership: await requireOrganizationMembership(
+      transaction,
+      input.organization.id,
+      input.owner.id,
+    ),
+  };
 }
 
 export async function getOrganization(

@@ -35,6 +35,7 @@ import {
   addSyncScopeService,
   cancelProviderSyncRunService,
   createOrganizationService,
+  createOrganizationServiceInTransaction,
   generateWeeklyReportFromRequestService,
   enqueueProviderSyncService,
   listSyncRunResourceProgress,
@@ -251,21 +252,29 @@ async function createInitialOrganization(
     membershipId: optionalString(body, "membershipId"),
   };
 
-  const created = await input.context.database.transaction(async (transaction) => {
-    // InnoDB holds this next-key lock (including the empty-table gap) through
-    // commit, so a second bootstrap request must re-check after the first owner
-    // is durable instead of observing the same empty database.
-    const [existingUsers] = (await transaction.execute(
-      sql`SELECT id FROM users LIMIT 1 FOR UPDATE`,
-    )) as unknown as [{ id: string }[]];
-    if (existingUsers.length !== 0) {
+  let created: {
+    result: Awaited<ReturnType<typeof createOrganizationService>>;
+    sessionToken: string;
+  };
+  try {
+    created = await input.context.database.transaction(async (transaction) => {
+      const [existingUsers] = (await transaction.execute(
+        sql`SELECT id FROM users LIMIT 1 FOR UPDATE`,
+      )) as unknown as [{ id: string }[]];
+      if (existingUsers.length !== 0) {
+        throw new HttpError(401, "unauthorized", "Authentication is required.");
+      }
+      const result = await createOrganizationServiceInTransaction(transaction, organizationInput);
+      await setPassword(transaction, result.ownerUserId, password);
+      const session = await createSession(transaction, result.ownerUserId);
+      return { result, sessionToken: session.token };
+    });
+  } catch (error) {
+    if (isBootstrapConflict(error) && (await initialOwnerExists(input.context.database))) {
       throw new HttpError(401, "unauthorized", "Authentication is required.");
     }
-    const result = await createOrganizationService(transaction, organizationInput);
-    await setPassword(transaction, result.ownerUserId, password);
-    const session = await createSession(transaction, result.ownerUserId);
-    return { result, sessionToken: session.token };
-  });
+    throw error;
+  }
 
   return {
     status: 201,
@@ -278,6 +287,21 @@ async function createInitialOrganization(
       "set-cookie": sessionCookie(created.sessionToken, input.context.config.cookieSecure === true),
     },
   };
+}
+
+async function initialOwnerExists(database: DbExecutor): Promise<boolean> {
+  const [user] = await database.select({ id: users.id }).from(users).limit(1);
+  return user !== undefined;
+}
+
+function isBootstrapConflict(error: unknown): boolean {
+  let current = error;
+  while (current instanceof Error) {
+    const code = (current as Error & { code?: string }).code;
+    if (code === "ER_LOCK_DEADLOCK" || code === "ER_DUP_ENTRY") return true;
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 export async function listIntegrationsHandler(
