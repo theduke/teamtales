@@ -1,4 +1,4 @@
-import type { GitHubDiscoveryDto, JsonObject, LinearDiscoveryDto } from "@teamtales/common/api";
+import type { GitHubDiscoveryDto, LinearDiscoveryDto } from "@teamtales/common/api";
 import type { Provider } from "@teamtales/common/domain";
 import { GitHubRestClient, type FetchLike as GitHubFetchLike } from "./github-client.js";
 import {
@@ -114,11 +114,6 @@ async function collect<T>(items: AsyncIterable<T>): Promise<T[]> {
 }
 function text(value: unknown): string | undefined {
   return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
-}
-function object(value: unknown): JsonObject | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
 }
 const workspaceAndViewerQuery = `query LinearWorkspaceAndViewer { viewer { id name displayName email } organization { id name urlKey } }`;
 const teamsQuery = `query LinearTeams($first: Int!, $after: String) { teams(first: $first, after: $after) { nodes { id key name } pageInfo { hasNextPage endCursor } } }`;

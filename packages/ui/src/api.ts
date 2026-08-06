@@ -8,7 +8,6 @@ import type {
   DashboardDto,
   GitHubAnalyticsDto,
   AnalyticsScopeType,
-  DiscoveredResourceDto,
   GenerateReportResponseDto,
   GenerateWeeklyReportRequestDto,
   IntegrationSummaryDto,

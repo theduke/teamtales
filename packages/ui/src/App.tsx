@@ -49,7 +49,6 @@ import type {
   AnalyticsScopeType,
   DashboardDto,
   GitHubAnalyticsDto,
-  ListSourceObjectsResponseDto,
   OrganizationSyncStatusDto,
   ReportDetailDto,
   SourceObjectDto,
@@ -186,7 +185,7 @@ export function App(): ReactElement {
           setOrganizations(organizationItems);
           setSelectedOrganizationId(organizationItems[0]?.id ?? "");
         }
-      } catch (error) {
+      } catch {
         if (!cancelled) {
           setHealth("error");
           // Keep the current location and session state while the API is restarting.

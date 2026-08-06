@@ -16,7 +16,6 @@ import {
   linearTeams,
   linearWorkspaces,
   organizationMemberships,
-  organizations,
   people,
   providerResources,
   sourceObjects,

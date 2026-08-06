@@ -89,11 +89,6 @@ export function ProvidersSection({
       })
       .catch(onError);
   }, [dashboard?.syncScopes, integrationId, onError, organizationId]);
-  const toggle = (id: string, values: Set<string>, set: (value: Set<string>) => void) => {
-    const next = new Set(values);
-    next.has(id) ? next.delete(id) : next.add(id);
-    set(next);
-  };
   async function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (connecting || !organizationId) return;
@@ -349,7 +344,8 @@ function GitHubScopes({
   const update = (id: string, value: "all" | "selected") => setModes(new Map(modes).set(id, value));
   const toggle = (id: string) => {
     const next = new Set(repositoryIds);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     setRepositoryIds(next);
   };
   return (
@@ -430,7 +426,8 @@ function LinearScopes({
 }) {
   const toggle = (id: string) => {
     const next = new Set(teamIds);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     setTeamIds(next);
   };
   return (

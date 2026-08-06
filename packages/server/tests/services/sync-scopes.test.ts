@@ -57,7 +57,7 @@ describe("addSyncScopeService", mysqlTestOptions, () => {
           integrationId: linearId,
           provider: "linear",
           scopeType: "github.repository",
-          externalName: "acme\/widgets",
+          externalName: "acme/widgets",
         }),
         /not supported for provider linear/,
       );
