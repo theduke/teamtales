@@ -6,6 +6,8 @@ import type {
   CreateOrganizationRequestDto,
   CreateOrganizationResponseDto,
   DashboardDto,
+  GitHubAnalyticsDto,
+  AnalyticsScopeType,
   DiscoveredResourceDto,
   GenerateReportResponseDto,
   GenerateWeeklyReportRequestDto,
@@ -40,14 +42,20 @@ export type AuthSession =
   | { authenticated: true; bootstrapAllowed: false; user: AuthUser };
 
 export type LoginRequest = { email: string; password: string };
-export type BrowserCreateOrganizationRequest = Omit<CreateOrganizationRequestDto, "owner"> & {
+export type BrowserCreateOrganizationRequest = Omit<
+  CreateOrganizationRequestDto,
+  "owner"
+> & {
   owner?: {
     displayName?: string;
     primaryEmail?: string;
     password?: string;
   };
 };
-export type BrowserAddPatIntegrationRequest = Omit<AddPatIntegrationRequestDto, "userId">;
+export type BrowserAddPatIntegrationRequest = Omit<
+  AddPatIntegrationRequestDto,
+  "userId"
+>;
 export type BrowserAddSyncScopeRequest = Omit<AddSyncScopeRequestDto, "userId">;
 
 export class ApiClientError extends Error {
@@ -73,6 +81,23 @@ class BrowserTeamtalesApiClient {
     );
   }
 
+  getGitHubAnalytics(
+    organizationId: string,
+    options: {
+      start?: string;
+      end?: string;
+      scopeType?: AnalyticsScopeType;
+      scopeId?: string;
+    } = {},
+  ): Promise<GitHubAnalyticsDto> {
+    const params = new URLSearchParams({ organizationId });
+    for (const [key, value] of Object.entries(options))
+      if (value) params.set(key, value);
+    return request<GitHubAnalyticsDto>(
+      `/api/analytics/github?${params.toString()}`,
+    );
+  }
+
   listOrganizations(): Promise<PageDto<OrganizationSummaryDto>> {
     return request<PageDto<OrganizationSummaryDto>>("/api/organizations");
   }
@@ -80,10 +105,15 @@ class BrowserTeamtalesApiClient {
   createOrganization(
     requestBody: BrowserCreateOrganizationRequest,
   ): Promise<CreateOrganizationResponseDto> {
-    return request<CreateOrganizationResponseDto>("/api/organizations", jsonPost(requestBody));
+    return request<CreateOrganizationResponseDto>(
+      "/api/organizations",
+      jsonPost(requestBody),
+    );
   }
 
-  listIntegrations(organizationId: string): Promise<PageDto<IntegrationSummaryDto>> {
+  listIntegrations(
+    organizationId: string,
+  ): Promise<PageDto<IntegrationSummaryDto>> {
     return request<PageDto<IntegrationSummaryDto>>(
       `/api/organizations/${encodeURIComponent(organizationId)}/integrations`,
     );
@@ -92,7 +122,10 @@ class BrowserTeamtalesApiClient {
   addPatIntegration(
     requestBody: BrowserAddPatIntegrationRequest,
   ): Promise<AddPatIntegrationResponseDto> {
-    return request<AddPatIntegrationResponseDto>("/api/integrations/pat", jsonPost(requestBody));
+    return request<AddPatIntegrationResponseDto>(
+      "/api/integrations/pat",
+      jsonPost(requestBody),
+    );
   }
 
   listIntegrationResources(
@@ -144,13 +177,19 @@ class BrowserTeamtalesApiClient {
     );
   }
 
-  getSourceObject(sourceObjectId: string, organizationId: string): Promise<SourceObjectDto> {
+  getSourceObject(
+    sourceObjectId: string,
+    organizationId: string,
+  ): Promise<SourceObjectDto> {
     return request<SourceObjectDto>(
       `/api/source-objects/${encodeURIComponent(sourceObjectId)}?organizationId=${encodeURIComponent(organizationId)}`,
     );
   }
 
-  getReport(reportId: string, organizationId: string): Promise<ReportDetailDto> {
+  getReport(
+    reportId: string,
+    organizationId: string,
+  ): Promise<ReportDetailDto> {
     return request<ReportDetailDto>(
       `/api/reports/${encodeURIComponent(reportId)}?organizationId=${encodeURIComponent(organizationId)}`,
     );
@@ -159,7 +198,10 @@ class BrowserTeamtalesApiClient {
   generateWeeklyReport(
     requestBody: GenerateWeeklyReportRequestDto,
   ): Promise<GenerateReportResponseDto> {
-    return request<GenerateReportResponseDto>("/api/reports/weekly", jsonPost(requestBody));
+    return request<GenerateReportResponseDto>(
+      "/api/reports/weekly",
+      jsonPost(requestBody),
+    );
   }
 
   triggerSync(
@@ -180,7 +222,9 @@ class BrowserTeamtalesApiClient {
   }
 
   getSyncRun(syncRunId: string): Promise<SyncRunProgressDto> {
-    return request<SyncRunProgressDto>(`/api/sync-runs/${encodeURIComponent(syncRunId)}`);
+    return request<SyncRunProgressDto>(
+      `/api/sync-runs/${encodeURIComponent(syncRunId)}`,
+    );
   }
 
   listSyncRunResources(
@@ -197,7 +241,9 @@ class BrowserTeamtalesApiClient {
     );
   }
 
-  getOrganizationSyncStatus(organizationId: string): Promise<OrganizationSyncStatusDto> {
+  getOrganizationSyncStatus(
+    organizationId: string,
+  ): Promise<OrganizationSyncStatusDto> {
     return request<OrganizationSyncStatusDto>(
       `/api/organizations/${encodeURIComponent(organizationId)}/sync-status`,
     );
@@ -223,14 +269,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     credentials: "same-origin",
     headers: {
-      ...(init?.body === undefined ? {} : { "content-type": "application/json" }),
+      ...(init?.body === undefined
+        ? {}
+        : { "content-type": "application/json" }),
       ...init?.headers,
     },
   });
   const payload = (await response.json()) as ApiResponseDto<T>;
 
   if (!payload.ok) {
-    throw new ApiClientError(response.status, payload.error.code, payload.error.message);
+    throw new ApiClientError(
+      response.status,
+      payload.error.code,
+      payload.error.message,
+    );
   }
 
   return payload.data;

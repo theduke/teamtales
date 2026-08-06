@@ -88,7 +88,10 @@ export type ApiTokenDto = {
   lastUsedAt?: string;
 };
 export type CreateApiTokenRequestDto = { name: string; expiresAt?: string };
-export type CreateApiTokenResponseDto = { token: string; apiToken: ApiTokenDto };
+export type CreateApiTokenResponseDto = {
+  token: string;
+  apiToken: ApiTokenDto;
+};
 
 export type IntegrationDto = {
   id: string;
@@ -272,7 +275,10 @@ export type AddSyncScopeRequestDto = {
 export type DiscoveredResourceDto = {
   scopeType: Extract<
     SyncScopeDto["scopeType"],
-    "github.repository" | "github.organization" | "linear.workspace" | "linear.team"
+    | "github.repository"
+    | "github.organization"
+    | "linear.workspace"
+    | "linear.team"
   >;
   externalId: string;
   externalName: string;
@@ -324,8 +330,7 @@ export type SetLinearScopeSelectionRequestDto = {
   selection: { mode: "all" } | { mode: "selected"; teamIds: string[] };
 };
 export type SetSyncScopeSelectionRequestDto =
-  | SetGitHubScopeSelectionRequestDto
-  | SetLinearScopeSelectionRequestDto;
+  SetGitHubScopeSelectionRequestDto | SetLinearScopeSelectionRequestDto;
 export type SetSyncScopeSelectionResponseDto = { items: SyncScopeDto[] };
 
 export type GenerateWeeklyReportRequestDto = {
@@ -354,6 +359,46 @@ export type DashboardDto = {
   people: ReportContext["people"];
 };
 
+export type AnalyticsScopeType =
+  "github_organization" | "github_repository" | "developer";
+export type AnalyticsScopeOptionDto = {
+  id: string;
+  name: string;
+  type: AnalyticsScopeType;
+};
+export type AnalyticsBreakdownDto = {
+  id: string;
+  name: string;
+  opened: number;
+  merged: number;
+  additions: number;
+  deletions: number;
+};
+export type AnalyticsTrendPointDto = {
+  date: string;
+  opened: number;
+  merged: number;
+  additions: number;
+  deletions: number;
+};
+export type GitHubAnalyticsDto = {
+  period: { start: string; end: string };
+  scope: { type?: AnalyticsScopeType; id?: string; name: string };
+  totals: {
+    pullRequests: number;
+    opened: number;
+    merged: number;
+    additions: number;
+    deletions: number;
+    reviews: number;
+    comments: number;
+  };
+  developers: AnalyticsBreakdownDto[];
+  repositories: AnalyticsBreakdownDto[];
+  trend: AnalyticsTrendPointDto[];
+  scopes: AnalyticsScopeOptionDto[];
+};
+
 export type TriggerSyncRequestDto = {
   organizationId?: string;
   integrationId?: string;
@@ -362,7 +407,13 @@ export type TriggerSyncRequestDto = {
 
 export type TriggerSyncResponseDto = {
   provider: Provider;
-  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "not_implemented";
+  status:
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "not_implemented";
   syncRunId?: string;
   message?: string;
 };
@@ -375,12 +426,7 @@ export type CancelSyncRunResponseDto = {
 
 /** Known sync states are suggested while allowing forward-compatible server states. */
 export type SyncRunStatusDto =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | (string & {});
+  "queued" | "running" | "completed" | "failed" | "cancelled" | (string & {});
 
 export type SyncRunCountersDto = {
   objectsFetched: number;
@@ -467,25 +513,49 @@ export interface TeamtalesApiClient {
   login(request: LoginRequestDto): Promise<AuthMeDto>;
   logout(): Promise<{ loggedOut: true }>;
   listApiTokens(): Promise<PageDto<ApiTokenDto>>;
-  createApiToken(request: CreateApiTokenRequestDto): Promise<CreateApiTokenResponseDto>;
+  createApiToken(
+    request: CreateApiTokenRequestDto,
+  ): Promise<CreateApiTokenResponseDto>;
   revokeApiToken(tokenId: string): Promise<{ revoked: true }>;
   getCurrentUser(): Promise<AuthMeDto>;
   login(request: LoginRequestDto): Promise<LoginResponseDto>;
   logout(): Promise<void>;
   listApiTokens(): Promise<PageDto<ApiTokenDto>>;
-  createApiToken(request: CreateApiTokenRequestDto): Promise<CreateApiTokenResponseDto>;
+  createApiToken(
+    request: CreateApiTokenRequestDto,
+  ): Promise<CreateApiTokenResponseDto>;
   revokeApiToken(tokenId: string): Promise<void>;
   getDashboard(organizationId: string): Promise<DashboardDto>;
+  getGitHubAnalytics(
+    organizationId: string,
+    options?: {
+      start?: string;
+      end?: string;
+      scopeType?: AnalyticsScopeType;
+      scopeId?: string;
+    },
+  ): Promise<GitHubAnalyticsDto>;
   listOrganizations(): Promise<PageDto<OrganizationSummaryDto>>;
-  createOrganization(request: CreateOrganizationRequestDto): Promise<CreateOrganizationResponseDto>;
-  listIntegrations(organizationId: string): Promise<PageDto<IntegrationSummaryDto>>;
-  addPatIntegration(request: AddPatIntegrationRequestDto): Promise<AddPatIntegrationResponseDto>;
+  createOrganization(
+    request: CreateOrganizationRequestDto,
+  ): Promise<CreateOrganizationResponseDto>;
+  listIntegrations(
+    organizationId: string,
+  ): Promise<PageDto<IntegrationSummaryDto>>;
+  addPatIntegration(
+    request: AddPatIntegrationRequestDto,
+  ): Promise<AddPatIntegrationResponseDto>;
   listSyncScopes(organizationId: string): Promise<PageDto<SyncScopeDto>>;
   addSyncScope(request: AddSyncScopeRequestDto): Promise<SyncScopeDto>;
   listReports(organizationId: string): Promise<PageDto<ReportSummaryDto>>;
   getReport(reportId: string, organizationId: string): Promise<ReportDetailDto>;
-  generateWeeklyReport(request: GenerateWeeklyReportRequestDto): Promise<GenerateReportResponseDto>;
-  triggerSync(provider: Provider, request?: TriggerSyncRequestDto): Promise<TriggerSyncResponseDto>;
+  generateWeeklyReport(
+    request: GenerateWeeklyReportRequestDto,
+  ): Promise<GenerateReportResponseDto>;
+  triggerSync(
+    provider: Provider,
+    request?: TriggerSyncRequestDto,
+  ): Promise<TriggerSyncResponseDto>;
   cancelSyncRun(syncRunId: string): Promise<CancelSyncRunResponseDto>;
   getSyncRun(syncRunId: string): Promise<SyncRunProgressDto>;
   listSyncRunResources(
@@ -493,7 +563,9 @@ export interface TeamtalesApiClient {
     cursor?: string,
     limit?: number,
   ): Promise<PageDto<SyncRunResourceProgressDto>>;
-  getOrganizationSyncStatus(organizationId: string): Promise<OrganizationSyncStatusDto>;
+  getOrganizationSyncStatus(
+    organizationId: string,
+  ): Promise<OrganizationSyncStatusDto>;
 }
 
 export type TeamTalesApiClient = TeamtalesApiClient;
