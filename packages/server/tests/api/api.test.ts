@@ -11,6 +11,8 @@ import { createApiToken } from "../../src/auth/index.js";
 import type { AppDatabase } from "../../src/db/index.js";
 import {
   activityEvents,
+  githubOrganizations,
+  githubRepositories,
   integrationCredentials,
   integrations,
   linearTeams,
@@ -271,15 +273,23 @@ describe("TeamTales API", mysqlTestOptions, () => {
         rows.every((row) => row.configJson === "{}"),
         true,
       );
-      const resources = await app.database.db
-        .select()
-        .from(providerResources)
-        .where(eq(providerResources.integrationId, integrationId));
-      const organizationResource = resources.find(
-        (resource) => resource.resourceType === "github.organization",
+      const [organizationResources, repositoryResources] = await Promise.all([
+        app.database.db
+          .select()
+          .from(githubOrganizations)
+          .where(eq(githubOrganizations.integrationId, integrationId)),
+        app.database.db
+          .select()
+          .from(githubRepositories)
+          .where(eq(githubRepositories.integrationId, integrationId)),
+      ]);
+      const organizationResource = organizationResources.find(
+        (resource) => resource.externalId === "10",
       );
-      const repositoryResource = resources.find((resource) => resource.externalId === "101");
-      assert.equal(resources.length, 3);
+      const repositoryResource = repositoryResources.find(
+        (resource) => resource.externalId === "101",
+      );
+      assert.equal(organizationResources.length + repositoryResources.length, 3);
       assert.equal(organization?.providerResourceId, organizationResource?.id);
       assert.equal(child?.providerResourceId, repositoryResource?.id);
       assert.equal(repositoryResource?.parentResourceId, organizationResource?.id);
