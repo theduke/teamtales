@@ -1,13 +1,6 @@
 import type { FormEvent, ReactElement, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Navigate,
-  NavLink,
-  Route,
-  Routes,
-  useNavigate,
-  useParams,
-} from "react-router";
+import { Navigate, NavLink, Route, Routes, useNavigate, useParams } from "react-router";
 import {
   ActionIcon,
   Alert,
@@ -15,6 +8,7 @@ import {
   AppShell,
   Badge,
   Box,
+  Burger,
   Button,
   Card,
   Center,
@@ -34,6 +28,7 @@ import {
   ThemeIcon,
   Title,
 } from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
   IconActivity,
@@ -93,10 +88,9 @@ const reportScopeTypes: ReportScopeType[] = [
 
 export function App(): ReactElement {
   const navigate = useNavigate();
+  const [mobileNavigationOpened, mobileNavigation] = useDisclosure(false);
   const [health, setHealth] = useState<"unknown" | "ok" | "error">("unknown");
-  const [organizations, setOrganizations] = useState<
-    DashboardDto["organizations"]
-  >([]);
+  const [organizations, setOrganizations] = useState<DashboardDto["organizations"]>([]);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
   const [dashboard, setDashboard] = useState<DashboardDto>();
   const [selectedReportId, setSelectedReportId] = useState("");
@@ -152,10 +146,7 @@ export function App(): ReactElement {
     }
     const next = await apiClient.getDashboard(id);
     setDashboard(next);
-    setSelectedReportId(
-      (current) =>
-        current || next.latestReport?.id || next.reports[0]?.id || "",
-    );
+    setSelectedReportId((current) => current || next.latestReport?.id || next.reports[0]?.id || "");
   }, []);
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -217,8 +208,7 @@ export function App(): ReactElement {
         if (!cancelled) {
           setDashboard(next);
           setSelectedReportId(
-            (current) =>
-              current || next.latestReport?.id || next.reports[0]?.id || "",
+            (current) => current || next.latestReport?.id || next.reports[0]?.id || "",
           );
         }
       } catch (error) {
@@ -256,8 +246,7 @@ export function App(): ReactElement {
     setLoading(true);
     try {
       const session = await apiClient.login({ email, password });
-      if (!session.authenticated)
-        throw new Error("Login did not establish a session.");
+      if (!session.authenticated) throw new Error("Login did not establish a session.");
       setAuth(session);
       await loadOrganizations();
       void navigate("/dashboard", { replace: true });
@@ -267,9 +256,7 @@ export function App(): ReactElement {
       setLoading(false);
     }
   }
-  async function bootstrapOrganization(
-    request: BrowserCreateOrganizationRequest,
-  ) {
+  async function bootstrapOrganization(request: BrowserCreateOrganizationRequest) {
     setLoading(true);
     try {
       const organization = await apiClient.createOrganization(request);
@@ -310,9 +297,7 @@ export function App(): ReactElement {
         <Stack align="center" gap="xs">
           <Text fw={600}>Restoring your session…</Text>
           <Text size="sm" c="dimmed">
-            {health === "error"
-              ? "Waiting for the API to restart."
-              : "Checking authentication."}
+            {health === "error" ? "Waiting for the API to restart." : "Checking authentication."}
           </Text>
         </Stack>
       </Center>
@@ -338,12 +323,22 @@ export function App(): ReactElement {
   return (
     <AppShell
       header={{ height: 72 }}
-      navbar={{ width: 235, breakpoint: "sm" }}
+      navbar={{
+        width: 235,
+        breakpoint: "sm",
+        collapsed: { mobile: !mobileNavigationOpened },
+      }}
       padding="md"
     >
       <AppShell.Header px="md">
         <Group h="100%" justify="space-between">
           <Group gap="sm">
+            <Burger
+              hiddenFrom="sm"
+              opened={mobileNavigationOpened}
+              onClick={mobileNavigation.toggle}
+              aria-label={mobileNavigationOpened ? "Close navigation" : "Open navigation"}
+            />
             <ThemeIcon variant="light" size="lg">
               <IconActivity size={20} />
             </ThemeIcon>
@@ -352,13 +347,7 @@ export function App(): ReactElement {
               <Group gap={5}>
                 <Badge
                   size="xs"
-                  color={
-                    health === "ok"
-                      ? "teal"
-                      : health === "error"
-                        ? "red"
-                        : "gray"
-                  }
+                  color={health === "ok" ? "teal" : health === "error" ? "red" : "gray"}
                   variant="dot"
                 >
                   API {health}
@@ -376,9 +365,7 @@ export function App(): ReactElement {
               className="desktop-only"
               aria-label="Select organization"
               value={selectedOrganizationId}
-              onChange={(event) =>
-                setSelectedOrganizationId(event.target.value)
-              }
+              onChange={(event) => setSelectedOrganizationId(event.target.value)}
               data={[
                 { value: "", label: "No organization" },
                 ...organizations.map((item) => ({
@@ -411,6 +398,22 @@ export function App(): ReactElement {
       </AppShell.Header>
       <AppShell.Navbar p="sm">
         <Stack gap={4}>
+          <NativeSelect
+            hiddenFrom="sm"
+            label="Organization"
+            value={selectedOrganizationId}
+            onChange={(event) => {
+              setSelectedOrganizationId(event.target.value);
+              mobileNavigation.close();
+            }}
+            data={[
+              { value: "", label: "No organization" },
+              ...organizations.map((item) => ({
+                value: item.id,
+                label: item.name,
+              })),
+            ]}
+          />
           {sections.map(([label, path, Icon]) => (
             <Button
               key={path}
@@ -422,6 +425,7 @@ export function App(): ReactElement {
               style={({ isActive }: { isActive: boolean }) => ({
                 fontWeight: isActive ? 700 : 400,
               })}
+              onClick={mobileNavigation.close}
             >
               {label}
             </Button>
@@ -431,17 +435,11 @@ export function App(): ReactElement {
       <AppShell.Main>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route
-            path="/dashboard"
-            element={<DashboardSection dashboard={dashboard} />}
-          />
+          <Route path="/dashboard" element={<DashboardSection dashboard={dashboard} />} />
           <Route
             path="/analytics"
             element={
-              <AnalyticsSection
-                organizationId={selectedOrganizationId}
-                onError={handleError}
-              />
+              <AnalyticsSection organizationId={selectedOrganizationId} onError={handleError} />
             }
           />
           <Route
@@ -507,20 +505,12 @@ export function App(): ReactElement {
           />
           <Route
             path="/data"
-            element={
-              <DataSection
-                organizationId={selectedOrganizationId}
-                onError={handleError}
-              />
-            }
+            element={<DataSection organizationId={selectedOrganizationId} onError={handleError} />}
           />
           <Route
             path="/data/:sourceObjectId"
             element={
-              <DataDetailSection
-                organizationId={selectedOrganizationId}
-                onError={handleError}
-              />
+              <DataDetailSection organizationId={selectedOrganizationId} onError={handleError} />
             }
           />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -560,11 +550,7 @@ function AuthScreen({
           </ThemeIcon>
           <Title>TeamTales</Title>
           <Text c="dimmed">A calmer view of your team’s work.</Text>
-          <Badge
-            mx="auto"
-            color={health === "ok" ? "teal" : "gray"}
-            variant="light"
-          >
+          <Badge mx="auto" color={health === "ok" ? "teal" : "gray"} variant="light">
             API {health}
           </Badge>
         </Stack>
@@ -586,24 +572,16 @@ function AuthScreen({
                   required
                   autoComplete="email"
                   value={login.email}
-                  onChange={(event) =>
-                    setLogin({ ...login, email: event.currentTarget.value })
-                  }
+                  onChange={(event) => setLogin({ ...login, email: event.currentTarget.value })}
                 />
                 <PasswordInput
                   label="Password"
                   required
                   autoComplete="current-password"
                   value={login.password}
-                  onChange={(event) =>
-                    setLogin({ ...login, password: event.currentTarget.value })
-                  }
+                  onChange={(event) => setLogin({ ...login, password: event.currentTarget.value })}
                 />
-                <Button
-                  type="submit"
-                  loading={loading}
-                  rightSection={<IconArrowRight size={16} />}
-                >
+                <Button type="submit" loading={loading} rightSection={<IconArrowRight size={16} />}>
                   Sign in
                 </Button>
               </Stack>
@@ -656,9 +634,7 @@ function AuthScreen({
                   <TextInput
                     label="Owner name"
                     value={form.ownerName}
-                    onChange={(event) =>
-                      setForm({ ...form, ownerName: event.currentTarget.value })
-                    }
+                    onChange={(event) => setForm({ ...form, ownerName: event.currentTarget.value })}
                   />
                   <TextInput
                     label="Owner email"
@@ -704,9 +680,7 @@ function AnalyticsSection({
   onError: (error: unknown) => void;
 }): ReactElement {
   const [preset, setPreset] = useState("30d");
-  const [start, setStart] = useState(() =>
-    dateInput(new Date(Date.now() - 30 * 86400000)),
-  );
+  const [start, setStart] = useState(() => dateInput(new Date(Date.now() - 30 * 86400000)));
   const [end, setEnd] = useState(() => dateInput(new Date()));
   const [scope, setScope] = useState("");
   const [data, setData] = useState<GitHubAnalyticsDto>();
@@ -718,11 +692,9 @@ function AnalyticsSection({
       const [scopeType, scopeId] = scope.split(":");
       setData(
         await apiClient.getGitHubAnalytics(organizationId, {
-          start: new Date(`${start}T00:00:00`).toISOString(),
-          end: new Date(`${end}T23:59:59.999`).toISOString(),
-          ...(scopeType && scopeId
-            ? { scopeType: scopeType as AnalyticsScopeType, scopeId }
-            : {}),
+          start: analyticsPeriodStart(start),
+          end: analyticsPeriodEnd(end),
+          ...(scopeType && scopeId ? { scopeType: scopeType as AnalyticsScopeType, scopeId } : {}),
         }),
       );
     } catch (error) {
@@ -737,8 +709,7 @@ function AnalyticsSection({
   function setRange(value: string) {
     setPreset(value);
     if (value === "custom") return;
-    const days =
-      value === "7d" ? 7 : value === "90d" ? 90 : value === "365d" ? 365 : 30;
+    const days = value === "7d" ? 7 : value === "90d" ? 90 : value === "365d" ? 365 : 30;
     setStart(dateInput(new Date(Date.now() - days * 86400000)));
     setEnd(dateInput(new Date()));
   }
@@ -765,6 +736,7 @@ function AnalyticsSection({
           <TextInput
             label="From"
             type="date"
+            required
             value={start}
             onChange={(event) => {
               setPreset("custom");
@@ -774,6 +746,7 @@ function AnalyticsSection({
           <TextInput
             label="To"
             type="date"
+            required
             value={end}
             onChange={(event) => {
               setPreset("custom");
@@ -859,11 +832,7 @@ function AnalyticsSection({
   );
 }
 
-function AnalyticsTable({
-  items,
-}: {
-  items: GitHubAnalyticsDto["developers"];
-}): ReactElement {
+function AnalyticsTable({ items }: { items: GitHubAnalyticsDto["developers"] }): ReactElement {
   return (
     <DataTable
       columns={["Name", "Opened", "Merged", "Added", "Removed"]}
@@ -880,14 +849,36 @@ function AnalyticsTable({
 }
 
 function dateInput(value: Date): string {
-  return value.toISOString().slice(0, 10);
+  return [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, "0"),
+    String(value.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
-function DashboardSection({
-  dashboard,
-}: {
-  dashboard: DashboardDto | undefined;
-}): ReactElement {
+function analyticsPeriodStart(value: string): string {
+  return analyticsDayBoundary(value).toISOString();
+}
+
+function analyticsPeriodEnd(value: string): string {
+  const nextDay = analyticsDayBoundary(value);
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  return nextDay.toISOString();
+}
+
+function analyticsDayBoundary(value: string): Date {
+  const boundary = new Date(`${value}T00:00:00.000Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    Number.isNaN(boundary.valueOf()) ||
+    boundary.toISOString().slice(0, 10) !== value
+  ) {
+    throw new Error("Choose a valid analytics date.");
+  }
+  return boundary;
+}
+
+function DashboardSection({ dashboard }: { dashboard: DashboardDto | undefined }): ReactElement {
   return (
     <Stack>
       <PageTitle
@@ -928,9 +919,7 @@ function DashboardSection({
                 </Text>
               </Paper>
             )) ?? <Empty text="No highlights yet." />}
-            {(dashboard?.highlights.length ?? 0) === 0 && (
-              <Empty text="No highlights yet." />
-            )}
+            {(dashboard?.highlights.length ?? 0) === 0 && <Empty text="No highlights yet." />}
           </Stack>
         </Panel>
         <Panel title="Metrics">
@@ -1002,10 +991,7 @@ function SetupSection({
   });
   return (
     <Stack>
-      <PageTitle
-        title="Setup"
-        subtitle="Create workspaces and connect personal access tokens."
-      />
+      <PageTitle title="Setup" subtitle="Create workspaces and connect personal access tokens." />
       <SimpleGrid cols={{ base: 1, md: 2 }}>
         <Panel title="Organization">
           <form
@@ -1095,17 +1081,13 @@ function SetupSection({
               <TextInput
                 label="Display name"
                 value={pat.displayName}
-                onChange={(e) =>
-                  setPat({ ...pat, displayName: e.currentTarget.value })
-                }
+                onChange={(e) => setPat({ ...pat, displayName: e.currentTarget.value })}
               />
               <PasswordInput
                 label="Token"
                 required
                 value={pat.token}
-                onChange={(e) =>
-                  setPat({ ...pat, token: e.currentTarget.value })
-                }
+                onChange={(e) => setPat({ ...pat, token: e.currentTarget.value })}
               />
               <Button type="submit" disabled={!selectedOrganizationId}>
                 Add PAT
@@ -1160,10 +1142,7 @@ function SyncSection({
   );
   return (
     <Stack>
-      <PageTitle
-        title="Sync"
-        subtitle="Run a manual sync and review the active resource scopes."
-      />
+      <PageTitle title="Sync" subtitle="Run a manual sync and review the active resource scopes." />
       <ActiveSyncProgress
         organizationId={selectedOrganizationId}
         refreshSignal={progressRefresh}
@@ -1195,8 +1174,7 @@ function SyncSection({
                   });
                 })
                 .catch((error) =>
-                  error instanceof ApiClientError &&
-                  error.code === "sync_not_implemented"
+                  error instanceof ApiClientError && error.code === "sync_not_implemented"
                     ? onNotice({
                         tone: "info",
                         text: "Sync execution is not available for this provider.",
@@ -1226,9 +1204,7 @@ function SyncSection({
               <NativeSelect
                 label="Integration"
                 value={form.integrationId}
-                onChange={(e) =>
-                  setForm({ ...form, integrationId: e.currentTarget.value })
-                }
+                onChange={(e) => setForm({ ...form, integrationId: e.currentTarget.value })}
                 data={[
                   { value: "", label: "Any integration" },
                   ...integrations.map((x) => ({
@@ -1240,9 +1216,7 @@ function SyncSection({
               <NativeSelect
                 label="Sync scope"
                 value={form.syncScopeId}
-                onChange={(e) =>
-                  setForm({ ...form, syncScopeId: e.currentTarget.value })
-                }
+                onChange={(e) => setForm({ ...form, syncScopeId: e.currentTarget.value })}
                 data={[
                   { value: "", label: "Any sync scope" },
                   ...scopes.map((x) => ({
@@ -1263,13 +1237,7 @@ function SyncSection({
         </Panel>
         <Panel title="Sync scopes">
           <DataTable
-            columns={[
-              "Provider",
-              "Type",
-              "External",
-              "Enabled",
-              "Last success",
-            ]}
+            columns={["Provider", "Type", "External", "Enabled", "Last success"]}
             rows={scopes.map((x) => [
               x.provider,
               x.scopeType,
@@ -1303,11 +1271,7 @@ async function loadSyncRunResourcePage(
 ): Promise<SyncRunResourceProgressDto[]> {
   let cursor: string | undefined;
   for (let page = 1; page <= targetPage; page += 1) {
-    const result = await apiClient.listSyncRunResources(
-      syncRunId,
-      cursor,
-      syncResourcePageSize,
-    );
+    const result = await apiClient.listSyncRunResources(syncRunId, cursor, syncResourcePageSize);
     if (page === targetPage || !result.nextCursor) return result.items;
     cursor = result.nextCursor;
   }
@@ -1329,9 +1293,7 @@ function ActiveSyncProgress({
   const [error, setError] = useState<string>();
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [cancellingRunId, setCancellingRunId] = useState<string>();
-  const [resourcePages, setResourcePages] = useState<Record<string, number>>(
-    {},
-  );
+  const [resourcePages, setResourcePages] = useState<Record<string, number>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -1345,8 +1307,7 @@ function ActiveSyncProgress({
     const load = async () => {
       setLoading(true);
       try {
-        const nextStatus =
-          await apiClient.getOrganizationSyncStatus(organizationId);
+        const nextStatus = await apiClient.getOrganizationSyncStatus(organizationId);
         const nextRuns = await Promise.all(
           nextStatus.activeRuns.map(async (run) => {
             const resourcePage = resourcePages[run.id] ?? 1;
@@ -1362,17 +1323,10 @@ function ActiveSyncProgress({
         setRuns(nextRuns);
         onActiveRunsChange(nextStatus.activeRuns);
         setError(undefined);
-        timer = window.setTimeout(
-          load,
-          nextStatus.activeRuns.length > 0 ? 3_000 : 15_000,
-        );
+        timer = window.setTimeout(load, nextStatus.activeRuns.length > 0 ? 3_000 : 15_000);
       } catch (reason) {
         if (cancelled) return;
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Could not load sync progress.",
-        );
+        setError(reason instanceof Error ? reason.message : "Could not load sync progress.");
         timer = window.setTimeout(load, 10_000);
       } finally {
         if (!cancelled) setLoading(false);
@@ -1383,13 +1337,7 @@ function ActiveSyncProgress({
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [
-    onActiveRunsChange,
-    organizationId,
-    refreshSignal,
-    refreshNonce,
-    resourcePages,
-  ]);
+  }, [onActiveRunsChange, organizationId, refreshSignal, refreshNonce, resourcePages]);
 
   const cancelRun = (syncRunId: string) => {
     setCancellingRunId(syncRunId);
@@ -1397,11 +1345,7 @@ function ActiveSyncProgress({
       .cancelSyncRun(syncRunId)
       .then(() => setRefreshNonce((value) => value + 1))
       .catch((reason) =>
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "Could not cancel the sync.",
-        ),
+        setError(reason instanceof Error ? reason.message : "Could not cancel the sync."),
       )
       .finally(() => setCancellingRunId(undefined));
   };
@@ -1424,12 +1368,7 @@ function ActiveSyncProgress({
           {resourceCounts.length > 0 && (
             <Group gap={6}>
               {resourceCounts.map(([state, count]) => (
-                <Badge
-                  key={state}
-                  size="sm"
-                  color={syncStatusColor(state)}
-                  variant="outline"
-                >
+                <Badge key={state} size="sm" color={syncStatusColor(state)} variant="outline">
                   {count} {state}
                 </Badge>
               ))}
@@ -1437,11 +1376,7 @@ function ActiveSyncProgress({
           )}
         </Group>
         {error && (
-          <Alert
-            color="red"
-            variant="light"
-            title="Progress temporarily unavailable"
-          >
+          <Alert color="red" variant="light" title="Progress temporarily unavailable">
             {error}
           </Alert>
         )}
@@ -1487,10 +1422,7 @@ function SyncRunProgressCard({
   onResourcePageChange: (page: number) => void;
 }): ReactElement {
   const { run, childRunCounts } = progress;
-  const total = Object.values(childRunCounts).reduce(
-    (sum, count) => sum + count,
-    0,
-  );
+  const total = Object.values(childRunCounts).reduce((sum, count) => sum + count, 0);
   const complete =
     (childRunCounts.completed ?? 0) +
     (childRunCounts.failed ?? 0) +
@@ -1503,8 +1435,7 @@ function SyncRunProgressCard({
     ? resources.reduce(
         (sum, item) => ({
           fetched: sum.fetched + item.run.objectsFetched,
-          changed:
-            sum.changed + item.run.objectsInserted + item.run.objectsUpdated,
+          changed: sum.changed + item.run.objectsInserted + item.run.objectsUpdated,
           failed: sum.failed + item.run.objectsFailed,
         }),
         { fetched: 0, changed: 0, failed: 0 },
@@ -1532,9 +1463,7 @@ function SyncRunProgressCard({
             </Text>
           </Box>
           <Text size="sm" fw={600} c="dimmed">
-            {total > 0
-              ? `${complete}/${total} resources`
-              : "Preparing resources"}
+            {total > 0 ? `${complete}/${total} resources` : "Preparing resources"}
           </Text>
         </Group>
         <Group justify="flex-end">
@@ -1554,18 +1483,12 @@ function SyncRunProgressCard({
           animated={run.status === "running"}
         />
         <Text size="xs" c="dimmed">
-          {counters.fetched} fetched · {counters.changed} changed ·{" "}
-          {counters.failed} failed
+          {counters.fetched} fetched · {counters.changed} changed · {counters.failed} failed
         </Text>
         {resources.length > 0 && (
           <Stack gap={4}>
             {resources.map(({ resource, run: resourceRun }) => (
-              <Group
-                key={resourceRun.id}
-                justify="space-between"
-                gap="sm"
-                wrap="nowrap"
-              >
+              <Group key={resourceRun.id} justify="space-between" gap="sm" wrap="nowrap">
                 <Box style={{ minWidth: 0 }}>
                   <Text size="sm" truncate="end">
                     {resource?.displayName ?? "Sync resource"}
@@ -1576,11 +1499,7 @@ function SyncRunProgressCard({
                     </Text>
                   )}
                 </Box>
-                <Badge
-                  size="sm"
-                  color={syncStatusColor(resourceRun.status)}
-                  variant="light"
-                >
+                <Badge size="sm" color={syncStatusColor(resourceRun.status)} variant="light">
                   {resourceRun.status}
                 </Badge>
               </Group>
@@ -1647,8 +1566,7 @@ function ReportsSection({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              const organizationName =
-                selectedOrganization?.name ?? dashboard?.organization.name;
+              const organizationName = selectedOrganization?.name ?? dashboard?.organization.name;
               const request: GenerateWeeklyReportRequestDto = {
                 organizationId: selectedOrganizationId,
                 organizationName,
@@ -1692,16 +1610,12 @@ function ReportsSection({
               <TextInput
                 label="Scope ID"
                 value={form.scopeId}
-                onChange={(e) =>
-                  setForm({ ...form, scopeId: e.currentTarget.value })
-                }
+                onChange={(e) => setForm({ ...form, scopeId: e.currentTarget.value })}
               />
               <TextInput
                 label="Scope name"
                 value={form.scopeName}
-                onChange={(e) =>
-                  setForm({ ...form, scopeName: e.currentTarget.value })
-                }
+                onChange={(e) => setForm({ ...form, scopeName: e.currentTarget.value })}
               />
               <SimpleGrid cols={2}>
                 <TextInput
@@ -1709,33 +1623,25 @@ function ReportsSection({
                   type="date"
                   required
                   value={form.periodStart}
-                  onChange={(e) =>
-                    setForm({ ...form, periodStart: e.currentTarget.value })
-                  }
+                  onChange={(e) => setForm({ ...form, periodStart: e.currentTarget.value })}
                 />
                 <TextInput
                   label="Period end"
                   type="date"
                   required
                   value={form.periodEnd}
-                  onChange={(e) =>
-                    setForm({ ...form, periodEnd: e.currentTarget.value })
-                  }
+                  onChange={(e) => setForm({ ...form, periodEnd: e.currentTarget.value })}
                 />
               </SimpleGrid>
               <TextInput
                 label="Title"
                 value={form.title}
-                onChange={(e) =>
-                  setForm({ ...form, title: e.currentTarget.value })
-                }
+                onChange={(e) => setForm({ ...form, title: e.currentTarget.value })}
               />
               <Checkbox
                 label="Save this report"
                 checked={form.persist}
-                onChange={(e) =>
-                  setForm({ ...form, persist: e.currentTarget.checked })
-                }
+                onChange={(e) => setForm({ ...form, persist: e.currentTarget.checked })}
               />
               <Button type="submit" disabled={!selectedOrganizationId}>
                 Generate report
@@ -1758,15 +1664,12 @@ function ReportsSection({
                 <Box ta="left">
                   <Text fw={600}>{report.title}</Text>
                   <Text size="xs" c="dimmed">
-                    {report.reportType} · {report.periodStart} to{" "}
-                    {report.periodEnd}
+                    {report.reportType} · {report.periodStart} to {report.periodEnd}
                   </Text>
                 </Box>
               </Button>
             )) ?? <Empty text="No reports generated yet." />}
-            {(dashboard?.reports.length ?? 0) === 0 && (
-              <Empty text="No reports generated yet." />
-            )}
+            {(dashboard?.reports.length ?? 0) === 0 && <Empty text="No reports generated yet." />}
           </Stack>
         </Panel>
       </SimpleGrid>
@@ -1776,14 +1679,8 @@ function ReportsSection({
             <SimpleGrid cols={{ base: 1, sm: 4 }}>
               {[
                 ["Status", reportDetail.status],
-                [
-                  "Scope",
-                  `${reportDetail.scopeType} / ${reportDetail.scopeId}`,
-                ],
-                [
-                  "Period",
-                  `${reportDetail.periodStart} to ${reportDetail.periodEnd}`,
-                ],
+                ["Scope", `${reportDetail.scopeType} / ${reportDetail.scopeId}`],
+                ["Period", `${reportDetail.periodStart} to ${reportDetail.periodEnd}`],
                 ["Updated", formatDateTime(reportDetail.updatedAt)],
               ].map(([label, value]) => (
                 <Paper key={label} withBorder p="sm">
@@ -1795,9 +1692,7 @@ function ReportsSection({
               ))}
             </SimpleGrid>
             {reportDetail.summary && <Text>{reportDetail.summary}</Text>}
-            <Code block>
-              {reportDetail.bodyMarkdown || "No report markdown."}
-            </Code>
+            <Code block>{reportDetail.bodyMarkdown || "No report markdown."}</Code>
           </Stack>
         ) : (
           <Empty text="Select a report to see its detail." />
@@ -1852,10 +1747,7 @@ function DataSection({
   };
   return (
     <Stack>
-      <PageTitle
-        title="Data"
-        subtitle="Explore every item synced from your connected providers."
-      />
+      <PageTitle title="Data" subtitle="Explore every item synced from your connected providers." />
       <Panel title="Synced items">
         <Group align="end" mb="md">
           <NativeSelect
@@ -1885,14 +1777,7 @@ function DataSection({
           <Text c="dimmed">Loading synced items…</Text>
         ) : (
           <DataTable
-            columns={[
-              "Type",
-              "Provider",
-              "External ID",
-              "State",
-              "Last seen",
-              "Open",
-            ]}
+            columns={["Type", "Provider", "External ID", "State", "Last seen", "Open"]}
             rows={items.map((item) => [
               item.objectType,
               item.provider,
@@ -1903,9 +1788,7 @@ function DataSection({
                 key={item.id}
                 size="xs"
                 variant="light"
-                onClick={() =>
-                  void navigate(`/data/${encodeURIComponent(item.id)}`)
-                }
+                onClick={() => void navigate(`/data/${encodeURIComponent(item.id)}`)}
               >
                 Inspect
               </Button>,
@@ -1993,27 +1876,13 @@ function DataDetailSection({
     </Stack>
   );
 }
-function JsonViewer({
-  value,
-  name,
-  depth = 0,
-}: {
-  value: unknown;
-  name?: string;
-  depth?: number;
-}) {
-  if (value === null)
-    return <JsonValue name={name} value="null" color="dimmed" />;
+function JsonViewer({ value, name, depth = 0 }: { value: unknown; name?: string; depth?: number }) {
+  if (value === null) return <JsonValue name={name} value="null" color="dimmed" />;
   if (Array.isArray(value)) {
     return (
       <JsonBranch name={name} label={`Array (${value.length})`} depth={depth}>
         {value.map((item, index) => (
-          <JsonViewer
-            key={index}
-            name={`[${index}]`}
-            value={item}
-            depth={depth + 1}
-          />
+          <JsonViewer key={index} name={`[${index}]`} value={item} depth={depth + 1} />
         ))}
       </JsonBranch>
     );
@@ -2021,11 +1890,7 @@ function JsonViewer({
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>);
     return (
-      <JsonBranch
-        name={name}
-        label={`Object (${entries.length})`}
-        depth={depth}
-      >
+      <JsonBranch name={name} label={`Object (${entries.length})`} depth={depth}>
         {entries.map(([key, item]) => (
           <JsonViewer key={key} name={key} value={item} depth={depth + 1} />
         ))}
@@ -2084,22 +1949,11 @@ function JsonBranch({
     </Box>
   );
 }
-function JsonValue({
-  name,
-  value,
-  color,
-}: {
-  name?: string;
-  value: string;
-  color: string;
-}) {
+function JsonValue({ name, value, color }: { name?: string; value: string; color: string }) {
   return (
     <Group gap="xs" wrap="nowrap">
       {name && <Text fw={600}>{name}</Text>}
-      <Code
-        c={color}
-        style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-      >
+      <Code c={color} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
         {value}
       </Code>
     </Group>
@@ -2123,15 +1977,7 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
     </Card>
   );
 }
-function StatCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: number;
-  icon: ReactNode;
-}) {
+function StatCard({ label, value, icon }: { label: string; value: number; icon: ReactNode }) {
   return (
     <Card withBorder>
       <Group justify="space-between">
@@ -2175,12 +2021,7 @@ function DataTable({
     <Empty text={empty} />
   ) : (
     <Box style={{ overflowX: "auto" }}>
-      <MantineTable
-        striped
-        highlightOnHover
-        withTableBorder
-        verticalSpacing="sm"
-      >
+      <MantineTable striped highlightOnHover withTableBorder verticalSpacing="sm">
         <MantineTable.Thead>
           <MantineTable.Tr>
             {columns.map((column) => (
@@ -2192,9 +2033,7 @@ function DataTable({
           {rows.map((row, rowIndex) => (
             <MantineTable.Tr key={rowIndex}>
               {columns.map((column, index) => (
-                <MantineTable.Td key={`${column}-${index}`}>
-                  {row[index] ?? ""}
-                </MantineTable.Td>
+                <MantineTable.Td key={`${column}-${index}`}>{row[index] ?? ""}</MantineTable.Td>
               ))}
             </MantineTable.Tr>
           ))}
