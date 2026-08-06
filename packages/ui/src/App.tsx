@@ -58,10 +58,7 @@ import type {
   SyncRunDto,
 } from "@teamtales/common/api";
 import type { Provider, ReportScopeType } from "@teamtales/common/domain";
-import type {
-  AuthSession,
-  BrowserCreateOrganizationRequest,
-} from "./api";
+import type { AuthSession, BrowserCreateOrganizationRequest } from "./api";
 import { ApiClientError, apiClient } from "./api";
 import { ProvidersSection } from "./ProvidersSection";
 
@@ -173,17 +170,20 @@ export function App(): ReactElement {
       setLoading(true);
       try {
         await apiClient.getHealth();
-        if (!cancelled) setHealth("ok");
         const session = await apiClient.getCurrentUser();
         if (cancelled) return;
 
-        setAuth(session);
+        let organizationItems: DashboardDto["organizations"] = [];
         if (session.authenticated) {
           const page = await apiClient.listOrganizations();
-          if (!cancelled) {
-            setOrganizations(page.items);
-            setSelectedOrganizationId(page.items[0]?.id ?? "");
-          }
+          if (cancelled) return;
+          organizationItems = page.items;
+        }
+        if (!cancelled) {
+          setHealth("ok");
+          setAuth(session);
+          setOrganizations(organizationItems);
+          setSelectedOrganizationId(organizationItems[0]?.id ?? "");
         }
       } catch (error) {
         if (!cancelled) {
