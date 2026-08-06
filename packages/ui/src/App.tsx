@@ -15,6 +15,7 @@ import {
   Checkbox,
   Code,
   Group,
+  List,
   NativeSelect,
   Paper,
   PasswordInput,
@@ -1729,7 +1730,7 @@ function ReportsSection({
               ))}
             </SimpleGrid>
             {reportDetail.summary && <Text>{reportDetail.summary}</Text>}
-            <Code block>{reportDetail.bodyMarkdown || "No report markdown."}</Code>
+            <ReportMarkdown markdown={reportDetail.bodyMarkdown} />
           </Stack>
         ) : (
           <Empty text="Select a report to see its detail." />
@@ -1737,6 +1738,90 @@ function ReportsSection({
       </Panel>
     </Stack>
   );
+}
+
+function ReportMarkdown({ markdown }: { markdown: string }): ReactElement {
+  if (!markdown.trim()) return <Empty text="No report markdown." />;
+
+  const blocks: ReactNode[] = [];
+  let paragraph: string[] = [];
+  let listItems: string[] = [];
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    blocks.push(
+      <Text
+        key={`paragraph-${blocks.length}`}
+        component="p"
+        m={0}
+        style={{ whiteSpace: "pre-wrap" }}
+      >
+        {renderMarkdownInline(paragraph.join("\n"))}
+      </Text>,
+    );
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    blocks.push(
+      <List key={`list-${blocks.length}`} size="sm" spacing="xs">
+        {listItems.map((item, index) => (
+          <List.Item key={index}>{renderMarkdownInline(item)}</List.Item>
+        ))}
+      </List>,
+    );
+    listItems = [];
+  };
+
+  for (const line of markdown.split("\n")) {
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    const listItem = /^[-*]\s+(.+)$/.exec(line);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1]?.length ?? 1;
+      blocks.push(
+        <Title key={`heading-${blocks.length}`} order={level === 1 ? 3 : level === 2 ? 4 : 5}>
+          {renderMarkdownInline(heading[2] ?? "")}
+        </Title>,
+      );
+    } else if (listItem) {
+      flushParagraph();
+      listItems.push(listItem[1] ?? "");
+    } else if (line.trim() === "") {
+      flushParagraph();
+      flushList();
+    } else {
+      flushList();
+      paragraph.push(line);
+    }
+  }
+  flushParagraph();
+  flushList();
+
+  return <Stack gap="sm">{blocks}</Stack>;
+}
+
+function renderMarkdownInline(value: string): ReactNode {
+  const parts: ReactNode[] = [];
+  const linkPattern = /\[([^\]]+)]\((https?:\/\/[^\s)]+)\)/g;
+  let position = 0;
+  for (const match of value.matchAll(linkPattern)) {
+    const index = match.index ?? 0;
+    const href = match[2] ?? "";
+    if (index > position) parts.push(unescapeMarkdownText(value.slice(position, index)));
+    parts.push(
+      <Anchor key={`${index}-${href}`} href={href} target="_blank" rel="noreferrer">
+        {unescapeMarkdownText(match[1] ?? "")}
+      </Anchor>,
+    );
+    position = index + (match[0]?.length ?? 0);
+  }
+  if (position < value.length) parts.push(unescapeMarkdownText(value.slice(position)));
+  return parts.length > 0 ? parts : unescapeMarkdownText(value);
+}
+
+function unescapeMarkdownText(value: string): string {
+  return value.replace(/\\([\\[\]])/g, "$1");
 }
 
 function DataSection({
