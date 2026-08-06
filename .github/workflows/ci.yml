@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEAMTALES_TEST_DATABASE_URL: mysql://teamtales:teamtales@127.0.0.1:3306/teamtales_test
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: teamtales_test
+          MYSQL_USER: teamtales
+          MYSQL_PASSWORD: teamtales
+          MYSQL_ROOT_PASSWORD: root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uteamtales -pteamtales"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run schema:check
+      - name: Apply database migrations
+        run: DATABASE_URL="$TEAMTALES_TEST_DATABASE_URL" npm run cli -- migrate
+      - run: npm test
+      - run: npm run build
