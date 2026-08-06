@@ -295,11 +295,14 @@ async function initialOwnerExists(database: DbExecutor): Promise<boolean> {
 }
 
 function isBootstrapConflict(error: unknown): boolean {
+  const seen = new Set<unknown>();
   let current = error;
-  while (current instanceof Error) {
-    const code = (current as Error & { code?: string }).code;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const value = current as { code?: unknown; cause?: unknown };
+    const code = value.code;
     if (code === "ER_LOCK_DEADLOCK" || code === "ER_DUP_ENTRY") return true;
-    current = (current as Error & { cause?: unknown }).cause;
+    current = value.cause;
   }
   return false;
 }
