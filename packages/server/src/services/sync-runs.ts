@@ -278,6 +278,7 @@ async function refreshGitHubOrganizationInventory(
   scope: SyncScope,
   encryptionKey: string | Buffer,
   timestamp: string,
+  claim?: { runId: string; startedAt: Date },
 ): Promise<void> {
   const credential = await readLatestCredential(database, scope.integrationId, encryptionKey);
   const client = new GitHubRestDiscoveryClient(credential.encryptedSecret);
@@ -288,6 +289,7 @@ async function refreshGitHubOrganizationInventory(
   if (!parentResourceId)
     throw new Error("GitHub organization sync scope is not linked to a GitHub organization.");
   await database.transaction(async (transaction) => {
+    if (claim) await assertSyncRunCanPersist(transaction, claim.runId, claim.startedAt);
     for (const repository of repositories) {
       await upsertGitHubRepository(transaction, {
         organizationId: scope.organizationId,
@@ -335,10 +337,23 @@ async function runGitHubOrganizationDiscoveryStep(
     selectionMode: "all",
     githubOrganizationId: discoveryRun.githubOrganizationId ?? undefined,
   };
+  const lease = startSyncRunLeaseHeartbeat(
+    database,
+    discoveryRun.id,
+    dateFromString(discoveryRun.startedAt) ?? now,
+  );
   try {
-    await refreshGitHubOrganizationInventory(database, scope, encryptionKey, timestamp);
+    await refreshGitHubOrganizationInventory(database, scope, encryptionKey, timestamp, {
+      runId: discoveryRun.id,
+      startedAt: dateFromString(discoveryRun.startedAt) ?? now,
+    });
     const resources = await executableResources(database, scope);
     await database.transaction(async (transaction) => {
+      await assertSyncRunCanPersist(
+        transaction,
+        discoveryRun.id,
+        dateFromString(discoveryRun.startedAt) ?? now,
+      );
       for (const resource of resources) {
         const [existing] = await transaction
           .select({ id: syncRuns.id })
@@ -386,6 +401,20 @@ async function runGitHubOrganizationDiscoveryStep(
         .where(eq(syncRuns.id, discoveryRun.id));
     });
   } catch (error) {
+    if (error instanceof SyncRunCancelledError) {
+      logger.info(
+        { syncRunId: discoveryRun.id },
+        "GitHub organization discovery was cancelled before its results were persisted",
+      );
+      return;
+    }
+    if (error instanceof SyncRunLeaseLostError) {
+      logger.warn(
+        { syncRunId: discoveryRun.id },
+        "GitHub organization discovery lost its claim lease before persisting results",
+      );
+      return;
+    }
     const retryAt = error instanceof GitHubRateLimitError ? error.retryAt : undefined;
     logger.error(
       { err: error, syncRunId: discoveryRun.id, retryAt: retryAt?.toISOString() },
@@ -399,6 +428,8 @@ async function runGitHubOrganizationDiscoveryStep(
       resourceId(discoveryRun),
       retryAt,
     );
+  } finally {
+    lease.stop();
   }
 }
 
