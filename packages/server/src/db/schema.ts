@@ -173,14 +173,10 @@ const githubResourceFields = {
   consecutiveFailureCount: int("consecutive_failure_count").notNull().default(0),
   ...timestamps,
 };
-export const githubOrganizations = mysqlTable(
-  "github_organizations",
-  githubResourceFields,
-  (t) => [
-    uniqueIndex("github_organizations_integration_external_uq").on(t.integrationId, t.externalId),
-    index("github_organizations_status_idx").on(t.organizationId, t.integrationId, t.syncStatus),
-  ],
-);
+export const githubOrganizations = mysqlTable("github_organizations", githubResourceFields, (t) => [
+  uniqueIndex("github_organizations_integration_external_uq").on(t.integrationId, t.externalId),
+  index("github_organizations_status_idx").on(t.organizationId, t.integrationId, t.syncStatus),
+]);
 export const githubRepositories = mysqlTable(
   "github_repositories",
   {
@@ -228,14 +224,10 @@ const linearResourceFields = {
   consecutiveFailureCount: int("consecutive_failure_count").notNull().default(0),
   ...timestamps,
 };
-export const linearWorkspaces = mysqlTable(
-  "linear_workspaces",
-  linearResourceFields,
-  (t) => [
-    uniqueIndex("linear_workspaces_integration_external_uq").on(t.integrationId, t.externalId),
-    index("linear_workspaces_status_idx").on(t.organizationId, t.integrationId, t.syncStatus),
-  ],
-);
+export const linearWorkspaces = mysqlTable("linear_workspaces", linearResourceFields, (t) => [
+  uniqueIndex("linear_workspaces_integration_external_uq").on(t.integrationId, t.externalId),
+  index("linear_workspaces_status_idx").on(t.organizationId, t.integrationId, t.syncStatus),
+]);
 export const linearTeams = mysqlTable(
   "linear_teams",
   {

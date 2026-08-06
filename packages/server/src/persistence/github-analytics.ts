@@ -1,8 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import type {
-  GitHubAnalyticsDto,
-  AnalyticsScopeType,
-} from "@teamtales/common/api";
+import type { GitHubAnalyticsDto, AnalyticsScopeType } from "@teamtales/common/api";
 import type { DbExecutor } from "../db/mysql.js";
 import {
   activityEvents,
@@ -42,14 +39,8 @@ export async function getGitHubAnalytics(
     })
     .from(sourceObjects)
     .leftJoin(syncScopes, eq(syncScopes.id, sourceObjects.syncScopeId))
-    .leftJoin(
-      githubRepositories,
-      eq(githubRepositories.id, syncScopes.githubRepositoryId),
-    )
-    .leftJoin(
-      githubOrganizations,
-      eq(githubOrganizations.id, syncScopes.githubOrganizationId),
-    )
+    .leftJoin(githubRepositories, eq(githubRepositories.id, syncScopes.githubRepositoryId))
+    .leftJoin(githubOrganizations, eq(githubOrganizations.id, syncScopes.githubOrganizationId))
     .where(
       and(
         eq(sourceObjects.organizationId, organizationId),
@@ -89,8 +80,7 @@ export async function getGitHubAnalytics(
     const author = identity(raw.user);
     const created = date(raw.created_at);
     const mergedAt = date(raw.merged_at);
-    if (!inRange(created, start, end) && !inRange(mergedAt, start, end))
-      return false;
+    if (!inRange(created, start, end) && !inRange(mergedAt, start, end)) return false;
     const repository = repositoryRef(row, raw, repositoriesByExternalId);
     const repositoryMatches =
       !options.scopeType || options.scopeType === "github_organization"
@@ -98,10 +88,8 @@ export async function getGitHubAnalytics(
           row.scope?.githubOrganizationId === options.scopeId ||
           repository?.organizationId === options.scopeId
         : options.scopeType === "github_repository"
-          ? row.scope?.githubRepositoryId === options.scopeId ||
-            repository?.id === options.scopeId
-          : author === options.scopeId ||
-            identity(raw.merged_by) === options.scopeId;
+          ? row.scope?.githubRepositoryId === options.scopeId || repository?.id === options.scopeId
+          : author === options.scopeId || identity(raw.merged_by) === options.scopeId;
     return repositoryMatches;
   });
 
@@ -120,18 +108,13 @@ export async function getGitHubAnalytics(
     const prDeletions = number(raw.deletions);
     const created = date(raw.created_at);
     const mergedAt = date(raw.merged_at);
-    const repositoryRefValue = repositoryRef(
-      row,
-      raw,
-      repositoriesByExternalId,
-    );
+    const repositoryRefValue = repositoryRef(row, raw, repositoriesByExternalId);
     const repoId =
       repositoryRefValue?.id ??
       row.scope?.githubRepositoryId ??
       row.object.syncScopeId ??
       "unknown";
-    const repoName =
-      repositoryRefValue?.name ?? row.repositoryName ?? "Unknown repository";
+    const repoName = repositoryRefValue?.name ?? row.repositoryName ?? "Unknown repository";
     const developer = developers.get(author) ?? blank(author, author);
     const repository = repositories.get(repoId) ?? blank(repoId, repoName);
     const openedInPeriod = inRange(created, start, end);
@@ -163,19 +146,14 @@ export async function getGitHubAnalytics(
     .select()
     .from(activityEvents)
     .where(
-      and(
-        eq(activityEvents.organizationId, organizationId),
-        eq(activityEvents.provider, "github"),
-      ),
+      and(eq(activityEvents.organizationId, organizationId), eq(activityEvents.provider, "github")),
     );
   const eventCounts = events.filter((event) => {
     const occurred = new Date(event.occurredAt);
     if (occurred < start || occurred >= end) return false;
     if (!options.scopeType) return true;
     return selected.some(
-      (row) =>
-        `github:github_pull_request:${row.object.externalId}` ===
-        event.workItemId,
+      (row) => `github:github_pull_request:${row.object.externalId}` === event.workItemId,
     );
   });
 
@@ -192,12 +170,8 @@ export async function getGitHubAnalytics(
       merged,
       additions,
       deletions,
-      reviews: eventCounts.filter(
-        (event) => event.eventType === "github.pr_reviewed",
-      ).length,
-      comments: eventCounts.filter((event) =>
-        event.eventType.includes("commented"),
-      ).length,
+      reviews: eventCounts.filter((event) => event.eventType === "github.pr_reviewed").length,
+      comments: eventCounts.filter((event) => event.eventType.includes("commented")).length,
     },
     developers: sortBreakdowns(developers),
     repositories: sortBreakdowns(repositories),
@@ -226,9 +200,7 @@ function blank(id: string, name: string): Breakdown {
   return { id, name, opened: 0, merged: 0, additions: 0, deletions: 0 };
 }
 function sortBreakdowns(items: Map<string, Breakdown>): Breakdown[] {
-  return [...items.values()].sort(
-    (a, b) => b.opened + b.merged - a.opened - a.merged,
-  );
+  return [...items.values()].sort((a, b) => b.opened + b.merged - a.opened - a.merged);
 }
 function parse(value: string): Raw {
   try {
@@ -295,11 +267,7 @@ function buildScopes(
         name: row.repositoryName,
         type: "github_repository",
       });
-    const repository = repositoryRef(
-      row,
-      parse(row.object.rawJson),
-      repositoriesByExternalId,
-    );
+    const repository = repositoryRef(row, parse(row.object.rawJson), repositoriesByExternalId);
     if (repository)
       scopes.set(`github_repository:${repository.id}`, {
         id: repository.id,
@@ -326,23 +294,21 @@ function repositoryRef(
     const linked = repositoriesByExternalId.get(row.scope.githubRepositoryId);
     if (linked) return linked;
   }
-  const repository =
-    objectValue(raw, "base")?.repo ?? objectValue(raw, "repository");
+  const repository = objectValue(raw, "base")?.repo ?? objectValue(raw, "repository");
   if (!repository || typeof repository !== "object") return undefined;
   const repositoryRaw = repository as Raw;
   const externalId =
     typeof repositoryRaw.id === "string" || typeof repositoryRaw.id === "number"
       ? String(repositoryRaw.id)
       : undefined;
-  const byId = externalId
-    ? repositoriesByExternalId.get(externalId)
-    : undefined;
+  const byId = externalId ? repositoriesByExternalId.get(externalId) : undefined;
   if (byId) return byId;
   const fullName = repositoryRaw.full_name;
   return typeof fullName === "string"
-    ? ([...repositoriesByExternalId.values()].find(
-        (item) => item.name === fullName,
-      ) ?? { id: fullName, name: fullName })
+    ? ([...repositoriesByExternalId.values()].find((item) => item.name === fullName) ?? {
+        id: fullName,
+        name: fullName,
+      })
     : undefined;
 }
 

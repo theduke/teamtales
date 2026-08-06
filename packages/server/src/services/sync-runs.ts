@@ -962,7 +962,12 @@ export async function runProviderSyncService(
     );
     if (!markedFailed) {
       runLog.warn("Provider sync lost its claim lease while handling a failure");
-      return queuedSyncResult(input.provider, runId, "running", "Another worker owns this sync run.");
+      return queuedSyncResult(
+        input.provider,
+        runId,
+        "running",
+        "Another worker owns this sync run.",
+      );
     }
     return {
       provider: input.provider,

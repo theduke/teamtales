@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 
-import { integrations, linearTeams, linearWorkspaces, organizations, providerResources } from "../../src/db/schema.js";
+import {
+  integrations,
+  linearTeams,
+  linearWorkspaces,
+  organizations,
+  providerResources,
+} from "../../src/db/schema.js";
 import { stableId } from "../../src/services/ids.js";
 import {
   listLinearExecutableResources,
@@ -55,7 +61,13 @@ describe("Linear dedicated resources", mysqlTestOptions, () => {
 
       assert.equal(
         workspaceId,
-        stableId("provider_resource", organizationId, integrationId, "linear.workspace", "workspace_1"),
+        stableId(
+          "provider_resource",
+          organizationId,
+          integrationId,
+          "linear.workspace",
+          "workspace_1",
+        ),
       );
       assert.equal(
         teamId,
@@ -64,7 +76,12 @@ describe("Linear dedicated resources", mysqlTestOptions, () => {
       const [team] = await opened.db.select().from(linearTeams).where(eq(linearTeams.id, teamId));
       assert.equal(team?.linearWorkspaceId, workspaceId);
       assert.equal(
-        (await opened.db.select().from(providerResources).where(eq(providerResources.integrationId, integrationId))).length,
+        (
+          await opened.db
+            .select()
+            .from(providerResources)
+            .where(eq(providerResources.integrationId, integrationId))
+        ).length,
         0,
       );
 
@@ -83,8 +100,14 @@ describe("Linear dedicated resources", mysqlTestOptions, () => {
         }),
         readLinearResource(opened.db, teamId),
       ]);
-      assert.deepEqual(workspaceResources.map((resource) => resource.id), [workspaceId]);
-      assert.deepEqual(teamResources.map((resource) => resource.id), [teamId]);
+      assert.deepEqual(
+        workspaceResources.map((resource) => resource.id),
+        [workspaceId],
+      );
+      assert.deepEqual(
+        teamResources.map((resource) => resource.id),
+        [teamId],
+      );
       assert.equal(readTeam?.resourceType, "linear.team");
 
       await updateLinearResourceLifecycle(opened.db, [workspaceId, teamId], {
@@ -96,7 +119,10 @@ describe("Linear dedicated resources", mysqlTestOptions, () => {
         .select()
         .from(linearWorkspaces)
         .where(eq(linearWorkspaces.id, workspaceId));
-      const [updatedTeam] = await opened.db.select().from(linearTeams).where(eq(linearTeams.id, teamId));
+      const [updatedTeam] = await opened.db
+        .select()
+        .from(linearTeams)
+        .where(eq(linearTeams.id, teamId));
       assert.equal(workspace?.syncStatus, "running");
       assert.equal(updatedTeam?.syncStatus, "running");
     } finally {

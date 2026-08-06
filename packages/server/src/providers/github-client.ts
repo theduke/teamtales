@@ -69,10 +69,7 @@ export class GitHubRestClient {
       rejectTimeout(timeoutError(url, this.requestTimeoutMs));
     }, this.requestTimeoutMs);
     try {
-      return await Promise.race([
-        this.fetchJson(url, controller.signal),
-        timeoutPromise,
-      ]);
+      return await Promise.race([this.fetchJson(url, controller.signal), timeoutPromise]);
     } catch (error) {
       if (didTimeout) throw timeoutError(url, this.requestTimeoutMs);
       throw error;

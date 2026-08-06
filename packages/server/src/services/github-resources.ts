@@ -1,11 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { AppDatabase, MySqlTransaction } from "../db/mysql.js";
-import {
-  githubOrganizations,
-  githubRepositories,
-  providerResources,
-} from "../db/schema.js";
+import { githubOrganizations, githubRepositories, providerResources } from "../db/schema.js";
 
 type DatabaseExecutor = AppDatabase | MySqlTransaction;
 type LegacyGitHubResource = typeof providerResources.$inferSelect;
@@ -51,7 +47,8 @@ export async function upsertGitHubOrganization(
     )
     .limit(1);
   const id =
-    existing?.id ?? `github_organization_${input.organizationId}_${input.integrationId}_${input.externalId}`;
+    existing?.id ??
+    `github_organization_${input.organizationId}_${input.integrationId}_${input.externalId}`;
   const value = {
     id,
     organizationId: input.organizationId,
@@ -65,7 +62,10 @@ export async function upsertGitHubOrganization(
     updatedAt: input.now,
   };
   if (existing)
-    await tx.update(githubOrganizations).set({ ...value, createdAt: undefined }).where(eq(githubOrganizations.id, id));
+    await tx
+      .update(githubOrganizations)
+      .set({ ...value, createdAt: undefined })
+      .where(eq(githubOrganizations.id, id));
   else await tx.insert(githubOrganizations).values({ ...value, createdAt: input.now });
   return id;
 }
@@ -94,7 +94,8 @@ export async function upsertGitHubRepository(
     )
     .limit(1);
   const id =
-    existing?.id ?? `github_repository_${input.organizationId}_${input.integrationId}_${input.externalId}`;
+    existing?.id ??
+    `github_repository_${input.organizationId}_${input.integrationId}_${input.externalId}`;
   const value = {
     id,
     organizationId: input.organizationId,
@@ -110,7 +111,10 @@ export async function upsertGitHubRepository(
     updatedAt: input.now,
   };
   if (existing)
-    await tx.update(githubRepositories).set({ ...value, createdAt: undefined }).where(eq(githubRepositories.id, id));
+    await tx
+      .update(githubRepositories)
+      .set({ ...value, createdAt: undefined })
+      .where(eq(githubRepositories.id, id));
   else await tx.insert(githubRepositories).values({ ...value, createdAt: input.now });
   return id;
 }
@@ -121,7 +125,11 @@ export async function readProviderResource(
   id: string,
 ): Promise<ManagedProviderResource | undefined> {
   if (provider !== "github" && provider !== "linear") {
-    const [row] = await database.select().from(providerResources).where(eq(providerResources.id, id)).limit(1);
+    const [row] = await database
+      .select()
+      .from(providerResources)
+      .where(eq(providerResources.id, id))
+      .limit(1);
     return row ? { ...row, provider, resourceType: row.resourceType } : undefined;
   }
   if (provider === "linear") return undefined;
@@ -136,7 +144,9 @@ export async function readProviderResource(
     .from(githubOrganizations)
     .where(eq(githubOrganizations.id, id))
     .limit(1);
-  return organization ? { ...organization, provider: "github", resourceType: "github.organization" } : undefined;
+  return organization
+    ? { ...organization, provider: "github", resourceType: "github.organization" }
+    : undefined;
 }
 
 export async function listExecutableResources(
@@ -165,7 +175,11 @@ export async function listExecutableResources(
             : undefined,
         ),
       );
-    return rows.map((row) => ({ ...row, provider: scope.provider, resourceType: row.resourceType }));
+    return rows.map((row) => ({
+      ...row,
+      provider: scope.provider,
+      resourceType: row.resourceType,
+    }));
   }
   if (scope.provider === "linear") return [];
   const rows = await database
@@ -182,7 +196,11 @@ export async function listExecutableResources(
             : undefined,
       ),
     );
-  return rows.map((row) => ({ ...row, provider: "github" as const, resourceType: "github.repository" }));
+  return rows.map((row) => ({
+    ...row,
+    provider: "github" as const,
+    resourceType: "github.repository",
+  }));
 }
 
 export async function updateResourceLifecycle(
@@ -193,12 +211,21 @@ export async function updateResourceLifecycle(
 ): Promise<void> {
   if (ids.length === 0) return;
   if (provider !== "github" && provider !== "linear") {
-    await (database as any).update(providerResources).set(values).where(inArray(providerResources.id, [...ids]));
+    await (database as any)
+      .update(providerResources)
+      .set(values)
+      .where(inArray(providerResources.id, [...ids]));
     return;
   }
   if (provider === "linear") return;
-  await (database as any).update(githubRepositories).set(values).where(inArray(githubRepositories.id, [...ids]));
-  await (database as any).update(githubOrganizations).set(values).where(inArray(githubOrganizations.id, [...ids]));
+  await (database as any)
+    .update(githubRepositories)
+    .set(values)
+    .where(inArray(githubRepositories.id, [...ids]));
+  await (database as any)
+    .update(githubOrganizations)
+    .set(values)
+    .where(inArray(githubOrganizations.id, [...ids]));
 }
 
 /**
@@ -214,7 +241,8 @@ export async function migrateGitHubResources(
       .from(providerResources)
       .where(eq(providerResources.provider, "github"));
     const unsupported = legacy.filter(
-      (row) => row.resourceType !== "github.organization" && row.resourceType !== "github.repository",
+      (row) =>
+        row.resourceType !== "github.organization" && row.resourceType !== "github.repository",
     );
     if (unsupported.length > 0)
       throw new Error(
@@ -248,14 +276,30 @@ export async function migrateGitHubResources(
       // The legacy hierarchy is self-referential, so child repositories must be
       // removed before their parent organizations.
       if (repositories.length)
-        await tx.delete(providerResources).where(inArray(providerResources.id, repositories.map((row) => row.id)));
+        await tx.delete(providerResources).where(
+          inArray(
+            providerResources.id,
+            repositories.map((row) => row.id),
+          ),
+        );
       if (organizations.length)
-        await tx.delete(providerResources).where(inArray(providerResources.id, organizations.map((row) => row.id)));
+        await tx.delete(providerResources).where(
+          inArray(
+            providerResources.id,
+            organizations.map((row) => row.id),
+          ),
+        );
       const remaining = await tx
         .select({ id: providerResources.id })
         .from(providerResources)
-        .where(inArray(providerResources.id, legacy.map((row) => row.id)));
-      if (remaining.length > 0) throw new Error("Legacy GitHub provider resources were not removed.");
+        .where(
+          inArray(
+            providerResources.id,
+            legacy.map((row) => row.id),
+          ),
+        );
+      if (remaining.length > 0)
+        throw new Error("Legacy GitHub provider resources were not removed.");
     }
     return {
       organizations: organizations.length,
@@ -352,10 +396,29 @@ async function verifyCopy(
   repositories: LegacyGitHubResource[],
 ): Promise<void> {
   const [copiedOrganizations, copiedRepositories] = await Promise.all([
-    tx.select().from(githubOrganizations).where(inArray(githubOrganizations.id, organizations.map((row) => row.id))),
-    tx.select().from(githubRepositories).where(inArray(githubRepositories.id, repositories.map((row) => row.id))),
+    tx
+      .select()
+      .from(githubOrganizations)
+      .where(
+        inArray(
+          githubOrganizations.id,
+          organizations.map((row) => row.id),
+        ),
+      ),
+    tx
+      .select()
+      .from(githubRepositories)
+      .where(
+        inArray(
+          githubRepositories.id,
+          repositories.map((row) => row.id),
+        ),
+      ),
   ]);
-  if (copiedOrganizations.length !== organizations.length || copiedRepositories.length !== repositories.length)
+  if (
+    copiedOrganizations.length !== organizations.length ||
+    copiedRepositories.length !== repositories.length
+  )
     throw new Error("GitHub resource copy count verification failed.");
   const organizationById = new Map(copiedOrganizations.map((row) => [row.id, row]));
   const repositoryById = new Map(copiedRepositories.map((row) => [row.id, row]));
@@ -383,7 +446,9 @@ function sameLifecycleFields(
   copied: Record<string, unknown> | undefined,
 ): boolean {
   if (!copied) return false;
-  return Object.entries(githubResourceValues(legacy)).every(([key, value]) => copied[key] === value);
+  return Object.entries(githubResourceValues(legacy)).every(
+    ([key, value]) => copied[key] === value,
+  );
 }
 
 async function verifyReferencesSwitched(tx: DatabaseExecutor): Promise<void> {

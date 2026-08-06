@@ -66,7 +66,9 @@ export async function runCli(
     const opened = await openCliDatabase(
       parsed,
       env,
-      commandName === "init-db" || commandName === "migrate" || commandName === "migrate github-resources",
+      commandName === "init-db" ||
+        commandName === "migrate" ||
+        commandName === "migrate github-resources",
     );
     try {
       let result: Record<string, unknown>;

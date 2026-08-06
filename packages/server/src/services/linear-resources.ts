@@ -137,7 +137,9 @@ export async function readLinearResource(
     .from(linearWorkspaces)
     .where(eq(linearWorkspaces.id, id))
     .limit(1);
-  return workspace ? { ...workspace, provider: "linear", resourceType: "linear.workspace" } : undefined;
+  return workspace
+    ? { ...workspace, provider: "linear", resourceType: "linear.workspace" }
+    : undefined;
 }
 
 export async function listLinearExecutableResources(
@@ -163,7 +165,11 @@ export async function listLinearExecutableResources(
             : undefined,
         ),
       );
-    return rows.map((row) => ({ ...row, provider: "linear" as const, resourceType: "linear.workspace" as const }));
+    return rows.map((row) => ({
+      ...row,
+      provider: "linear" as const,
+      resourceType: "linear.workspace" as const,
+    }));
   }
   if (scope.scopeType !== "linear.team") return [];
   const rows = await database
@@ -176,7 +182,11 @@ export async function listLinearExecutableResources(
         scope.linearTeamId ? eq(linearTeams.id, scope.linearTeamId) : undefined,
       ),
     );
-  return rows.map((row) => ({ ...row, provider: "linear" as const, resourceType: "linear.team" as const }));
+  return rows.map((row) => ({
+    ...row,
+    provider: "linear" as const,
+    resourceType: "linear.team" as const,
+  }));
 }
 
 export async function updateLinearResourceLifecycle(
@@ -185,7 +195,10 @@ export async function updateLinearResourceLifecycle(
   values: Record<string, unknown>,
 ): Promise<void> {
   if (ids.length === 0) return;
-  await (database as any).update(linearTeams).set(values).where(inArray(linearTeams.id, [...ids]));
+  await (database as any)
+    .update(linearTeams)
+    .set(values)
+    .where(inArray(linearTeams.id, [...ids]));
   await (database as any)
     .update(linearWorkspaces)
     .set(values)

@@ -222,15 +222,23 @@ export function ProvidersSection({
               )}
               {hasEmptySelectedScope && (
                 <Alert color="yellow" variant="light">
-                  Selected scopes need at least one resource. Choose a repository or team, or switch the
-                  scope back to all resources.
+                  Selected scopes need at least one resource. Choose a repository or team, or switch
+                  the scope back to all resources.
                 </Alert>
               )}
               <Group justify="flex-end">
-                <Button variant="default" disabled={saving} onClick={() => setIntegrationId(undefined)}>
+                <Button
+                  variant="default"
+                  disabled={saving}
+                  onClick={() => setIntegrationId(undefined)}
+                >
                   Cancel
                 </Button>
-                <Button loading={saving} disabled={hasEmptySelectedScope} onClick={() => void save()}>
+                <Button
+                  loading={saving}
+                  disabled={hasEmptySelectedScope}
+                  onClick={() => void save()}
+                >
                   Save scopes
                 </Button>
               </Group>

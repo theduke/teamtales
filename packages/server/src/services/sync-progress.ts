@@ -17,7 +17,10 @@ import {
   providerResources,
   syncRuns,
 } from "../db/schema.js";
-import { readProviderResource as readGitHubResource, type ManagedProviderResource } from "./github-resources.js";
+import {
+  readProviderResource as readGitHubResource,
+  type ManagedProviderResource,
+} from "./github-resources.js";
 import { readLinearResource, type ManagedLinearResource } from "./linear-resources.js";
 
 const defaultPageSize = 50;
@@ -43,7 +46,11 @@ async function readManagedResource(
 ): Promise<ManagedResource | undefined> {
   if (provider === "github") return readGitHubResource(database, provider, id);
   if (provider === "linear") return readLinearResource(database, id);
-  const [row] = await database.select().from(providerResources).where(eq(providerResources.id, id)).limit(1);
+  const [row] = await database
+    .select()
+    .from(providerResources)
+    .where(eq(providerResources.id, id))
+    .limit(1);
   return row ? { ...row, provider, resourceType: row.resourceType } : undefined;
 }
 
@@ -80,13 +87,13 @@ export async function listSyncRunResourceProgress(
     .orderBy(asc(syncRuns.id))
     .limit(pageSize + 1);
   const page = rows.slice(0, pageSize);
-  const resources = (await Promise.all(
-    page.map((row) =>
-      resourceId(row)
-        ? readManagedResource(database, row.provider, resourceId(row)!)
-        : undefined,
-    ),
-  )).filter((resource): resource is ManagedResource => Boolean(resource));
+  const resources = (
+    await Promise.all(
+      page.map((row) =>
+        resourceId(row) ? readManagedResource(database, row.provider, resourceId(row)!) : undefined,
+      ),
+    )
+  ).filter((resource): resource is ManagedResource => Boolean(resource));
   const byId = new Map(resources.map((resource) => [resource.id, resource]));
   return {
     items: page.map((row) => {
@@ -116,16 +123,33 @@ export async function readOrganizationSyncStatus(
         ),
       )
       .orderBy(desc(syncRuns.createdAt)),
-    database.select({ syncStatus: providerResources.syncStatus }).from(providerResources).where(eq(providerResources.organizationId, organizationId)),
-    database.select({ syncStatus: githubOrganizations.syncStatus }).from(githubOrganizations).where(eq(githubOrganizations.organizationId, organizationId)),
-    database.select({ syncStatus: githubRepositories.syncStatus }).from(githubRepositories).where(eq(githubRepositories.organizationId, organizationId)),
-    database.select({ syncStatus: linearWorkspaces.syncStatus }).from(linearWorkspaces).where(eq(linearWorkspaces.organizationId, organizationId)),
-    database.select({ syncStatus: linearTeams.syncStatus }).from(linearTeams).where(eq(linearTeams.organizationId, organizationId)),
+    database
+      .select({ syncStatus: providerResources.syncStatus })
+      .from(providerResources)
+      .where(eq(providerResources.organizationId, organizationId)),
+    database
+      .select({ syncStatus: githubOrganizations.syncStatus })
+      .from(githubOrganizations)
+      .where(eq(githubOrganizations.organizationId, organizationId)),
+    database
+      .select({ syncStatus: githubRepositories.syncStatus })
+      .from(githubRepositories)
+      .where(eq(githubRepositories.organizationId, organizationId)),
+    database
+      .select({ syncStatus: linearWorkspaces.syncStatus })
+      .from(linearWorkspaces)
+      .where(eq(linearWorkspaces.organizationId, organizationId)),
+    database
+      .select({ syncStatus: linearTeams.syncStatus })
+      .from(linearTeams)
+      .where(eq(linearTeams.organizationId, organizationId)),
   ]);
-  const resourceStatusCounts = resources.flat().reduce<Record<string, number>>((counts, resource) => {
-    counts[resource.syncStatus] = (counts[resource.syncStatus] ?? 0) + 1;
-    return counts;
-  }, {});
+  const resourceStatusCounts = resources
+    .flat()
+    .reduce<Record<string, number>>((counts, resource) => {
+      counts[resource.syncStatus] = (counts[resource.syncStatus] ?? 0) + 1;
+      return counts;
+    }, {});
   return { organizationId, activeRuns: runs.map(toSyncRunDto), resourceStatusCounts };
 }
 
@@ -159,7 +183,9 @@ export function toSyncRunDto(row: typeof syncRuns.$inferSelect): SyncRunDto {
   };
 }
 
-function toResourceDto(resource: ManagedResource): NonNullable<SyncRunResourceProgressDto["resource"]> {
+function toResourceDto(
+  resource: ManagedResource,
+): NonNullable<SyncRunResourceProgressDto["resource"]> {
   return {
     id: resource.id,
     provider: resource.provider as Provider,

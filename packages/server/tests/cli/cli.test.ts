@@ -163,7 +163,10 @@ describe("teamtales CLI with MySQL", mysqlTestOptions, () => {
       assert.equal(migratedRepository?.githubOrganizationId, githubOrganizationId);
       assert.equal(migratedRepository?.lastSyncError, "previous failure");
       const [scope] = await opened.db.select().from(syncScopes).where(eq(syncScopes.id, scopeId));
-      const [cursor] = await opened.db.select().from(syncCursors).where(eq(syncCursors.id, cursorId));
+      const [cursor] = await opened.db
+        .select()
+        .from(syncCursors)
+        .where(eq(syncCursors.id, cursorId));
       const [run] = await opened.db.select().from(syncRuns).where(eq(syncRuns.id, runId));
       assert.equal(scope?.githubRepositoryId, githubRepositoryId);
       assert.equal(cursor?.githubRepositoryId, githubRepositoryId);
@@ -181,10 +184,7 @@ describe("teamtales CLI with MySQL", mysqlTestOptions, () => {
         0,
       );
       const repeated = capture();
-      assert.equal(
-        (await runCli(["migrate", "github-resources"], repeated.io, env())).exitCode,
-        0,
-      );
+      assert.equal((await runCli(["migrate", "github-resources"], repeated.io, env())).exitCode, 0);
       assert.deepEqual(JSON.parse(repeated.stdout[0] ?? "{}"), {
         organizations: 0,
         repositories: 0,

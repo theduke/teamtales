@@ -151,7 +151,11 @@ describe("GitHubSourceConnector", () => {
         jsonResponse([pullSummary(7)]),
       "GET /repos/acme/widgets/pulls/7": jsonResponse(pullDetail(7)),
       "GET /repos/acme/widgets/pulls/7/reviews?per_page=100": jsonResponse([
-        { id: 90, state: "PENDING", pull_request_url: "https://api.github.test/repos/acme/widgets/pulls/7" },
+        {
+          id: 90,
+          state: "PENDING",
+          pull_request_url: "https://api.github.test/repos/acme/widgets/pulls/7",
+        },
       ]),
       "GET /repos/acme/widgets/pulls/7/comments?per_page=100": jsonResponse([]),
       "GET /repos/acme/widgets/issues/7/comments?per_page=100": jsonResponse([]),

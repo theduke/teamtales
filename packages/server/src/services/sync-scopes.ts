@@ -67,7 +67,8 @@ export async function addSyncScopeService(
     updatedAt: now,
   });
   if (input.provider === "github") {
-    const table = input.scopeType === "github.organization" ? githubOrganizations : githubRepositories;
+    const table =
+      input.scopeType === "github.organization" ? githubOrganizations : githubRepositories;
     const resources = await database
       .select()
       .from(table)
