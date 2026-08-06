@@ -93,7 +93,10 @@ describe("persistence repositories", mysqlTestOptions, () => {
         ...base,
         metrics: [...base.metrics, { ...base.metrics[0]!, id: ids.metric }],
       };
-      await assert.rejects(saveCompleteAnalysisResult(opened.db, input), /duplicate|unique/i);
+      await assertMySqlRejects(
+        () => saveCompleteAnalysisResult(opened.db, input),
+        "duplicate|unique",
+      );
       assert.equal(await getAnalysisRun(opened.db, ids.run), undefined);
       assert.equal((await listAnalysisMetrics(opened.db, ids.run)).length, 0);
     } finally {
@@ -156,6 +159,18 @@ describe("persistence repositories", mysqlTestOptions, () => {
     }
   });
 });
+
+async function assertMySqlRejects(action: () => Promise<unknown>, pattern: string): Promise<void> {
+  await assert.rejects(action, (error: unknown) => {
+    const expression = new RegExp(pattern, "i");
+    let current = error;
+    while (current instanceof Error) {
+      if (expression.test(current.message)) return true;
+      current = (current as Error & { cause?: unknown }).cause;
+    }
+    return false;
+  });
+}
 
 function testIds(suffix: string) {
   return {
