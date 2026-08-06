@@ -101,6 +101,15 @@ export function App(): ReactElement {
     () => organizations.find((item) => item.id === selectedOrganizationId),
     [organizations, selectedOrganizationId],
   );
+  const selectOrganization = useCallback(
+    (organizationId: string) => {
+      if (organizationId === selectedOrganizationId) return;
+      setSelectedOrganizationId(organizationId);
+      setSelectedReportId("");
+      setReportDetail(undefined);
+    },
+    [selectedOrganizationId],
+  );
   const showNotice = useCallback(
     ({ tone, text }: Notice) =>
       notifications.show({
@@ -365,7 +374,7 @@ export function App(): ReactElement {
               className="desktop-only"
               aria-label="Select organization"
               value={selectedOrganizationId}
-              onChange={(event) => setSelectedOrganizationId(event.target.value)}
+              onChange={(event) => selectOrganization(event.target.value)}
               data={[
                 { value: "", label: "No organization" },
                 ...organizations.map((item) => ({
@@ -403,7 +412,7 @@ export function App(): ReactElement {
             label="Organization"
             value={selectedOrganizationId}
             onChange={(event) => {
-              setSelectedOrganizationId(event.target.value);
+              selectOrganization(event.target.value);
               mobileNavigation.close();
             }}
             data={[
@@ -449,7 +458,7 @@ export function App(): ReactElement {
                 dashboard={dashboard}
                 selectedOrganizationId={selectedOrganizationId}
                 onCreatedOrganization={(id) => {
-                  setSelectedOrganizationId(id);
+                  selectOrganization(id);
                   void loadOrganizations()
                     .then(() => loadDashboard(id))
                     .catch(handleError);
@@ -918,7 +927,7 @@ function DashboardSection({ dashboard }: { dashboard: DashboardDto | undefined }
                   {item.sourceRefs.join(", ") || "No sources"}
                 </Text>
               </Paper>
-            )) ?? <Empty text="No highlights yet." />}
+            ))}
             {(dashboard?.highlights.length ?? 0) === 0 && <Empty text="No highlights yet." />}
           </Stack>
         </Panel>
@@ -1134,6 +1143,14 @@ function SyncSection({
   const [triggering, setTriggering] = useState(false);
   const integrations = dashboard?.integrations ?? [],
     scopes = dashboard?.syncScopes ?? [];
+  const providerIntegrations = integrations.filter(
+    (integration) => integration.provider === form.provider,
+  );
+  const providerScopes = scopes.filter(
+    (scope) =>
+      scope.provider === form.provider &&
+      (!form.integrationId || scope.integrationId === form.integrationId),
+  );
   const hasConflictingRun = activeRuns.some(
     (run) =>
       run.provider === form.provider &&
@@ -1197,6 +1214,8 @@ function SyncSection({
                   setForm({
                     ...form,
                     provider: e.currentTarget.value as Provider,
+                    integrationId: "",
+                    syncScopeId: "",
                   })
                 }
                 data={providerOptions}
@@ -1204,10 +1223,16 @@ function SyncSection({
               <NativeSelect
                 label="Integration"
                 value={form.integrationId}
-                onChange={(e) => setForm({ ...form, integrationId: e.currentTarget.value })}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    integrationId: e.currentTarget.value,
+                    syncScopeId: "",
+                  })
+                }
                 data={[
                   { value: "", label: "Any integration" },
-                  ...integrations.map((x) => ({
+                  ...providerIntegrations.map((x) => ({
                     value: x.id,
                     label: x.displayName,
                   })),
@@ -1219,7 +1244,7 @@ function SyncSection({
                 onChange={(e) => setForm({ ...form, syncScopeId: e.currentTarget.value })}
                 data={[
                   { value: "", label: "Any sync scope" },
-                  ...scopes.map((x) => ({
+                  ...providerScopes.map((x) => ({
                     value: x.id,
                     label: x.externalName,
                   })),
@@ -1668,7 +1693,7 @@ function ReportsSection({
                   </Text>
                 </Box>
               </Button>
-            )) ?? <Empty text="No reports generated yet." />}
+            ))}
             {(dashboard?.reports.length ?? 0) === 0 && <Empty text="No reports generated yet." />}
           </Stack>
         </Panel>
