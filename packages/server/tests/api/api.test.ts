@@ -290,9 +290,9 @@ describe("TeamTales API", mysqlTestOptions, () => {
         (resource) => resource.externalId === "101",
       );
       assert.equal(organizationResources.length + repositoryResources.length, 3);
-      assert.equal(organization?.providerResourceId, organizationResource?.id);
-      assert.equal(child?.providerResourceId, repositoryResource?.id);
-      assert.equal(repositoryResource?.parentResourceId, organizationResource?.id);
+      assert.equal(organization?.githubOrganizationId, organizationResource?.id);
+      assert.equal(child?.githubRepositoryId, repositoryResource?.id);
+      assert.equal(repositoryResource?.githubOrganizationId, organizationResource?.id);
       const modified = await apiFetch(app.url, `/api/integrations/${integrationId}/sync-scopes`, {
         method: "PUT",
         body: {
