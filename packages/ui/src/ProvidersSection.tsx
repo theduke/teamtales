@@ -46,9 +46,12 @@ export function ProvidersSection({
   const [repositoryIds, setRepositoryIds] = useState<Set<string>>(new Set());
   const [linearMode, setLinearMode] = useState<"all" | "selected">("all");
   const [teamIds, setTeamIds] = useState<Set<string>>(new Set());
+  const [connecting, setConnecting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const integration = dashboard?.integrations.find((item) => item.id === integrationId);
   useEffect(() => {
     if (!integrationId) return;
+    setDiscovery(undefined);
     void apiClient
       .listIntegrationResources(integrationId, organizationId)
       .then((response) => {
@@ -93,6 +96,8 @@ export function ProvidersSection({
   };
   async function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (connecting || !organizationId) return;
+    setConnecting(true);
     try {
       const result = await apiClient.addPatIntegration({
         organizationId,
@@ -106,12 +111,33 @@ export function ProvidersSection({
       onChanged();
     } catch (error) {
       onError(error);
+    } finally {
+      setConnecting(false);
     }
   }
+  const hasEmptySelectedScope =
+    discovery && "organizations" in discovery
+      ? [...githubModes].some(
+          ([organizationId, mode]) =>
+            mode === "selected" &&
+            !discovery.repositories.some(
+              (repository) =>
+                repository.organizationId === organizationId && repositoryIds.has(repository.id),
+            ),
+        )
+      : discovery && "workspace" in discovery && linearMode === "selected" && teamIds.size === 0;
   async function save() {
-    if (!integrationId || !discovery) return;
+    if (!integrationId || !discovery || saving) return;
+    if (hasEmptySelectedScope) {
+      onNotice({
+        tone: "error",
+        text: "Choose at least one resource for every selected scope before saving.",
+      });
+      return;
+    }
+    setSaving(true);
     try {
-      if (integration?.provider === "github" && "organizations" in discovery) {
+      if ("organizations" in discovery) {
         await apiClient.setSyncScopeSelection(integrationId, {
           organizationId,
           selection: {
@@ -146,6 +172,8 @@ export function ProvidersSection({
       setIntegrationId(undefined);
     } catch (error) {
       onError(error);
+    } finally {
+      setSaving(false);
     }
   }
   if (integrationId)
@@ -192,11 +220,19 @@ export function ProvidersSection({
                   setTeamIds={setTeamIds}
                 />
               )}
+              {hasEmptySelectedScope && (
+                <Alert color="yellow" variant="light">
+                  Selected scopes need at least one resource. Choose a repository or team, or switch the
+                  scope back to all resources.
+                </Alert>
+              )}
               <Group justify="flex-end">
-                <Button variant="default" onClick={() => setIntegrationId(undefined)}>
+                <Button variant="default" disabled={saving} onClick={() => setIntegrationId(undefined)}>
                   Cancel
                 </Button>
-                <Button onClick={() => void save()}>Save scopes</Button>
+                <Button loading={saving} disabled={hasEmptySelectedScope} onClick={() => void save()}>
+                  Save scopes
+                </Button>
               </Group>
             </Stack>
           </Card>
@@ -243,6 +279,7 @@ export function ProvidersSection({
               </Alert>
               <Button
                 type="submit"
+                loading={connecting}
                 disabled={!organizationId}
                 leftSection={<IconPlugConnected size={16} />}
               >
