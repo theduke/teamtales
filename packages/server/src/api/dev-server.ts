@@ -7,9 +7,12 @@ import { createApiServer } from "./server.js";
 import { logger } from "./logger.js";
 import { startProviderSyncWorker } from "../services/sync-worker.js";
 
-export async function startDevServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function startDevServer(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { runMigrations?: boolean } = {},
+): Promise<void> {
   const config = createApiConfig(env);
-  const database = await openDatabase({ env });
+  const database = await openDatabase({ env, runMigrations: options.runMigrations });
   const server = createApiServer({ config, database: database.db });
   const worker =
     config.syncWorkerEnabled && config.credentialEncryptionKey

@@ -101,10 +101,16 @@ function resourceId(row: {
     undefined
   );
 }
-function resourceFields(provider: Provider, type: string, id: string | undefined): Record<string, string> {
+function resourceFields(
+  provider: Provider,
+  type: string,
+  id: string | undefined,
+): Record<string, string> {
   if (!id) return {};
   if (provider === "github")
-    return type === "github.organization" ? { githubOrganizationId: id } : { githubRepositoryId: id };
+    return type === "github.organization"
+      ? { githubOrganizationId: id }
+      : { githubRepositoryId: id };
   if (provider === "linear")
     return type === "linear.workspace" ? { linearWorkspaceId: id } : { linearTeamId: id };
   return { providerResourceId: id };
@@ -234,16 +240,26 @@ export async function enqueueProviderSyncService(
           updatedAt: timestamp,
         });
         await updateResourceLifecycle(transaction, scope.provider, [resource.id], {
-          syncStatus: "queued", currentSyncRunId: childId, updatedAt: timestamp,
+          syncStatus: "queued",
+          currentSyncRunId: childId,
+          updatedAt: timestamp,
         });
+      }
+      if (!needsGithubDiscovery && resources.length === 0) {
+        await transaction
+          .update(syncRuns)
+          .set({ status: "completed", finishedAt: timestamp, updatedAt: timestamp })
+          .where(eq(syncRuns.id, rootId));
       }
       return queuedSyncResult(
         scope.provider,
         rootId,
-        "queued",
+        !needsGithubDiscovery && resources.length === 0 ? "completed" : "queued",
         needsGithubDiscovery
           ? "Queued GitHub repository discovery."
-          : `Queued ${resources.length} resource sync(s).`,
+          : resources.length === 0
+            ? "No active resources matched this sync scope."
+            : `Queued ${resources.length} resource sync(s).`,
       );
     } finally {
       await transaction.execute(sql`SELECT RELEASE_LOCK(${lockName})`);
@@ -348,7 +364,9 @@ async function runGitHubOrganizationDiscoveryStep(
           updatedAt: timestamp,
         });
         await updateResourceLifecycle(transaction, scope.provider, [resource.id], {
-          syncStatus: "queued", currentSyncRunId: childId, updatedAt: timestamp,
+          syncStatus: "queued",
+          currentSyncRunId: childId,
+          updatedAt: timestamp,
         });
       }
       await transaction
@@ -439,15 +457,39 @@ export async function processQueuedProviderSyncBatch(
   const rows = await claimQueuedProviderSyncRuns(database, now, options.limit ?? 10);
   for (const row of rows) {
     const rowResourceId = resourceId(row);
-    if (!rowResourceId || !row.syncScopeId) continue;
+    if (!rowResourceId || !row.syncScopeId) {
+      await finishBlockedSyncRun(
+        database,
+        row.id,
+        now,
+        "Claimed sync run is missing its resource or sync scope.",
+      );
+      continue;
+    }
     const [scopeRow] = await database
       .select()
       .from(syncScopes)
       .where(eq(syncScopes.id, row.syncScopeId))
       .limit(1);
-    if (!scopeRow) continue;
+    if (!scopeRow) {
+      await finishBlockedSyncRun(
+        database,
+        row.id,
+        now,
+        "Claimed sync run references a sync scope that no longer exists.",
+      );
+      continue;
+    }
     const resource = await readManagedResource(database, scopeRow.provider, rowResourceId);
-    if (!resource) continue;
+    if (!resource) {
+      await finishBlockedSyncRun(
+        database,
+        row.id,
+        now,
+        "Claimed sync run references a provider resource that no longer exists.",
+      );
+      continue;
+    }
     const scope = toExecutionScope(scopeRow, resource);
     if (row.runKind === "discovery") {
       await runGitHubOrganizationDiscoveryStep(database, row, scope, encryptionKey, now);
@@ -485,7 +527,15 @@ export async function cancelProviderSyncRunService(
     if (!requested) throw new Error("Sync run not found.");
     const rootId = requested.parentSyncRunId ?? requested.id;
     const children = await transaction
-      .select({ id: syncRuns.id, provider: syncRuns.provider, providerResourceId: syncRuns.providerResourceId, githubOrganizationId: syncRuns.githubOrganizationId, githubRepositoryId: syncRuns.githubRepositoryId, linearWorkspaceId: syncRuns.linearWorkspaceId, linearTeamId: syncRuns.linearTeamId })
+      .select({
+        id: syncRuns.id,
+        provider: syncRuns.provider,
+        providerResourceId: syncRuns.providerResourceId,
+        githubOrganizationId: syncRuns.githubOrganizationId,
+        githubRepositoryId: syncRuns.githubRepositoryId,
+        linearWorkspaceId: syncRuns.linearWorkspaceId,
+        linearTeamId: syncRuns.linearTeamId,
+      })
       .from(syncRuns)
       .where(
         and(
@@ -530,7 +580,9 @@ export async function cancelProviderSyncRunService(
         .set({ updatedAt: timestamp })
         .where(eq(syncRuns.id, child.id));
       await updateResourceLifecycle(transaction, requested.provider, [childResourceId], {
-        syncStatus: "idle", currentSyncRunId: null, updatedAt: timestamp,
+        syncStatus: "idle",
+        currentSyncRunId: null,
+        updatedAt: timestamp,
       });
     }
     return { syncRunId: rootId, status: "cancelled", cancelledResourceRuns: children.length };
@@ -568,12 +620,20 @@ async function claimQueuedProviderSyncRuns(
   const leaseExpiresAt = new Date(now.getTime() + 5 * 60_000).toISOString();
   return database.transaction(async (transaction) => {
     const reclaimed = await transaction
-      .select({ id: syncRuns.id, provider: syncRuns.provider, providerResourceId: syncRuns.providerResourceId, githubOrganizationId: syncRuns.githubOrganizationId, githubRepositoryId: syncRuns.githubRepositoryId, linearWorkspaceId: syncRuns.linearWorkspaceId, linearTeamId: syncRuns.linearTeamId })
+      .select({
+        id: syncRuns.id,
+        provider: syncRuns.provider,
+        providerResourceId: syncRuns.providerResourceId,
+        githubOrganizationId: syncRuns.githubOrganizationId,
+        githubRepositoryId: syncRuns.githubRepositoryId,
+        linearWorkspaceId: syncRuns.linearWorkspaceId,
+        linearTeamId: syncRuns.linearTeamId,
+      })
       .from(syncRuns)
       .where(
         and(
           eq(syncRuns.status, "running"),
-          eq(syncRuns.runKind, "resource"),
+          or(eq(syncRuns.runKind, "resource"), eq(syncRuns.runKind, "discovery")),
           lte(syncRuns.leaseExpiresAt, timestamp),
         ),
       );
@@ -592,7 +652,8 @@ async function claimQueuedProviderSyncRuns(
           .filter((row) => row.provider === provider)
           .flatMap((row) => (resourceId(row) ? [resourceId(row)!] : []));
         await updateResourceLifecycle(transaction, provider, resourceIds, {
-          syncStatus: "queued", updatedAt: timestamp,
+          syncStatus: "queued",
+          updatedAt: timestamp,
         });
       }
     }
@@ -611,7 +672,13 @@ async function claimQueuedProviderSyncRuns(
     const rows = await transaction.select().from(syncRuns).where(inArray(syncRuns.id, ids));
     await transaction
       .update(syncRuns)
-      .set({ status: "running", startedAt: timestamp, leaseExpiresAt, updatedAt: timestamp })
+      .set({
+        status: "running",
+        startedAt: timestamp,
+        leaseExpiresAt,
+        nextAttemptAt: null,
+        updatedAt: timestamp,
+      })
       .where(and(inArray(syncRuns.id, ids), eq(syncRuns.status, "queued")));
     const parentIds = rows.flatMap((row) => (row.parentSyncRunId ? [row.parentSyncRunId] : []));
     if (parentIds.length > 0)
@@ -624,7 +691,9 @@ async function claimQueuedProviderSyncRuns(
         .filter((row) => row.provider === provider)
         .flatMap((row) => (resourceId(row) ? [resourceId(row)!] : []));
       await updateResourceLifecycle(transaction, provider, resourceIds, {
-        syncStatus: "running", lastSyncStartedAt: timestamp, updatedAt: timestamp,
+        syncStatus: "running",
+        lastSyncStartedAt: timestamp,
+        updatedAt: timestamp,
       });
     }
     return rows.map((row) => ({ ...row, status: "running", startedAt: timestamp, leaseExpiresAt }));
@@ -644,7 +713,11 @@ async function readManagedResource(
 ): Promise<ManagedResource | undefined> {
   if (provider === "github") return readGitHubResource(database, provider, id);
   if (provider === "linear") return readLinearResource(database, id);
-  const [row] = await database.select().from(providerResources).where(eq(providerResources.id, id)).limit(1);
+  const [row] = await database
+    .select()
+    .from(providerResources)
+    .where(eq(providerResources.id, id))
+    .limit(1);
   return row ? { ...row, provider, resourceType: row.resourceType } : undefined;
 }
 
@@ -772,11 +845,12 @@ export async function runProviderSyncService(
       : await createSyncRun(database, scope, runId, now, providerResourceId));
   const runLog = scopeLog.child({ syncRunId: runId });
   if (await isSyncRunCancelled(database, runId)) return cancelledSyncResult(input.provider, runId);
-  scopeLog.debug("Reading provider sync credential");
-  const credential = await readLatestCredential(database, scope.integrationId, input.encryptionKey);
-  runLog.info("Provider sync started");
+  let credential: IntegrationCredential | undefined;
 
   try {
+    scopeLog.debug("Reading provider sync credential");
+    credential = await readLatestCredential(database, scope.integrationId, input.encryptionKey);
+    runLog.info("Provider sync started");
     const cursors = await readSyncCursors(database, scope, providerResourceId);
     runLog.debug({ cursorCount: cursors.length }, "Fetching provider source objects");
     const connectorContext: ConnectorExecutionContext = {
@@ -818,9 +892,10 @@ export async function runProviderSyncService(
       runLog.info("Provider sync was cancelled");
       return cancelledSyncResult(input.provider, runId);
     }
-    const message = redactText(error instanceof Error ? error.message : String(error), [
-      credential.encryptedSecret,
-    ]);
+    const message = redactText(
+      error instanceof Error ? error.message : String(error),
+      credential ? [credential.encryptedSecret] : [],
+    );
     const retryAt = error instanceof GitHubRateLimitError ? error.retryAt : undefined;
     runLog.error({ err: error, retryAt: retryAt?.toISOString() }, "Provider sync failed");
     await finishFailedSyncRun(database, runId, now, message, providerResourceId, retryAt);
@@ -877,7 +952,7 @@ async function persistFetchResult(
 ): Promise<RunProviderSyncServiceResult> {
   return database.transaction(async (transaction) => {
     const persistedSourceObjects = await upsertSourceObjects(transaction, fetched.objects, now);
-    const normalized = normalizeSourceObjects(persistedSourceObjects);
+    const normalized = normalizeSourceObjects(persistedSourceObjects, providerResourceId);
 
     await upsertWorkItems(
       transaction,
@@ -1066,11 +1141,11 @@ async function claimExistingSyncRun(
   const existingResourceId = existing ? resourceId(existing) : undefined;
   if (existingResourceId)
     await updateResourceLifecycle(database, scope.provider, [existingResourceId], {
-        syncStatus: "running",
-        currentSyncRunId: runId,
-        lastSyncStartedAt: timestamp,
-        updatedAt: timestamp,
-      });
+      syncStatus: "running",
+      currentSyncRunId: runId,
+      lastSyncStartedAt: timestamp,
+      updatedAt: timestamp,
+    });
   return {
     id: runId,
     organizationId: scope.organizationId,
@@ -1271,14 +1346,17 @@ async function readExistingSourceObject(
   };
 }
 
-function normalizeSourceObjects(sourceObjects: readonly SourceObjectRow[]): NormalizedBatch {
+function normalizeSourceObjects(
+  sourceObjects: readonly SourceObjectRow[],
+  providerResourceId?: string,
+): NormalizedBatch {
   const workItems: WorkItem[] = [];
   const events: ActivityEvent[] = [];
   const eventSourceObjectIds = new Map<string, string>();
   const workItemSourceObjectIds = new Map<string, string>();
 
   for (const source of sourceObjects) {
-    const context = normalizationContext(source);
+    const context = normalizationContext(source, providerResourceId);
 
     if (source.objectType === "github.pull_request") {
       const result = normalizeGitHubPullRequest(asRecord(source.rawJson), context);
@@ -1337,7 +1415,10 @@ function normalizeSourceObjects(sourceObjects: readonly SourceObjectRow[]): Norm
   return { workItems, events, eventSourceObjectIds, workItemSourceObjectIds };
 }
 
-function normalizationContext(source: SourceObjectRow): {
+function normalizationContext(
+  source: SourceObjectRow,
+  providerResourceId?: string,
+): {
   sourceObjectId: string;
   workItemId?: string;
   repositoryId?: string;
@@ -1345,7 +1426,11 @@ function normalizationContext(source: SourceObjectRow): {
   linearProjectId?: string;
 } {
   const raw = asRecord(source.rawJson);
-  const repositoryId = source.provider === "github" ? source.syncScopeId : undefined;
+  // Resource runs use the repository inventory ID, while a scope can represent a
+  // whole organization. Attribute every event to the concrete resource that was
+  // fetched so repository-scoped analytics and reports remain accurate.
+  const repositoryId =
+    source.provider === "github" ? (providerResourceId ?? source.syncScopeId) : undefined;
 
   if (source.objectType === "linear.comment") {
     const issue = recordField(raw, "issue");
@@ -1533,7 +1618,13 @@ async function finishSucceededSyncRun(
     .limit(1);
   await database
     .update(syncRuns)
-    .set({ status: "succeeded", finishedAt: timestamp, ...counters })
+    .set({
+      status: "succeeded",
+      finishedAt: timestamp,
+      leaseExpiresAt: null,
+      nextAttemptAt: null,
+      ...counters,
+    })
     .where(and(eq(syncRuns.id, runId), eq(syncRuns.status, "running")));
   await database
     .update(syncScopes)
@@ -1545,13 +1636,13 @@ async function finishSucceededSyncRun(
     .where(eq(syncScopes.id, scopeId));
   if (providerResourceId)
     await updateResourceLifecycle(database, run?.provider ?? "linear", [providerResourceId], {
-        syncStatus: "succeeded",
-        currentSyncRunId: null,
-        lastSyncSucceededAt: timestamp,
-        lastSyncError: null,
-        consecutiveFailureCount: 0,
-        updatedAt: timestamp,
-      });
+      syncStatus: "succeeded",
+      currentSyncRunId: null,
+      lastSyncSucceededAt: timestamp,
+      lastSyncError: null,
+      consecutiveFailureCount: 0,
+      updatedAt: timestamp,
+    });
 }
 
 async function finishFailedSyncRun(
@@ -1576,7 +1667,7 @@ async function finishFailedSyncRun(
     .set({
       status: terminal ? "failed" : "queued",
       ...(terminal
-        ? { finishedAt: now.toISOString() }
+        ? { finishedAt: now.toISOString(), nextAttemptAt: null }
         : {
             nextAttemptAt: retryTimestamp,
             queuedAt: now.toISOString(),
@@ -1589,13 +1680,36 @@ async function finishFailedSyncRun(
     .where(eq(syncRuns.id, runId));
   if (providerResourceId)
     await updateResourceLifecycle(database, run?.provider ?? "linear", [providerResourceId], {
-        syncStatus: terminal ? "failed" : "queued",
-        ...(terminal ? { currentSyncRunId: null } : { nextAttemptAt: retryTimestamp }),
-        lastSyncFailedAt: now.toISOString(),
-        lastSyncError: error,
-        consecutiveFailureCount: run?.attempt ?? 1,
-        updatedAt: now.toISOString(),
-      });
+      syncStatus: terminal ? "failed" : "queued",
+      ...(terminal
+        ? { currentSyncRunId: null, nextAttemptAt: null }
+        : { currentSyncRunId: null, nextAttemptAt: retryTimestamp }),
+      lastSyncFailedAt: now.toISOString(),
+      lastSyncError: error,
+      consecutiveFailureCount: run?.attempt ?? 1,
+      updatedAt: now.toISOString(),
+    });
+}
+
+/** Mark a claimed queue row terminal when its immutable execution references are gone. */
+async function finishBlockedSyncRun(
+  database: AppDatabase,
+  runId: string,
+  now: Date,
+  error: string,
+): Promise<void> {
+  await database
+    .update(syncRuns)
+    .set({
+      status: "failed",
+      finishedAt: now.toISOString(),
+      nextAttemptAt: null,
+      leaseExpiresAt: null,
+      error,
+      objectsFailed: 1,
+      updatedAt: now.toISOString(),
+    })
+    .where(eq(syncRuns.id, runId));
 }
 
 function asRecord(value: JsonValue): Record<string, unknown> {
