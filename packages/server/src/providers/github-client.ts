@@ -58,29 +58,44 @@ export class GitHubRestClient {
   private async requestJson(url: string): Promise<{ link: string | null; value: unknown }> {
     this.requestsMade += 1;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    let didTimeout = false;
+    let rejectTimeout: (reason: Error) => void;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      rejectTimeout = reject;
+    });
+    const timeout = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+      rejectTimeout(timeoutError(url, this.requestTimeoutMs));
+    }, this.requestTimeoutMs);
     try {
-      const response = await this.fetchImpl(url, {
-        headers: {
-          accept: "application/vnd.github+json",
-          authorization: `Bearer ${this.token}`,
-          "user-agent": "teamtales-github-sync",
-          "x-github-api-version": "2022-11-28",
-        },
-        signal: controller.signal,
-      });
-      if (!response.ok) throw await githubApiError(response);
-      return { link: response.headers.get("link"), value: await response.json() };
+      return await Promise.race([
+        this.fetchJson(url, controller.signal),
+        timeoutPromise,
+      ]);
     } catch (error) {
-      if (controller.signal.aborted) {
-        throw new Error(
-          `GitHub API request timed out after ${this.requestTimeoutMs}ms: ${new URL(url).pathname}`,
-        );
-      }
+      if (didTimeout) throw timeoutError(url, this.requestTimeoutMs);
       throw error;
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private async fetchJson(
+    url: string,
+    signal: AbortSignal,
+  ): Promise<{ link: string | null; value: unknown }> {
+    const response = await this.fetchImpl(url, {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${this.token}`,
+        "user-agent": "teamtales-github-sync",
+        "x-github-api-version": "2022-11-28",
+      },
+      signal,
+    });
+    if (!response.ok) throw await githubApiError(response);
+    return { link: response.headers.get("link"), value: await response.json() };
   }
 
   private buildUrl(path: string, query: Record<string, string>): string {
@@ -88,6 +103,10 @@ export class GitHubRestClient {
     for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
     return url.toString();
   }
+}
+
+function timeoutError(url: string, timeoutMs: number): Error {
+  return new Error(`GitHub API request timed out after ${timeoutMs}ms: ${new URL(url).pathname}`);
 }
 
 function nextLink(linkHeader: string | null): string | undefined {
