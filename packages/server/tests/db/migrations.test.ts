@@ -32,24 +32,26 @@ describe("MySQL migrations", mysqlTestOptions, () => {
       integrationId = `integration_${suffix}`,
       scopeId = `scope_${suffix}`;
     try {
-      await assert.rejects(
-        opened.db.insert(integrationCredentials).values({
-          id: `credential_${suffix}`,
-          integrationId: `missing_${suffix}`,
-          encryptedSecret: "encrypted",
-        }),
-        /foreign key/i,
+      await assertMySqlRejects(
+        () =>
+          opened.db.insert(integrationCredentials).values({
+            id: `credential_${suffix}`,
+            integrationId: `missing_${suffix}`,
+            encryptedSecret: "encrypted",
+          }),
+        "foreign key",
       );
-      await assert.rejects(
-        opened.db.insert(integrations).values({
-          id: integrationId,
-          organizationId: `missing_${suffix}`,
-          provider: "github",
-          authType: "personal_access_token",
-          status: "active",
-          displayName: "GitHub",
-        }),
-        /foreign key/i,
+      await assertMySqlRejects(
+        () =>
+          opened.db.insert(integrations).values({
+            id: integrationId,
+            organizationId: `missing_${suffix}`,
+            provider: "github",
+            authType: "personal_access_token",
+            status: "active",
+            displayName: "GitHub",
+          }),
+        "foreign key",
       );
       await opened.db.insert(organizations).values({ id: orgId, name: "Migration", slug: orgId });
       await opened.db.insert(integrations).values({
@@ -84,9 +86,9 @@ describe("MySQL migrations", mysqlTestOptions, () => {
         sourceState: "active",
       };
       await opened.db.insert(sourceObjects).values({ id: `source_a_${suffix}`, ...object });
-      await assert.rejects(
-        opened.db.insert(sourceObjects).values({ id: `source_b_${suffix}`, ...object }),
-        /duplicate|unique/i,
+      await assertMySqlRejects(
+        () => opened.db.insert(sourceObjects).values({ id: `source_b_${suffix}`, ...object }),
+        "duplicate|unique",
       );
     } finally {
       await opened.db.delete(organizations).where(eq(organizations.id, orgId));
@@ -94,3 +96,15 @@ describe("MySQL migrations", mysqlTestOptions, () => {
     }
   });
 });
+
+async function assertMySqlRejects(action: () => Promise<unknown>, pattern: string): Promise<void> {
+  await assert.rejects(action, (error: unknown) => {
+    const expression = new RegExp(pattern, "i");
+    let current = error;
+    while (current instanceof Error) {
+      if (expression.test(current.message)) return true;
+      current = (current as Error & { cause?: unknown }).cause;
+    }
+    return false;
+  });
+}

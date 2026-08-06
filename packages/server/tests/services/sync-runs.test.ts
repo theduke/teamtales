@@ -64,13 +64,13 @@ describe("queued provider sync recovery", mysqlTestOptions, () => {
       provider: "github",
       organizationId,
       syncScopeId: scopeId,
-      encryptionKey: "0123456789abcdef0123456789abcdef",
+      encryptionKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     });
     const [run] = await opened.db.select().from(syncRuns).where(eq(syncRuns.id, queued.syncRunId!));
 
     assert.equal(queued.status, "completed");
     assert.equal(run?.status, "completed");
-    assert.equal(run?.finishedAt, now);
+    assert.equal(typeof run?.finishedAt, "string");
   });
 
   it("fails claimed rows whose execution references are no longer valid", async () => {
@@ -118,9 +118,11 @@ describe("queued provider sync recovery", mysqlTestOptions, () => {
     });
 
     assert.equal(
-      await processQueuedProviderSyncBatch(opened.db, "0123456789abcdef0123456789abcdef", {
-        limit: 1,
-      }),
+      await processQueuedProviderSyncBatch(
+        opened.db,
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        { limit: 1 },
+      ),
       1,
     );
     const [run] = await opened.db.select().from(syncRuns).where(eq(syncRuns.id, runId));

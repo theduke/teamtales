@@ -102,7 +102,7 @@ it(
         provider: "github",
         displayName: "Test GitHub",
         token: "github_pat_integration_test",
-        encryptionKey: "0123456789abcdef0123456789abcdef",
+        encryptionKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       });
       const scope = await addSyncScopeService(opened.db, {
         id: `scope_${suffix}`,

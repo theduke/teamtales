@@ -21,7 +21,7 @@
     "build": "vp exec esbuild src/api/production-server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
     "start": "node dist/server.js",
     "drizzle:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "test": "vp exec tsx --test tests/**/*.test.ts",
+    "test": "vp exec tsx --test --test-concurrency=1 tests/**/*.test.ts",
     "check": "vp check && vp run typecheck && vp run schema:check"
   },
   "dependencies": {
