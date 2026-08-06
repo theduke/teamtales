@@ -9,17 +9,44 @@ export interface ApiConfig {
 }
 
 export function createApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
+  const production = env.NODE_ENV === "production";
+  const cookieSecure = parseBoolean(env.TEAMTALES_COOKIE_SECURE ?? "false");
+  const publicOrigin = parsePublicOrigin(env.TEAMTALES_PUBLIC_ORIGIN, production);
+  if (production && !cookieSecure) {
+    throw new Error("TEAMTALES_COOKIE_SECURE must be true in production.");
+  }
   return {
     host: env.TEAMTALES_API_HOST ?? "127.0.0.1",
     port: parsePort(env.PORT ?? env.TEAMTALES_API_PORT ?? "9100"),
     credentialEncryptionKey: env.TEAMTALES_CREDENTIAL_KEY,
-    cookieSecure: parseBoolean(env.TEAMTALES_COOKIE_SECURE ?? "false"),
-    publicOrigin: env.TEAMTALES_PUBLIC_ORIGIN,
-    syncWorkerEnabled: parseBoolean(
-      env.TEAMTALES_SYNC_WORKER ?? (env.NODE_ENV === "production" ? "false" : "true"),
-    ),
+    cookieSecure,
+    publicOrigin,
+    syncWorkerEnabled: parseBoolean(env.TEAMTALES_SYNC_WORKER ?? (production ? "false" : "true")),
     syncWorkerBatchSize: parsePositiveInteger(env.TEAMTALES_SYNC_WORKER_BATCH_SIZE ?? "3"),
   };
+}
+
+function parsePublicOrigin(value: string | undefined, production: boolean): string | undefined {
+  if (!value) {
+    if (production)
+      throw new Error(
+        "TEAMTALES_PUBLIC_ORIGIN must be set to the HTTPS public origin in production.",
+      );
+    return undefined;
+  }
+  let origin: URL;
+  try {
+    origin = new URL(value);
+  } catch {
+    throw new Error("TEAMTALES_PUBLIC_ORIGIN must be a valid absolute HTTP(S) URL.");
+  }
+  if (!/^https?:$/.test(origin.protocol) || origin.username || origin.password) {
+    throw new Error("TEAMTALES_PUBLIC_ORIGIN must be a valid absolute HTTP(S) URL.");
+  }
+  if (production && origin.protocol !== "https:") {
+    throw new Error("TEAMTALES_PUBLIC_ORIGIN must use HTTPS in production.");
+  }
+  return origin.origin;
 }
 
 function parsePositiveInteger(value: string): number {

@@ -64,43 +64,15 @@ const routes: Route[] = [
   route("DELETE", "/api/auth/tokens/:tokenId", revokeApiTokenHandler),
   route("GET", "/api/organizations", listOrganizationsHandler),
   route("POST", "/api/organizations", createOrganizationHandler, true),
-  route(
-    "GET",
-    "/api/organizations/:organizationId/integrations",
-    listIntegrationsHandler,
-  ),
+  route("GET", "/api/organizations/:organizationId/integrations", listIntegrationsHandler),
   route("POST", "/api/integrations/pat", createPatIntegrationHandler),
-  route(
-    "GET",
-    "/api/integrations/:integrationId/resources",
-    listIntegrationResourcesHandler,
-  ),
-  route(
-    "PUT",
-    "/api/integrations/:integrationId/sync-scopes",
-    setSyncScopeSelectionHandler,
-  ),
-  route(
-    "GET",
-    "/api/organizations/:organizationId/sync-scopes",
-    listSyncScopesHandler,
-  ),
-  route(
-    "GET",
-    "/api/organizations/:organizationId/sync-status",
-    organizationSyncStatusHandler,
-  ),
+  route("GET", "/api/integrations/:integrationId/resources", listIntegrationResourcesHandler),
+  route("PUT", "/api/integrations/:integrationId/sync-scopes", setSyncScopeSelectionHandler),
+  route("GET", "/api/organizations/:organizationId/sync-scopes", listSyncScopesHandler),
+  route("GET", "/api/organizations/:organizationId/sync-status", organizationSyncStatusHandler),
   route("POST", "/api/sync-scopes", createSyncScopeHandler),
-  route(
-    "GET",
-    "/api/organizations/:organizationId/reports",
-    listReportsHandler,
-  ),
-  route(
-    "GET",
-    "/api/organizations/:organizationId/source-objects",
-    listSourceObjectsHandler,
-  ),
+  route("GET", "/api/organizations/:organizationId/reports", listReportsHandler),
+  route("GET", "/api/organizations/:organizationId/source-objects", listSourceObjectsHandler),
   route("GET", "/api/reports/:reportId", getReportHandler),
   route("GET", "/api/source-objects/:sourceObjectId", getSourceObjectHandler),
   route("POST", "/api/reports/weekly", createWeeklyReportHandler),
@@ -109,46 +81,35 @@ const routes: Route[] = [
   route("POST", "/api/sync/:provider", triggerSyncHandler),
   route("GET", "/api/sync-runs/:syncRunId", getSyncRunHandler),
   route("POST", "/api/sync-runs/:syncRunId/cancel", cancelSyncRunHandler),
-  route(
-    "GET",
-    "/api/sync-runs/:syncRunId/resources",
-    listSyncRunResourcesHandler,
-  ),
+  route("GET", "/api/sync-runs/:syncRunId/resources", listSyncRunResourcesHandler),
 ];
 
-export async function dispatchRoute(
-  context: ApiContext,
-  url: URL,
-): Promise<HandlerResult> {
+export async function dispatchRoute(context: ApiContext, url: URL): Promise<HandlerResult> {
   const method = context.request.method ?? "GET";
   const pathname = normalizePathname(url.pathname);
 
   for (const candidate of routes) {
-    if (candidate.method !== method) {
-      continue;
-    }
+    if (candidate.method !== method) continue;
     const match = candidate.pattern.exec(pathname);
-    if (!match) {
-      continue;
-    }
-
+    if (!match) continue;
     const params: RouteParams = {};
+
     candidate.paramNames.forEach((name, index) => {
       const value = match[index + 1];
-      if (value !== undefined) {
-        params[name] = decodeURIComponent(value);
-      }
+      if (value !== undefined) params[name] = decodeURIComponent(value);
     });
-
     const authenticated = await authenticateRequest(context);
     context.principal = authenticated?.principal;
     context.authKind = authenticated?.kind;
+
     if (!candidate.public && !context.principal) {
       throw new HttpError(401, "unauthorized", "Authentication is required.");
     }
+    const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
     if (
-      context.authKind === "session" &&
-      !["GET", "HEAD", "OPTIONS"].includes(method)
+      unsafe &&
+      context.authKind !== "api_token" &&
+      (candidate.public || context.authKind === "session")
     ) {
       enforceSameOrigin(context);
     }
@@ -159,12 +120,7 @@ export async function dispatchRoute(
   throw new HttpError(404, "not_found", "Route not found.");
 }
 
-function route(
-  method: string,
-  path: string,
-  handler: Handler,
-  isPublic = false,
-): Route {
+function route(method: string, path: string, handler: Handler, isPublic = false): Route {
   const paramNames: string[] = [];
   const pattern = path
     .split("/")
@@ -188,26 +144,16 @@ function route(
 
 async function authenticateRequest(
   context: ApiContext,
-): Promise<
-  { principal: AuthPrincipal; kind: "session" | "api_token" } | undefined
-> {
+): Promise<{ principal: AuthPrincipal; kind: "session" | "api_token" } | undefined> {
   const authorization = context.request.headers.authorization;
   if (authorization !== undefined) {
     const match = /^Bearer ([^\s]+)$/.exec(authorization);
-    if (!match?.[1])
-      throw new HttpError(401, "invalid_token", "Invalid bearer token.");
+    if (!match?.[1]) throw new HttpError(401, "invalid_token", "Invalid bearer token.");
     const principal = await resolveApiToken(context.database, match[1]);
-    if (!principal)
-      throw new HttpError(
-        401,
-        "invalid_token",
-        "Invalid or expired bearer token.",
-      );
+    if (!principal) throw new HttpError(401, "invalid_token", "Invalid or expired bearer token.");
     return { principal, kind: "api_token" };
   }
-  const cookie = parseCookies(context.request.headers.cookie)[
-    "teamtales_session"
-  ];
+  const cookie = parseCookies(context.request.headers.cookie)["teamtales_session"];
   if (!cookie) return undefined;
   const principal = await resolveSession(context.database, cookie);
   return principal ? { principal, kind: "session" } : undefined;
@@ -216,8 +162,7 @@ async function authenticateRequest(
 function enforceSameOrigin(context: ApiContext): void {
   const origin = context.request.headers.origin;
   const expected =
-    context.config.publicOrigin ??
-    `http://${context.request.headers.host ?? "localhost"}`;
+    context.config.publicOrigin ?? `http://${context.request.headers.host ?? "localhost"}`;
   if (!origin || normalizeOrigin(origin) !== normalizeOrigin(expected)) {
     throw new HttpError(403, "csrf_rejected", "Request origin is not allowed.");
   }
@@ -237,18 +182,13 @@ function parseCookies(header: string | undefined): Record<string, string> {
     header.split(";").map((part) => {
       const index = part.indexOf("=");
       if (index < 0) return [part.trim(), ""];
-      return [
-        part.slice(0, index).trim(),
-        decodeURIComponent(part.slice(index + 1).trim()),
-      ];
+      return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())];
     }),
   );
 }
 
 function normalizePathname(pathname: string): string {
-  return pathname.length > 1 && pathname.endsWith("/")
-    ? pathname.slice(0, -1)
-    : pathname;
+  return pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 }
 
 function escapeRegExp(value: string): string {

@@ -1,11 +1,7 @@
-import type {
-  JsonObject,
-  JsonValue,
-  SyncScopeDto,
-} from "@teamtales/common/api";
+import type { JsonObject, JsonValue, SyncScopeDto } from "@teamtales/common/api";
 import type { Provider, ReportScopeType } from "@teamtales/common/domain";
 import type { AuthPrincipal } from "../auth/index.js";
-import { and, count, eq, isNull } from "drizzle-orm";
+import { and, count, eq, isNull, sql } from "drizzle-orm";
 import {
   apiTokens,
   integrationCredentials,
@@ -47,10 +43,7 @@ import {
   setGitHubScopeSelectionService,
   setLinearScopeSelectionService,
 } from "../services/index.js";
-import {
-  discoverProviderResources,
-  verifyProviderToken,
-} from "../providers/discovery.js";
+import { discoverProviderResources, verifyProviderToken } from "../providers/discovery.js";
 import { decryptCredentialSecret } from "../security/credentials.js";
 import {
   authenticatePassword,
@@ -60,6 +53,7 @@ import {
   revokeSession,
   setPassword,
 } from "../auth/index.js";
+import type { DbExecutor } from "../db/mysql.js";
 import { getGitHubAnalytics } from "../persistence/github-analytics.js";
 
 export interface HandlerInput {
@@ -73,13 +67,9 @@ export interface HandlerResult {
   data: JsonValue;
   headers?: Record<string, string | string[]>;
 }
-export type Handler = (
-  input: HandlerInput,
-) => Promise<HandlerResult> | HandlerResult;
+export type Handler = (input: HandlerInput) => Promise<HandlerResult> | HandlerResult;
 
-export async function loginHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function loginHandler(input: HandlerInput): Promise<HandlerResult> {
   const body = assertRecord(await readJsonBody(input.context.request));
   let principal: AuthPrincipal | undefined;
   try {
@@ -91,12 +81,7 @@ export async function loginHandler(
   } catch {
     principal = undefined;
   }
-  if (!principal)
-    throw new HttpError(
-      401,
-      "invalid_credentials",
-      "Invalid email or password.",
-    );
+  if (!principal) throw new HttpError(401, "invalid_credentials", "Invalid email or password.");
   const created = await createSession(input.context.database, principal.userId);
   return {
     status: 200,
@@ -106,30 +91,20 @@ export async function loginHandler(
       user: principalDto(principal),
     },
     headers: {
-      "set-cookie": sessionCookie(
-        created.token,
-        input.context.config.cookieSecure === true,
-      ),
+      "set-cookie": sessionCookie(created.token, input.context.config.cookieSecure === true),
       "cache-control": "no-store",
     },
   };
 }
 
-export async function logoutHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
-  const token = requestCookie(
-    input.context.request.headers.cookie,
-    "teamtales_session",
-  );
+export async function logoutHandler(input: HandlerInput): Promise<HandlerResult> {
+  const token = requestCookie(input.context.request.headers.cookie, "teamtales_session");
   if (token) await revokeSession(input.context.database, token);
   return {
     status: 200,
     data: { loggedOut: true },
     headers: {
-      "set-cookie": clearSessionCookie(
-        input.context.config.cookieSecure === true,
-      ),
+      "set-cookie": clearSessionCookie(input.context.config.cookieSecure === true),
       "cache-control": "no-store",
     },
   };
@@ -155,9 +130,7 @@ export async function meHandler(input: HandlerInput): Promise<HandlerResult> {
   };
 }
 
-export async function listApiTokensHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function listApiTokensHandler(input: HandlerInput): Promise<HandlerResult> {
   const userId = requirePrincipal(input).userId;
   const items = (
     await input.context.database
@@ -173,29 +146,19 @@ export async function listApiTokensHandler(
   };
 }
 
-export async function createApiTokenHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function createApiTokenHandler(input: HandlerInput): Promise<HandlerResult> {
   const body = assertRecord(await readJsonBody(input.context.request));
   const expiresAtText = optionalString(body, "expiresAt");
   const expiresAt = expiresAtText ? new Date(expiresAtText) : undefined;
   if (expiresAt && Number.isNaN(expiresAt.getTime())) {
-    throw new HttpError(
-      400,
-      "invalid_request",
-      "expiresAt must be a valid date.",
-    );
+    throw new HttpError(400, "invalid_request", "expiresAt must be a valid date.");
   }
   let created: Awaited<ReturnType<typeof createApiToken>>;
   try {
-    created = await createApiToken(
-      input.context.database,
-      requirePrincipal(input).userId,
-      {
-        name: requiredString(body, "name"),
-        expiresAt,
-      },
-    );
+    created = await createApiToken(input.context.database, requirePrincipal(input).userId, {
+      name: requiredString(body, "name"),
+      expiresAt,
+    });
   } catch (error) {
     throw new HttpError(
       400,
@@ -213,19 +176,12 @@ export async function createApiTokenHandler(
   };
 }
 
-export async function revokeApiTokenHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function revokeApiTokenHandler(input: HandlerInput): Promise<HandlerResult> {
   const tokenId = input.params.tokenId ?? "";
   const [owned] = await input.context.database
     .select({ id: apiTokens.id })
     .from(apiTokens)
-    .where(
-      and(
-        eq(apiTokens.id, tokenId),
-        eq(apiTokens.userId, requirePrincipal(input).userId),
-      ),
-    )
+    .where(and(eq(apiTokens.id, tokenId), eq(apiTokens.userId, requirePrincipal(input).userId)))
     .limit(1);
   if (!owned) throw new HttpError(404, "not_found", "API token not found.");
   await revokeApiToken(input.context.database, tokenId);
@@ -248,60 +204,26 @@ export async function listOrganizationsHandler(
   return {
     status: 200,
     data: {
-      items: await listOrganizations(
-        input.context.database,
-        requirePrincipal(input).userId,
-      ),
+      items: await listOrganizations(input.context.database, requirePrincipal(input).userId),
     },
   };
 }
 
-export async function createOrganizationHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function createOrganizationHandler(input: HandlerInput): Promise<HandlerResult> {
   const body = assertRecord(await readJsonBody(input.context.request));
   const owner = body.owner === undefined ? {} : assertRecord(body.owner);
-  const bootstrap = (await userCount(input.context.database)) === 0;
   const principal = input.context.principal;
-  if (!bootstrap && !principal)
-    throw new HttpError(401, "unauthorized", "Authentication is required.");
-  const ownerEmail = bootstrap
-    ? requiredString(owner, "primaryEmail")
-    : (principal!.email ?? undefined);
-  const ownerName = bootstrap
-    ? optionalString(owner, "displayName")
-    : principal!.displayName;
-  if (bootstrap) validateBootstrapPassword(requiredString(owner, "password"));
+  if (!principal) return createInitialOrganization(input, body, owner);
+
   const result = await createOrganizationService(input.context.database, {
     id: optionalString(body, "id"),
     name: requiredString(body, "name"),
     slug: optionalString(body, "slug"),
-    ownerId: bootstrap
-      ? (optionalString(owner, "id") ?? optionalString(body, "ownerId"))
-      : principal!.userId,
-    ownerName,
-    ownerEmail,
+    ownerId: principal.userId,
+    ownerName: principal.displayName,
+    ownerEmail: principal.email,
     membershipId: optionalString(body, "membershipId"),
   });
-
-  let headers: Record<string, string> | undefined;
-  if (bootstrap) {
-    await setPassword(
-      input.context.database,
-      result.ownerUserId,
-      requiredString(owner, "password"),
-    );
-    const session = await createSession(
-      input.context.database,
-      result.ownerUserId,
-    );
-    headers = {
-      "set-cookie": sessionCookie(
-        session.token,
-        input.context.config.cookieSecure === true,
-      ),
-    };
-  }
   return {
     status: 201,
     data: {
@@ -309,7 +231,52 @@ export async function createOrganizationHandler(
       ownerUserId: result.ownerUserId,
       ownerMembershipId: result.ownerMembershipId,
     },
-    ...(headers ? { headers } : {}),
+  };
+}
+
+async function createInitialOrganization(
+  input: HandlerInput,
+  body: Record<string, unknown>,
+  owner: Record<string, unknown>,
+): Promise<HandlerResult> {
+  const password = requiredString(owner, "password");
+  validateBootstrapPassword(password);
+  const organizationInput = {
+    id: optionalString(body, "id"),
+    name: requiredString(body, "name"),
+    slug: optionalString(body, "slug"),
+    ownerId: optionalString(owner, "id") ?? optionalString(body, "ownerId"),
+    ownerName: optionalString(owner, "displayName"),
+    ownerEmail: requiredString(owner, "primaryEmail"),
+    membershipId: optionalString(body, "membershipId"),
+  };
+
+  const created = await input.context.database.transaction(async (transaction) => {
+    // InnoDB holds this next-key lock (including the empty-table gap) through
+    // commit, so a second bootstrap request must re-check after the first owner
+    // is durable instead of observing the same empty database.
+    const [existingUsers] = (await transaction.execute(
+      sql`SELECT id FROM users LIMIT 1 FOR UPDATE`,
+    )) as unknown as [{ id: string }[]];
+    if (existingUsers.length !== 0) {
+      throw new HttpError(401, "unauthorized", "Authentication is required.");
+    }
+    const result = await createOrganizationService(transaction, organizationInput);
+    await setPassword(transaction, result.ownerUserId, password);
+    const session = await createSession(transaction, result.ownerUserId);
+    return { result, sessionToken: session.token };
+  });
+
+  return {
+    status: 201,
+    data: {
+      ...created.result.organization,
+      ownerUserId: created.result.ownerUserId,
+      ownerMembershipId: created.result.ownerMembershipId,
+    },
+    headers: {
+      "set-cookie": sessionCookie(created.sessionToken, input.context.config.cookieSecure === true),
+    },
   };
 }
 
@@ -320,10 +287,7 @@ export async function listIntegrationsHandler(
   return {
     status: 200,
     data: {
-      items: await listIntegrations(
-        input.context.database,
-        input.params.organizationId ?? "",
-      ),
+      items: await listIntegrations(input.context.database, input.params.organizationId ?? ""),
     },
   };
 }
@@ -333,10 +297,7 @@ export async function createPatIntegrationHandler(
 ): Promise<{ status: number; data: JsonValue }> {
   const body = assertRecord(await readJsonBody(input.context.request));
   const organizationId = requiredString(body, "organizationId");
-  const principal = await requireMembership(input, organizationId, [
-    "owner",
-    "admin",
-  ]);
+  const principal = await requireMembership(input, organizationId, ["owner", "admin"]);
   const encryptionKey = input.context.config.credentialEncryptionKey;
   if (!encryptionKey) {
     throw new HttpError(
@@ -349,11 +310,7 @@ export async function createPatIntegrationHandler(
   const provider = parseProvider(requiredString(body, "provider"));
   const token = requiredString(body, "token").trim();
   if (!token) {
-    throw new HttpError(
-      400,
-      "invalid_token",
-      "Provider token must not be empty.",
-    );
+    throw new HttpError(400, "invalid_token", "Provider token must not be empty.");
   }
   let verified;
   try {
@@ -365,22 +322,17 @@ export async function createPatIntegrationHandler(
       error instanceof Error ? error.message : "Invalid provider token.",
     );
   }
-  const result = await addPersonalAccessTokenIntegrationService(
-    input.context.database,
-    {
-      id: optionalString(body, "id"),
-      credentialId: optionalString(body, "credentialId"),
-      organizationId,
-      userId: principal.userId,
-      provider,
-      displayName:
-        optionalString(body, "displayName") ??
-        optionalString(body, "name") ??
-        verified.displayName,
-      token,
-      encryptionKey,
-    },
-  );
+  const result = await addPersonalAccessTokenIntegrationService(input.context.database, {
+    id: optionalString(body, "id"),
+    credentialId: optionalString(body, "credentialId"),
+    organizationId,
+    userId: principal.userId,
+    provider,
+    displayName:
+      optionalString(body, "displayName") ?? optionalString(body, "name") ?? verified.displayName,
+    token,
+    encryptionKey,
+  });
 
   return {
     status: 201,
@@ -388,9 +340,7 @@ export async function createPatIntegrationHandler(
   };
 }
 
-export async function listIntegrationResourcesHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function listIntegrationResourcesHandler(input: HandlerInput): Promise<HandlerResult> {
   const organizationId = input.url.searchParams.get("organizationId");
   if (!organizationId)
     throw new HttpError(
@@ -409,15 +359,13 @@ export async function listIntegrationResourcesHandler(
       ),
     )
     .limit(1);
-  if (!integration)
-    throw new HttpError(404, "not_found", "Integration not found.");
+  if (!integration) throw new HttpError(404, "not_found", "Integration not found.");
   const [credential] = await input.context.database
     .select()
     .from(integrationCredentials)
     .where(eq(integrationCredentials.integrationId, integration.id))
     .limit(1);
-  if (!credential)
-    throw new HttpError(404, "not_found", "Integration credential not found.");
+  if (!credential) throw new HttpError(404, "not_found", "Integration credential not found.");
   const key = input.context.config.credentialEncryptionKey;
   if (!key)
     throw new HttpError(
@@ -444,15 +392,10 @@ export async function listIntegrationResourcesHandler(
       };
 }
 
-export async function setSyncScopeSelectionHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function setSyncScopeSelectionHandler(input: HandlerInput): Promise<HandlerResult> {
   const body = assertRecord(await readJsonBody(input.context.request));
   const organizationId = requiredString(body, "organizationId");
-  const principal = await requireMembership(input, organizationId, [
-    "owner",
-    "admin",
-  ]);
+  const principal = await requireMembership(input, organizationId, ["owner", "admin"]);
   const [integration] = await input.context.database
     .select()
     .from(integrations)
@@ -463,8 +406,7 @@ export async function setSyncScopeSelectionHandler(
       ),
     )
     .limit(1);
-  if (!integration)
-    throw new HttpError(404, "not_found", "Integration not found.");
+  if (!integration) throw new HttpError(404, "not_found", "Integration not found.");
   const [credential] = await input.context.database
     .select()
     .from(integrationCredentials)
@@ -472,11 +414,7 @@ export async function setSyncScopeSelectionHandler(
     .limit(1);
   const key = input.context.config.credentialEncryptionKey;
   if (!credential || !key)
-    throw new HttpError(
-      500,
-      "credential_key_missing",
-      "Integration credential is unavailable.",
-    );
+    throw new HttpError(500, "credential_key_missing", "Integration credential is unavailable.");
   try {
     const provider = integration.provider as Provider;
     const token = decryptCredentialSecret(credential.encryptedSecret, key);
@@ -498,10 +436,7 @@ export async function setSyncScopeSelectionHandler(
               return {
                 organizationId: requiredString(value, "organizationId"),
                 mode,
-                repositoryIds: arrayOfStrings(
-                  value.repositoryIds,
-                  "repositoryIds",
-                ),
+                repositoryIds: arrayOfStrings(value.repositoryIds, "repositoryIds"),
               };
             throw new HttpError(
               400,
@@ -516,42 +451,30 @@ export async function setSyncScopeSelectionHandler(
               "selection.organizations must be an array.",
             );
           })();
-      const items = await setGitHubScopeSelectionService(
-        input.context.database,
-        {
-          organizationId,
-          userId: principal.userId,
-          integrationId: integration.id,
-          provider,
-          selection: {
-            organizations,
-            repositoryIds: arrayOfStrings(
-              selection.repositoryIds,
-              "repositoryIds",
-            ),
-          },
-          discovery: await discoverProviderResources("github", token),
+      const items = await setGitHubScopeSelectionService(input.context.database, {
+        organizationId,
+        userId: principal.userId,
+        integrationId: integration.id,
+        provider,
+        selection: {
+          organizations,
+          repositoryIds: arrayOfStrings(selection.repositoryIds, "repositoryIds"),
         },
-      );
+        discovery: await discoverProviderResources("github", token),
+      });
       return { status: 200, data: { items } };
     }
     const selection = assertRecord(body.selection);
     const mode = requiredString(selection, "mode");
     if (mode !== "all" && mode !== "selected")
-      throw new HttpError(
-        400,
-        "invalid_request",
-        "Invalid Linear selection mode.",
-      );
+      throw new HttpError(400, "invalid_request", "Invalid Linear selection mode.");
     const items = await setLinearScopeSelectionService(input.context.database, {
       organizationId,
       userId: principal.userId,
       integrationId: integration.id,
       provider,
       selection:
-        mode === "all"
-          ? { mode }
-          : { mode, teamIds: arrayOfStrings(selection.teamIds, "teamIds") },
+        mode === "all" ? { mode } : { mode, teamIds: arrayOfStrings(selection.teamIds, "teamIds") },
       discovery: await discoverProviderResources("linear", token),
     });
     return { status: 200, data: { items } };
@@ -560,9 +483,7 @@ export async function setSyncScopeSelectionHandler(
     throw new HttpError(
       400,
       "provider_discovery_failed",
-      error instanceof Error
-        ? error.message
-        : "Could not validate provider selection.",
+      error instanceof Error ? error.message : "Could not validate provider selection.",
     );
   }
 }
@@ -574,27 +495,18 @@ export async function listSyncScopesHandler(
   return {
     status: 200,
     data: {
-      items: await listSyncScopes(
-        input.context.database,
-        input.params.organizationId ?? "",
-      ),
+      items: await listSyncScopes(input.context.database, input.params.organizationId ?? ""),
     },
   };
 }
 
-export async function listSourceObjectsHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function listSourceObjectsHandler(input: HandlerInput): Promise<HandlerResult> {
   const organizationId = input.params.organizationId ?? "";
   await requireMembership(input, organizationId);
   const cursor = input.url.searchParams.get("cursor");
   const offset = cursor ? Number(cursor) : 0;
   if (!Number.isInteger(offset) || offset < 0)
-    throw new HttpError(
-      400,
-      "invalid_request",
-      "cursor must be a non-negative integer.",
-    );
+    throw new HttpError(400, "invalid_request", "cursor must be a non-negative integer.");
   return {
     status: 200,
     data: await listSourceObjects(input.context.database, organizationId, {
@@ -605,9 +517,7 @@ export async function listSourceObjectsHandler(
   };
 }
 
-export async function getSourceObjectHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function getSourceObjectHandler(input: HandlerInput): Promise<HandlerResult> {
   const organizationId = input.url.searchParams.get("organizationId");
   if (!organizationId)
     throw new HttpError(
@@ -630,10 +540,7 @@ export async function createSyncScopeHandler(
 ): Promise<{ status: number; data: JsonValue }> {
   const body = assertRecord(await readJsonBody(input.context.request));
   const organizationId = requiredString(body, "organizationId");
-  const principal = await requireMembership(input, organizationId, [
-    "owner",
-    "admin",
-  ]);
+  const principal = await requireMembership(input, organizationId, ["owner", "admin"]);
   const result = await addSyncScopeService(input.context.database, {
     id: optionalString(body, "id"),
     organizationId,
@@ -657,10 +564,7 @@ export async function listReportsHandler(
   return {
     status: 200,
     data: {
-      items: await listReports(
-        input.context.database,
-        input.params.organizationId ?? "",
-      ),
+      items: await listReports(input.context.database, input.params.organizationId ?? ""),
     },
   };
 }
@@ -751,13 +655,11 @@ export async function githubAnalyticsHandler(
   input: HandlerInput,
 ): Promise<{ status: number; data: JsonValue }> {
   const organizationId = input.url.searchParams.get("organizationId");
-  if (!organizationId)
-    throw new HttpError(400, "invalid_request", "Missing organizationId.");
+  if (!organizationId) throw new HttpError(400, "invalid_request", "Missing organizationId.");
   await requireMembership(input, organizationId);
   const end = input.url.searchParams.get("end") ?? new Date().toISOString();
   const start =
-    input.url.searchParams.get("start") ??
-    new Date(Date.now() - 30 * 86400000).toISOString();
+    input.url.searchParams.get("start") ?? new Date(Date.now() - 30 * 86400000).toISOString();
   const startDate = new Date(start);
   const endDate = new Date(end);
   if (
@@ -765,34 +667,24 @@ export async function githubAnalyticsHandler(
     Number.isNaN(endDate.valueOf()) ||
     startDate >= endDate
   ) {
-    throw new HttpError(
-      400,
-      "invalid_request",
-      "The analytics period must be a valid range.",
-    );
+    throw new HttpError(400, "invalid_request", "The analytics period must be a valid range.");
   }
   const scopeType = input.url.searchParams.get("scopeType") as
-    "github_organization" | "github_repository" | "developer" | null;
-  if (
-    scopeType &&
-    !["github_organization", "github_repository", "developer"].includes(
-      scopeType,
-    )
-  ) {
+    | "github_organization"
+    | "github_repository"
+    | "developer"
+    | null;
+  if (scopeType && !["github_organization", "github_repository", "developer"].includes(scopeType)) {
     throw new HttpError(400, "invalid_request", "Unsupported analytics scope.");
   }
-  const result = await getGitHubAnalytics(
-    input.context.database,
-    organizationId,
-    {
-      start,
-      end,
-      ...(scopeType ? { scopeType } : {}),
-      ...(input.url.searchParams.get("scopeId")
-        ? { scopeId: input.url.searchParams.get("scopeId")! }
-        : {}),
-    },
-  );
+  const result = await getGitHubAnalytics(input.context.database, organizationId, {
+    start,
+    end,
+    ...(scopeType ? { scopeType } : {}),
+    ...(input.url.searchParams.get("scopeId")
+      ? { scopeId: input.url.searchParams.get("scopeId")! }
+      : {}),
+  });
   return { status: 200, data: result as unknown as JsonObject };
 }
 
@@ -829,13 +721,8 @@ export async function triggerSyncHandler(
   };
 }
 
-export async function getSyncRunHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
-  const result = await readSyncRunProgress(
-    input.context.database,
-    input.params.syncRunId ?? "",
-  );
+export async function getSyncRunHandler(input: HandlerInput): Promise<HandlerResult> {
+  const result = await readSyncRunProgress(input.context.database, input.params.syncRunId ?? "");
   if (!result) throw new HttpError(404, "not_found", "Sync run not found.");
   await requireMembership(input, result.run.organizationId);
   return {
@@ -845,29 +732,16 @@ export async function getSyncRunHandler(
   };
 }
 
-export async function cancelSyncRunHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
-  const run = await readSyncRunProgress(
-    input.context.database,
-    input.params.syncRunId ?? "",
-  );
+export async function cancelSyncRunHandler(input: HandlerInput): Promise<HandlerResult> {
+  const run = await readSyncRunProgress(input.context.database, input.params.syncRunId ?? "");
   if (!run) throw new HttpError(404, "not_found", "Sync run not found.");
   await requireMembership(input, run.run.organizationId);
-  const result = await cancelProviderSyncRunService(
-    input.context.database,
-    run.run.id,
-  );
+  const result = await cancelProviderSyncRunService(input.context.database, run.run.id);
   return { status: 200, data: result };
 }
 
-export async function listSyncRunResourcesHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
-  const run = await readSyncRunProgress(
-    input.context.database,
-    input.params.syncRunId ?? "",
-  );
+export async function listSyncRunResourcesHandler(input: HandlerInput): Promise<HandlerResult> {
+  const run = await readSyncRunProgress(input.context.database, input.params.syncRunId ?? "");
   if (!run) throw new HttpError(404, "not_found", "Sync run not found.");
   await requireMembership(input, run.run.organizationId);
   const cursor = input.url.searchParams.get("cursor") ?? undefined;
@@ -886,15 +760,10 @@ export async function listSyncRunResourcesHandler(
   };
 }
 
-export async function organizationSyncStatusHandler(
-  input: HandlerInput,
-): Promise<HandlerResult> {
+export async function organizationSyncStatusHandler(input: HandlerInput): Promise<HandlerResult> {
   const organizationId = input.params.organizationId ?? "";
   await requireMembership(input, organizationId);
-  const result = await readOrganizationSyncStatus(
-    input.context.database,
-    organizationId,
-  );
+  const result = await readOrganizationSyncStatus(input.context.database, organizationId);
   return {
     status: 200,
     data: result as unknown as JsonObject,
@@ -904,22 +773,14 @@ export async function organizationSyncStatusHandler(
 
 function parseProvider(value: string): Provider {
   if (value !== "github" && value !== "linear") {
-    throw new HttpError(
-      400,
-      "unsupported_provider",
-      `Unsupported provider: ${value}.`,
-    );
+    throw new HttpError(400, "unsupported_provider", `Unsupported provider: ${value}.`);
   }
   return value;
 }
 
 function arrayOfStrings(value: unknown, name: string): string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
-    throw new HttpError(
-      400,
-      "invalid_request",
-      `${name} must be an array of strings.`,
-    );
+    throw new HttpError(400, "invalid_request", `${name} must be an array of strings.`);
   return value;
 }
 
@@ -938,11 +799,7 @@ function optionalReportScopeType(
     value !== "linear_team" &&
     value !== "linear_project"
   ) {
-    throw new HttpError(
-      400,
-      "invalid_request",
-      `Unsupported report scope type: ${value}.`,
-    );
+    throw new HttpError(400, "invalid_request", `Unsupported report scope type: ${value}.`);
   }
   return value;
 }
@@ -980,7 +837,7 @@ async function requireMembership(
   return principal;
 }
 
-async function userCount(database: ApiContext["database"]): Promise<number> {
+async function userCount(database: DbExecutor): Promise<number> {
   const [row] = await database.select({ value: count() }).from(users);
   return row?.value ?? 0;
 }
@@ -1012,10 +869,7 @@ function clearSessionCookie(secure: boolean): string {
   return `teamtales_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? "; Secure" : ""}`;
 }
 
-function requestCookie(
-  header: string | undefined,
-  name: string,
-): string | undefined {
+function requestCookie(header: string | undefined, name: string): string | undefined {
   for (const part of header?.split(";") ?? []) {
     const [key, ...value] = part.trim().split("=");
     if (key === name) return decodeURIComponent(value.join("="));
@@ -1025,8 +879,7 @@ function requestCookie(
 
 function mapApiToken(value: unknown): JsonObject {
   const row = value as Record<string, unknown>;
-  const read = (snake: string, camel: string): unknown =>
-    row[snake] ?? row[camel];
+  const read = (snake: string, camel: string): unknown => row[snake] ?? row[camel];
   const id = read("id", "id");
   const name = read("name", "name");
   const prefix = read("token_prefix", "prefix");
@@ -1048,14 +901,12 @@ function mapApiToken(value: unknown): JsonObject {
     createdAt: createdAt instanceof Date ? createdAt.toISOString() : createdAt,
     ...(typeof expiresAt === "string" || expiresAt instanceof Date
       ? {
-          expiresAt:
-            expiresAt instanceof Date ? expiresAt.toISOString() : expiresAt,
+          expiresAt: expiresAt instanceof Date ? expiresAt.toISOString() : expiresAt,
         }
       : {}),
     ...(typeof lastUsedAt === "string" || lastUsedAt instanceof Date
       ? {
-          lastUsedAt:
-            lastUsedAt instanceof Date ? lastUsedAt.toISOString() : lastUsedAt,
+          lastUsedAt: lastUsedAt instanceof Date ? lastUsedAt.toISOString() : lastUsedAt,
         }
       : {}),
   };

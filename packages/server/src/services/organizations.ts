@@ -1,4 +1,4 @@
-import type { AppDatabase } from "../db/mysql.js";
+import type { DbExecutor } from "../db/mysql.js";
 import type { OrganizationDto } from "@teamtales/common/api";
 
 import { createOrganizationWithOwner } from "../persistence/index.js";
@@ -21,7 +21,7 @@ export interface CreateOrganizationServiceResult {
 }
 
 export async function createOrganizationService(
-  database: AppDatabase,
+  database: DbExecutor,
   input: CreateOrganizationServiceInput,
 ): Promise<CreateOrganizationServiceResult> {
   const id = input.id ?? stableId("org", input.name);

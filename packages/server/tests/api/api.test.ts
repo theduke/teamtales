@@ -62,10 +62,14 @@ describe("TeamTales API", mysqlTestOptions, () => {
     assert.equal(response.status, 401);
   });
 
-  it("creates and lists organizations", async () => {
-    const created = await apiFetch<Record<string, unknown>>(app.url, "/api/organizations", {
+  it("rejects cross-origin initial bootstrap requests", async () => {
+    const response = await fetch(`${app.url}/api/organizations`, {
       method: "POST",
-      body: {
+      headers: {
+        "content-type": "application/json",
+        origin: "https://attacker.example",
+      },
+      body: JSON.stringify({
         id: "org_api",
         name: "API Org",
         owner: {
@@ -74,21 +78,85 @@ describe("TeamTales API", mysqlTestOptions, () => {
           primaryEmail: "owner@example.com",
           password: "correct horse battery staple",
         },
-      },
+      }),
     });
+    assert.equal(response.status, 403);
+    assert.equal(
+      ((await response.json()) as { error: { code: string } }).error.code,
+      "csrf_rejected",
+    );
+  });
+
+  it("serializes concurrent initial bootstrap attempts and creates one owner", async () => {
+    const body = {
+      id: "org_api",
+      name: "API Org",
+      owner: {
+        id: "user_api_owner",
+        displayName: "API Owner",
+        primaryEmail: "owner@example.com",
+        password: "correct horse battery staple",
+      },
+    };
+    const bootstrap = () =>
+      fetch(`${app.url}/api/organizations`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: app.url },
+        body: JSON.stringify(body),
+      });
+    const responses = await Promise.all([bootstrap(), bootstrap()]);
+    const results = await Promise.all(
+      responses.map(async (response) => ({
+        status: response.status,
+        body: (await response.json()) as ApiResponseDto<Record<string, unknown>>,
+        cookie: response.headers.get("set-cookie"),
+      })),
+    );
+    assert.deepEqual(results.map((result) => result.status).sort(), [201, 401]);
+    const created = results.find((result) => result.status === 201);
+    assert.ok(created);
+    assert.equal(created.body.ok, true);
+    browserCookie = created.cookie?.split(";", 1)[0] ?? "";
+    assert.match(browserCookie, /^teamtales_session=/);
+
+    const [userTotal] = await app.database.db.select({ total: count() }).from(users);
+    const [membershipTotal] = await app.database.db
+      .select({ total: count() })
+      .from(organizationMemberships);
+    assert.equal(Number(userTotal?.total), 1);
+    assert.equal(Number(membershipTotal?.total), 1);
+
     const listed = await apiFetch<{ items: Array<{ id: string; name: string; slug: string }> }>(
       app.url,
       "/api/organizations",
     );
 
-    assert.equal(created.status, 201);
-    assert.equal(created.body.ok, true);
-    assert.equal(created.body.ok && created.body.data.id, "org_api");
     assert.equal(
       listed.body.ok &&
         listed.body.data.items.some((organization) => organization.id === "org_api"),
       true,
     );
+  });
+
+  it("rejects cross-origin and originless login requests", async () => {
+    for (const headers of [
+      { "content-type": "application/json", origin: "https://attacker.example" },
+      { "content-type": "application/json" },
+    ]) {
+      const response = await fetch(`${app.url}/api/auth/login`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          email: "owner@example.com",
+          password: "correct horse battery staple",
+        }),
+      });
+      assert.equal(response.status, 403);
+      assert.equal(
+        ((await response.json()) as { error: { code: string } }).error.code,
+        "csrf_rejected",
+      );
+    }
   });
 
   it("adds a PAT integration without returning plaintext", async () => {
@@ -295,13 +363,18 @@ describe("TeamTales API", mysqlTestOptions, () => {
           .select()
           .from(linearWorkspaces)
           .where(eq(linearWorkspaces.integrationId, integrationId)),
-        app.database.db.select().from(linearTeams).where(eq(linearTeams.integrationId, integrationId)),
+        app.database.db
+          .select()
+          .from(linearTeams)
+          .where(eq(linearTeams.integrationId, integrationId)),
         app.database.db
           .select()
           .from(providerResources)
           .where(eq(providerResources.integrationId, integrationId)),
       ]);
-      const workspaceResource = workspaces.find((resource) => resource.externalId === "workspace_1");
+      const workspaceResource = workspaces.find(
+        (resource) => resource.externalId === "workspace_1",
+      );
       const teamResource = teams.find((resource) => resource.externalId === "team_1");
       assert.equal(workspaces.length, 1);
       assert.equal(teams.length, 2);

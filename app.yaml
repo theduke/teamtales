@@ -7,6 +7,7 @@ domains:
 env:
   PORT: "8080"
   TEAMTALES_API_HOST: 0.0.0.0
+  TEAMTALES_PUBLIC_ORIGIN: https://teamtales.wasmer.app
   TEAMTALES_COOKIE_SECURE: "true"
 capabilities:
   database:
