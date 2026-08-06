@@ -67,6 +67,12 @@ type ManagedResource =
   | import("./github-resources.js").ManagedProviderResource
   | ManagedLinearResource;
 
+const syncLeaseDurationMs = 5 * 60_000;
+const syncLeaseHeartbeatMs = 60_000;
+
+class SyncRunCancelledError extends Error {}
+class SyncRunLeaseLostError extends Error {}
+
 export interface RunProviderSyncServiceInput {
   provider: Provider;
   organizationId?: string;
@@ -845,6 +851,7 @@ export async function runProviderSyncService(
       : await createSyncRun(database, scope, runId, now, providerResourceId));
   const runLog = scopeLog.child({ syncRunId: runId });
   if (await isSyncRunCancelled(database, runId)) return cancelledSyncResult(input.provider, runId);
+  const lease = startSyncRunLeaseHeartbeat(database, runId, run.startedAt);
   let credential: IntegrationCredential | undefined;
 
   try {
@@ -877,6 +884,7 @@ export async function runProviderSyncService(
       fetched,
       now,
       providerResourceId,
+      run.startedAt,
     );
     runLog.info({ counters: persisted.counters }, "Provider sync completed");
 
@@ -888,6 +896,19 @@ export async function runProviderSyncService(
       counters: persisted.counters,
     };
   } catch (error) {
+    if (error instanceof SyncRunCancelledError) {
+      runLog.info("Provider sync was cancelled before its results were persisted");
+      return cancelledSyncResult(input.provider, runId);
+    }
+    if (error instanceof SyncRunLeaseLostError) {
+      runLog.warn("Provider sync lost its claim lease before results were persisted");
+      return queuedSyncResult(
+        input.provider,
+        runId,
+        "running",
+        "Another worker owns this sync run.",
+      );
+    }
     if (await isSyncRunCancelled(database, runId)) {
       runLog.info("Provider sync was cancelled");
       return cancelledSyncResult(input.provider, runId);
@@ -913,6 +934,8 @@ export async function runProviderSyncService(
         activityEventsEmitted: 0,
       },
     };
+  } finally {
+    lease.stop();
   }
 }
 
@@ -942,6 +965,73 @@ async function isSyncRunCancelled(database: AppDatabase, runId: string): Promise
   return run?.status === "cancelled";
 }
 
+function startSyncRunLeaseHeartbeat(
+  database: AppDatabase,
+  runId: string,
+  startedAt: Date,
+): { stop(): void } {
+  let stopped = false;
+  const renew = async (): Promise<void> => {
+    if (stopped) return;
+    const now = new Date();
+    const result = await database
+      .update(syncRuns)
+      .set({
+        leaseExpiresAt: new Date(now.getTime() + syncLeaseDurationMs).toISOString(),
+        updatedAt: now.toISOString(),
+      })
+      .where(
+        and(
+          eq(syncRuns.id, runId),
+          eq(syncRuns.status, "running"),
+          eq(syncRuns.startedAt, startedAt.toISOString()),
+        ),
+      );
+    if (updatedRows(result) !== 1) {
+      stopped = true;
+      logger.warn({ syncRunId: runId }, "Provider sync lease heartbeat lost ownership");
+    }
+  };
+  const timer = setInterval(() => {
+    void renew().catch((error) =>
+      logger.warn({ err: error, syncRunId: runId }, "Provider sync lease heartbeat failed"),
+    );
+  }, syncLeaseHeartbeatMs);
+  timer.unref();
+  return {
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+    },
+  };
+}
+
+async function assertSyncRunCanPersist(
+  database: MySqlTransaction,
+  runId: string,
+  startedAt: Date,
+): Promise<void> {
+  const result = (await database.execute(sql`
+    SELECT status, started_at AS startedAt, lease_expires_at AS leaseExpiresAt
+    FROM sync_runs
+    WHERE id = ${runId}
+    FOR UPDATE
+  `)) as unknown as [Array<{ status: string; startedAt: string; leaseExpiresAt: string | null }>];
+  const run = result[0]?.[0];
+  if (run?.status === "cancelled") throw new SyncRunCancelledError();
+  const leaseExpiresAt = run?.leaseExpiresAt ? new Date(run.leaseExpiresAt) : undefined;
+  if (
+    !run ||
+    run.status !== "running" ||
+    run.startedAt !== startedAt.toISOString() ||
+    !leaseExpiresAt ||
+    Number.isNaN(leaseExpiresAt.valueOf()) ||
+    leaseExpiresAt <= new Date()
+  ) {
+    throw new SyncRunLeaseLostError();
+  }
+}
+
 async function persistFetchResult(
   database: AppDatabase,
   scope: SyncScope,
@@ -949,8 +1039,10 @@ async function persistFetchResult(
   fetched: ConnectorFetchResult,
   now: Date,
   providerResourceId?: string,
+  claimStartedAt?: Date,
 ): Promise<RunProviderSyncServiceResult> {
   return database.transaction(async (transaction) => {
+    if (claimStartedAt) await assertSyncRunCanPersist(transaction, runId, claimStartedAt);
     const persistedSourceObjects = await upsertSourceObjects(transaction, fetched.objects, now);
     const normalized = normalizeSourceObjects(persistedSourceObjects, providerResourceId);
 
@@ -1084,6 +1176,7 @@ async function createSyncRun(
     runType: "manual_resync",
     status: "running",
     startedAt: timestamp,
+    leaseExpiresAt: new Date(now.getTime() + syncLeaseDurationMs).toISOString(),
     createdAt: timestamp,
   });
   await database
@@ -1131,7 +1224,12 @@ async function claimExistingSyncRun(
     .limit(1);
   await database
     .update(syncRuns)
-    .set({ status: "running", startedAt: timestamp, leaseExpiresAt: null, updatedAt: timestamp })
+    .set({
+      status: "running",
+      startedAt: timestamp,
+      leaseExpiresAt: new Date(now.getTime() + syncLeaseDurationMs).toISOString(),
+      updatedAt: timestamp,
+    })
     .where(eq(syncRuns.id, runId));
   if (existing?.parentSyncRunId)
     await database
@@ -1749,4 +1847,11 @@ function dateFromString(value: string | undefined): Date | undefined {
   if (!value) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? undefined : date;
+}
+
+function updatedRows(result: unknown): number {
+  if (!Array.isArray(result)) return 0;
+  const header = result[0];
+  if (!header || typeof header !== "object" || !("affectedRows" in header)) return 0;
+  return Number(header.affectedRows);
 }
