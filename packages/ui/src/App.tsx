@@ -47,7 +47,6 @@ import {
 import type {
   AnalyticsScopeType,
   DashboardDto,
-  GenerateWeeklyReportRequestDto,
   GitHubAnalyticsDto,
   ListSourceObjectsResponseDto,
   OrganizationSyncStatusDto,
@@ -61,7 +60,6 @@ import type {
 import type { Provider, ReportScopeType } from "@teamtales/common/domain";
 import type {
   AuthSession,
-  BrowserAddPatIntegrationRequest,
   BrowserCreateOrganizationRequest,
 } from "./api";
 import { ApiClientError, apiClient } from "./api";
@@ -993,32 +991,60 @@ function SetupSection({
   onNotice: (n: Notice) => void;
 }): ReactElement {
   const [organization, setOrganization] = useState({ name: "", slug: "" });
+  const [creatingOrganization, setCreatingOrganization] = useState(false);
   const [pat, setPat] = useState({
     provider: "github" as Provider,
     displayName: "",
     token: "",
   });
+  const [addingPat, setAddingPat] = useState(false);
+  async function createOrganization(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (creatingOrganization) return;
+    setCreatingOrganization(true);
+    try {
+      const item = await apiClient.createOrganization({
+        name: organization.name.trim(),
+        slug: optionalText(organization.slug),
+      });
+      setOrganization({ name: "", slug: "" });
+      onCreatedOrganization(item.id);
+      onNotice({ tone: "success", text: `Created ${item.name}.` });
+    } catch (error) {
+      onError(error);
+    } finally {
+      setCreatingOrganization(false);
+    }
+  }
+  async function addPat(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (addingPat || !selectedOrganizationId) return;
+    setAddingPat(true);
+    try {
+      const item = await apiClient.addPatIntegration({
+        organizationId: selectedOrganizationId,
+        provider: pat.provider,
+        displayName: optionalText(pat.displayName),
+        token: pat.token,
+      });
+      setPat({ ...pat, displayName: "", token: "" });
+      onChanged();
+      onNotice({
+        tone: "success",
+        text: `Added ${item.provider} integration.`,
+      });
+    } catch (error) {
+      onError(error);
+    } finally {
+      setAddingPat(false);
+    }
+  }
   return (
     <Stack>
       <PageTitle title="Setup" subtitle="Create workspaces and connect personal access tokens." />
       <SimpleGrid cols={{ base: 1, md: 2 }}>
         <Panel title="Organization">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void apiClient
-                .createOrganization({
-                  name: organization.name.trim(),
-                  slug: optionalText(organization.slug),
-                })
-                .then((item) => {
-                  setOrganization({ name: "", slug: "" });
-                  onCreatedOrganization(item.id);
-                  onNotice({ tone: "success", text: `Created ${item.name}.` });
-                })
-                .catch(onError);
-            }}
-          >
+          <form onSubmit={(event) => void createOrganization(event)}>
             <Stack>
               <TextInput
                 label="Name"
@@ -1041,35 +1067,18 @@ function SetupSection({
                   })
                 }
               />
-              <Button type="submit" leftSection={<IconBuilding size={16} />}>
+              <Button
+                type="submit"
+                loading={creatingOrganization}
+                leftSection={<IconBuilding size={16} />}
+              >
                 Create organization
               </Button>
             </Stack>
           </form>
         </Panel>
         <Panel title="PAT integration">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const request: BrowserAddPatIntegrationRequest = {
-                organizationId: selectedOrganizationId,
-                provider: pat.provider,
-                displayName: optionalText(pat.displayName),
-                token: pat.token,
-              };
-              void apiClient
-                .addPatIntegration(request)
-                .then((item) => {
-                  setPat({ ...pat, displayName: "", token: "" });
-                  onChanged();
-                  onNotice({
-                    tone: "success",
-                    text: `Added ${item.provider} integration.`,
-                  });
-                })
-                .catch(onError);
-            }}
-          >
+          <form onSubmit={(event) => void addPat(event)}>
             <Stack>
               <TextInput
                 label="Organization"
@@ -1098,7 +1107,7 @@ function SetupSection({
                 value={pat.token}
                 onChange={(e) => setPat({ ...pat, token: e.currentTarget.value })}
               />
-              <Button type="submit" disabled={!selectedOrganizationId}>
+              <Button type="submit" loading={addingPat} disabled={!selectedOrganizationId}>
                 Add PAT
               </Button>
             </Stack>
@@ -1580,6 +1589,35 @@ function ReportsSection({
     title: "",
     persist: true,
   });
+  const [generating, setGenerating] = useState(false);
+  async function generateReport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (generating || !selectedOrganizationId) return;
+    setGenerating(true);
+    try {
+      const organizationName = selectedOrganization?.name ?? dashboard?.organization.name;
+      const result = await apiClient.generateWeeklyReport({
+        organizationId: selectedOrganizationId,
+        organizationName,
+        scopeType: form.scopeType,
+        scopeId: optionalText(form.scopeId) ?? selectedOrganizationId,
+        scopeName: optionalText(form.scopeName) ?? organizationName,
+        periodStart: form.periodStart,
+        periodEnd: form.periodEnd,
+        title: optionalText(form.title),
+        persist: form.persist,
+      });
+      onGenerated(result.report);
+      onNotice({
+        tone: "success",
+        text: `Generated ${result.report.title}.`,
+      });
+    } catch (error) {
+      onError(error);
+    } finally {
+      setGenerating(false);
+    }
+  }
   return (
     <Stack>
       <PageTitle
@@ -1588,33 +1626,7 @@ function ReportsSection({
       />
       <SimpleGrid cols={{ base: 1, lg: 2 }}>
         <Panel title="Weekly report">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const organizationName = selectedOrganization?.name ?? dashboard?.organization.name;
-              const request: GenerateWeeklyReportRequestDto = {
-                organizationId: selectedOrganizationId,
-                organizationName,
-                scopeType: form.scopeType,
-                scopeId: optionalText(form.scopeId) ?? selectedOrganizationId,
-                scopeName: optionalText(form.scopeName) ?? organizationName,
-                periodStart: form.periodStart,
-                periodEnd: form.periodEnd,
-                title: optionalText(form.title),
-                persist: form.persist,
-              };
-              void apiClient
-                .generateWeeklyReport(request)
-                .then((result) => {
-                  onGenerated(result.report);
-                  onNotice({
-                    tone: "success",
-                    text: `Generated ${result.report.title}.`,
-                  });
-                })
-                .catch(onError);
-            }}
-          >
+          <form onSubmit={(event) => void generateReport(event)}>
             <Stack>
               <TextInput
                 label="Organization"
@@ -1668,7 +1680,7 @@ function ReportsSection({
                 checked={form.persist}
                 onChange={(e) => setForm({ ...form, persist: e.currentTarget.checked })}
               />
-              <Button type="submit" disabled={!selectedOrganizationId}>
+              <Button type="submit" loading={generating} disabled={!selectedOrganizationId}>
                 Generate report
               </Button>
             </Stack>
